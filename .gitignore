@@ -1,0 +1,12 @@
+.venv/
+.spike-venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.env
+*.sqlite3
+db.sqlite3
+
+*.docx
