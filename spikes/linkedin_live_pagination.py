@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunsplit
 
 from scrapling.fetchers import FetcherSession
 from scrapling.parser import Selector
@@ -33,6 +34,10 @@ ACCESS_DENIED_MARKERS = ("access denied", "not authorized to access")
 CONSENT_MARKERS = ("consent interstitial", "before accessing linkedin", "sign in to linkedin")
 UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 LOWERCASE = "abcdefghijklmnopqrstuvwxyz"
+CONTINUATION_TARGET_PATH = re.compile(
+    r"^/jobs/(?P<slug>[a-z0-9][a-z0-9-]*-jobs-worldwide)/?$"
+)
+CONFIRMED_CONTINUATION_QUERY_KEYS = ("f_C",)
 VISIBLE_XPATH = (
     "not(ancestor-or-self::*["
     "@hidden or "
@@ -130,6 +135,10 @@ class LivePaginationConfig:
     max_requests: int = 4
     request_delay_seconds: float = 2.0
     timeout_seconds: float = 20.0
+    continuation_start: int | None = None
+    continuation_step: int | None = None
+    # Fully overlapping continuation batches allowed before overlap_limit stops the run.
+    allowed_consecutive_overlap_batches: int = 2
 
     def __post_init__(self) -> None:
         if not 1 <= self.max_pages <= 4:
@@ -138,6 +147,18 @@ class LivePaginationConfig:
             raise ValueError("max_requests must be between 1 and 4")
         if self.request_delay_seconds < 2.0:
             raise ValueError("request_delay_seconds must be at least 2")
+        if (self.continuation_start is None) != (self.continuation_step is None):
+            raise ValueError("continuation_start and continuation_step must be set together")
+        if self.continuation_start is not None and self.continuation_start < 0:
+            raise ValueError("continuation_start must be non-negative")
+        if self.continuation_step is not None and self.continuation_step < 1:
+            raise ValueError("continuation_step must be positive")
+        if not 1 <= self.allowed_consecutive_overlap_batches <= 2:
+            raise ValueError("allowed_consecutive_overlap_batches must be between 1 and 2")
+
+    @property
+    def continuation_enabled(self) -> bool:
+        return self.continuation_start is not None and self.continuation_step is not None
 
 
 class PlainSessionFetcher:
@@ -253,6 +274,51 @@ def _is_linkedin_https_url(url: str) -> bool:
     return parsed.scheme == "https" and is_linkedin_host
 
 
+def build_linkedin_continuation_url(target_url: str, start: int | str) -> str:
+    """Build a validated guest continuation URL from a public company-jobs target."""
+    start_text = str(start)
+    if isinstance(start, bool) or re.fullmatch(r"[0-9]+", start_text) is None:
+        raise ValueError("start must be a non-negative integer")
+
+    parsed = urlparse(target_url)
+    scheme = parsed.scheme.casefold()
+    hostname = (parsed.hostname or "").casefold()
+    is_linkedin_host = hostname == "linkedin.com" or hostname.endswith(".linkedin.com")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("target URL has an invalid port") from exc
+    if (
+        scheme not in {"http", "https"}
+        or not is_linkedin_host
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is not None
+    ):
+        raise ValueError("target URL must use an uncredentialed LinkedIn HTTP(S) host")
+
+    path_match = CONTINUATION_TARGET_PATH.fullmatch(parsed.path)
+    if path_match is None:
+        raise ValueError("target URL path is not a supported company-jobs path")
+
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    confirmed_pairs = [
+        (key, value)
+        for key, value in query_pairs
+        if key in CONFIRMED_CONTINUATION_QUERY_KEYS and value
+    ]
+    if not any(key == "f_C" for key, _ in confirmed_pairs):
+        raise ValueError("target URL must contain a non-empty f_C parameter")
+    confirmed_pairs.append(("start", str(int(start_text))))
+
+    continuation_path = (
+        "/jobs-guest/jobs/api/seeMoreJobPostings/" + path_match.group("slug")
+    )
+    return urlunsplit(
+        (scheme, hostname, continuation_path, urlencode(confirmed_pairs), "")
+    )
+
+
 def _redirect_reason(urls: Sequence[str]) -> str | None:
     for url in urls:
         path = urlparse(url).path.casefold()
@@ -356,6 +422,9 @@ def run_live_pagination(
     stop_reason = "invalid_start_url"
     block_reason: str | None = None
     block_evidence: str | None = None
+    consecutive_overlap_batches = 0
+    continuation_offset = config.continuation_start
+    next_continuation_url: str | None = None
 
     if not _is_linkedin_https_url(start_url):
         return _diagnostic_result(
@@ -370,12 +439,31 @@ def run_live_pagination(
             stop_reason=stop_reason,
         )
 
+    if config.continuation_enabled:
+        assert continuation_offset is not None
+        try:
+            next_continuation_url = build_linkedin_continuation_url(
+                start_url, continuation_offset
+            )
+        except ValueError:
+            return _diagnostic_result(
+                requested_urls=requested_urls,
+                http_statuses=http_statuses,
+                redirects=redirects,
+                found_job_ids=found_job_ids,
+                pages=pages,
+                requests=requests,
+                started=started,
+                clock=clock,
+                stop_reason="invalid_continuation_url",
+            )
+
     while True:
         if pages >= config.max_pages:
-            stop_reason = "max_pages"
+            stop_reason = "page_limit"
             break
         if requests >= config.max_requests:
-            stop_reason = "max_requests"
+            stop_reason = "request_limit"
             break
         if current_url in seen_urls:
             stop_reason = "repeated_url"
@@ -434,6 +522,9 @@ def run_live_pagination(
         seen_urls.add(final_url)
 
         html = bytes(response.body).decode("utf-8", errors="replace")
+        if not html.strip():
+            stop_reason = "empty_batch"
+            break
         content_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
         if content_hash in seen_content_hashes:
             stop_reason = "repeated_content"
@@ -454,6 +545,33 @@ def run_live_pagination(
         }
         new_job_ids = page_job_ids - found_job_ids
         found_job_ids.update(page_job_ids)
+
+        if config.continuation_enabled:
+            if pages == 1 and not new_job_ids:
+                stop_reason = "no_new_job_ids"
+                break
+            if pages > 1:
+                if new_job_ids:
+                    consecutive_overlap_batches = 0
+                else:
+                    consecutive_overlap_batches += 1
+                    if (
+                        consecutive_overlap_batches
+                        > config.allowed_consecutive_overlap_batches
+                    ):
+                        stop_reason = "overlap_limit"
+                        break
+
+            assert next_continuation_url is not None
+            assert continuation_offset is not None
+            assert config.continuation_step is not None
+            current_url = next_continuation_url
+            continuation_offset += config.continuation_step
+            next_continuation_url = build_linkedin_continuation_url(
+                start_url, continuation_offset
+            )
+            continue
+
         if not new_job_ids:
             stop_reason = "no_new_job_ids"
             break
@@ -521,6 +639,8 @@ def main(
     parser.add_argument("--url", required=True)
     parser.add_argument("--confirm-live-test", action="store_true")
     parser.add_argument("--robots-preflight-result", type=Path)
+    parser.add_argument("--continuation-start", type=int)
+    parser.add_argument("--continuation-step", type=int)
     args = parser.parse_args(argv)
     started = clock()
     robots = read_robots_preflight(args.robots_preflight_result, args.url)
@@ -540,7 +660,19 @@ def main(
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 2
 
-    config = LivePaginationConfig()
+    try:
+        config = LivePaginationConfig(
+            continuation_start=args.continuation_start,
+            continuation_step=args.continuation_step,
+        )
+    except ValueError:
+        result = empty_diagnostic(
+            "invalid_continuation_config",
+            duration_seconds=clock() - started,
+            robots=robots,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 2
     result = run_live_pagination(
         start_url=args.url,
         fetcher=PlainSessionFetcher(config),

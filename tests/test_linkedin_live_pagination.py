@@ -7,12 +7,38 @@ from typing import Self
 import pytest
 
 from spikes import linkedin_live_pagination as live
+from spikes.extraction import extract_job_cards
 
 PAGE_1_URL = "https://www.linkedin.com/jobs/search?page=1"
 PAGE_2_URL = "https://www.linkedin.com/jobs/search?page=2"
 PAGE_3_URL = "https://www.linkedin.com/jobs/search?page=3"
 PAGE_4_URL = "https://www.linkedin.com/jobs/search?page=4"
 PAGE_5_URL = "https://www.linkedin.com/jobs/search?page=5"
+TARGET_URL = (
+    "https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide"
+    "?f_C=16691%2C30242966"
+)
+CONTINUATION_25_URL = (
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/"
+    "acuity-analytics-jobs-worldwide?f_C=16691%2C30242966&start=25"
+)
+CONTINUATION_50_URL = (
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/"
+    "acuity-analytics-jobs-worldwide?f_C=16691%2C30242966&start=50"
+)
+CONTINUATION_75_URL = (
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/"
+    "acuity-analytics-jobs-worldwide?f_C=16691%2C30242966&start=75"
+)
+CONTINUATION_100_URL = (
+    "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/"
+    "acuity-analytics-jobs-worldwide?f_C=16691%2C30242966&start=100"
+)
+FIXTURES = Path(__file__).parent / "fixtures" / "linkedin"
+
+
+def fixture(name: str) -> str:
+    return (FIXTURES / name).read_text(encoding="utf-8")
 
 
 class FakeRedirect:
@@ -86,11 +112,12 @@ def run(
     responses: dict[str, FakeResponse],
     *,
     config: live.LivePaginationConfig | None = None,
+    start_url: str = PAGE_1_URL,
 ) -> tuple[dict[str, object], FakeFetcher, list[float]]:
     fetcher = FakeFetcher(responses)
     sleeps: list[float] = []
     result = live.run_live_pagination(
-        start_url=PAGE_1_URL,
+        start_url=start_url,
         fetcher=fetcher,
         config=config,
         sleep=sleeps.append,
@@ -197,6 +224,279 @@ def test_hard_limits_cannot_be_relaxed(
         )
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"continuation_start": 25},
+        {"continuation_step": 25},
+        {"continuation_start": -1, "continuation_step": 25},
+        {"continuation_start": 25, "continuation_step": 0},
+        {
+            "continuation_start": 25,
+            "continuation_step": 25,
+            "allowed_consecutive_overlap_batches": 3,
+        },
+    ],
+)
+def test_invalid_continuation_config_is_rejected(config: dict[str, int]) -> None:
+    with pytest.raises(ValueError):
+        live.LivePaginationConfig(**config)
+
+
+def test_builds_validated_continuation_url_with_confirmed_parameters_only() -> None:
+    target_url = (
+        TARGET_URL
+        + "&trackingId=discard&refId=discard&cookie=discard&Authorization=discard&start=999"
+    )
+
+    result = live.build_linkedin_continuation_url(target_url, 125)
+
+    assert result == (
+        "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/"
+        "acuity-analytics-jobs-worldwide?f_C=16691%2C30242966&start=125"
+    )
+    assert "trackingId" not in result
+    assert "refId" not in result
+    assert "cookie" not in result
+    assert "Authorization" not in result
+    assert "start=999" not in result
+
+
+def test_continuation_url_accepts_regional_linkedin_http_host() -> None:
+    target_url = (
+        "http://in.linkedin.com/jobs/acuity-analytics-jobs-worldwide"
+        "?f_C=16691%2C30242966"
+    )
+
+    result = live.build_linkedin_continuation_url(target_url, "25")
+
+    assert result.startswith(
+        "http://in.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/"
+    )
+    assert result.endswith("?f_C=16691%2C30242966&start=25")
+
+
+@pytest.mark.parametrize(
+    "target_url",
+    [
+        "https://example.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691",
+        "ftp://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691",
+        "https://www.linkedin.com/jobs/search?f_C=16691",
+        "https://www.linkedin.com/jobs/acuity-analytics?f_C=16691",
+        "https://www.linkedin.com/jobs/view/example-123?f_C=16691",
+        "https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide",
+    ],
+)
+def test_invalid_continuation_target_is_rejected(target_url: str) -> None:
+    with pytest.raises(ValueError):
+        live.build_linkedin_continuation_url(target_url, 25)
+
+
+@pytest.mark.parametrize("start", ["not-a-number", "25.0", -1, True])
+def test_non_numeric_continuation_start_is_rejected(start: int | str) -> None:
+    with pytest.raises(ValueError):
+        live.build_linkedin_continuation_url(TARGET_URL, start)
+
+
+def test_synthetic_initial_fixture_contains_sixty_unique_ids() -> None:
+    cards = extract_job_cards(
+        fixture("continuation_initial_60_synthetic.html"), base_url=TARGET_URL
+    )
+    job_ids = {card.linkedin_job_id for card in cards}
+
+    assert len(cards) == 60
+    assert len(job_ids) == 60
+
+
+def test_continuation_allows_one_overlap_then_adds_new_ids_and_stops_on_empty() -> None:
+    initial_html = fixture("continuation_initial_60_synthetic.html")
+    overlap_html = fixture("continuation_overlap_start_25_synthetic.html")
+    new_html = fixture("continuation_new_batch_synthetic.html")
+    result, fetcher, sleeps = run(
+        {
+            TARGET_URL: FakeResponse(url=TARGET_URL, html=initial_html),
+            CONTINUATION_25_URL: FakeResponse(
+                url=CONTINUATION_25_URL, html=overlap_html
+            ),
+            CONTINUATION_50_URL: FakeResponse(url=CONTINUATION_50_URL, html=new_html),
+            CONTINUATION_75_URL: FakeResponse(url=CONTINUATION_75_URL, html=""),
+        },
+        start_url=TARGET_URL,
+        config=live.LivePaginationConfig(continuation_start=25, continuation_step=25),
+    )
+
+    assert result["stop_reason"] == "empty_batch"
+    assert result["pages"] == 4
+    assert result["requests"] == 4
+    found_job_ids = result["found_job_ids"]
+    assert isinstance(found_job_ids, list)
+    assert len(found_job_ids) == 61
+    assert found_job_ids.count("1005") == 1
+    assert "2000" in found_job_ids
+    assert fetcher.requested_urls == [
+        TARGET_URL,
+        CONTINUATION_25_URL,
+        CONTINUATION_50_URL,
+        CONTINUATION_75_URL,
+    ]
+    assert sleeps == [2.0, 2.0, 2.0]
+
+
+def test_two_overlap_batches_are_allowed_before_a_new_id_batch() -> None:
+    initial_html = fixture("continuation_initial_60_synthetic.html")
+    overlap_html = fixture("continuation_overlap_start_25_synthetic.html")
+    new_html = fixture("continuation_new_batch_synthetic.html")
+    result, fetcher, _ = run(
+        {
+            TARGET_URL: FakeResponse(url=TARGET_URL, html=initial_html),
+            CONTINUATION_25_URL: FakeResponse(
+                url=CONTINUATION_25_URL, html=overlap_html
+            ),
+            CONTINUATION_50_URL: FakeResponse(
+                url=CONTINUATION_50_URL,
+                html=overlap_html.replace("Synthetic fixture", "Second overlap"),
+            ),
+            CONTINUATION_75_URL: FakeResponse(url=CONTINUATION_75_URL, html=new_html),
+        },
+        start_url=TARGET_URL,
+        config=live.LivePaginationConfig(continuation_start=25, continuation_step=25),
+    )
+
+    assert result["stop_reason"] == "page_limit"
+    assert result["pages"] == 4
+    assert result["requests"] == 4
+    found_job_ids = result["found_job_ids"]
+    assert isinstance(found_job_ids, list)
+    assert "2000" in found_job_ids
+    assert fetcher.requested_urls == [
+        TARGET_URL,
+        CONTINUATION_25_URL,
+        CONTINUATION_50_URL,
+        CONTINUATION_75_URL,
+    ]
+
+
+def test_third_overlap_batch_wins_over_simultaneous_page_and_request_limits() -> None:
+    initial_html = fixture("continuation_initial_60_synthetic.html")
+    overlap_html = fixture("continuation_overlap_start_25_synthetic.html")
+    result, fetcher, _ = run(
+        {
+            TARGET_URL: FakeResponse(url=TARGET_URL, html=initial_html),
+            CONTINUATION_25_URL: FakeResponse(
+                url=CONTINUATION_25_URL, html=overlap_html
+            ),
+            CONTINUATION_50_URL: FakeResponse(
+                url=CONTINUATION_50_URL,
+                html=overlap_html.replace("Synthetic fixture", "Second overlap"),
+            ),
+            CONTINUATION_75_URL: FakeResponse(
+                url=CONTINUATION_75_URL,
+                html=overlap_html.replace("Synthetic fixture", "Third overlap"),
+            ),
+        },
+        start_url=TARGET_URL,
+        config=live.LivePaginationConfig(continuation_start=25, continuation_step=25),
+    )
+
+    assert result["stop_reason"] == "overlap_limit"
+    assert result["pages"] == 4
+    assert result["requests"] == 4
+    assert fetcher.requested_urls == [
+        TARGET_URL,
+        CONTINUATION_25_URL,
+        CONTINUATION_50_URL,
+        CONTINUATION_75_URL,
+    ]
+
+
+def test_continuation_repeated_url_stops_before_another_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initial_html = fixture("continuation_initial_60_synthetic.html")
+    new_html = fixture("continuation_new_batch_synthetic.html")
+    monkeypatch.setattr(
+        live,
+        "build_linkedin_continuation_url",
+        lambda _target_url, _start: CONTINUATION_25_URL,
+    )
+    result, fetcher, _ = run(
+        {
+            TARGET_URL: FakeResponse(url=TARGET_URL, html=initial_html),
+            CONTINUATION_25_URL: FakeResponse(url=CONTINUATION_25_URL, html=new_html),
+        },
+        start_url=TARGET_URL,
+        config=live.LivePaginationConfig(continuation_start=25, continuation_step=25),
+    )
+
+    assert result["stop_reason"] == "repeated_url"
+    assert fetcher.requested_urls == [TARGET_URL, CONTINUATION_25_URL]
+
+
+def test_continuation_repeated_content_stops() -> None:
+    initial_html = fixture("continuation_initial_60_synthetic.html")
+    overlap_html = fixture("continuation_overlap_start_25_synthetic.html")
+    result, fetcher, _ = run(
+        {
+            TARGET_URL: FakeResponse(url=TARGET_URL, html=initial_html),
+            CONTINUATION_25_URL: FakeResponse(
+                url=CONTINUATION_25_URL, html=overlap_html
+            ),
+            CONTINUATION_50_URL: FakeResponse(
+                url=CONTINUATION_50_URL, html=overlap_html
+            ),
+        },
+        start_url=TARGET_URL,
+        config=live.LivePaginationConfig(continuation_start=25, continuation_step=25),
+    )
+
+    assert result["stop_reason"] == "repeated_content"
+    assert fetcher.requested_urls == [TARGET_URL, CONTINUATION_25_URL, CONTINUATION_50_URL]
+
+
+def test_continuation_never_exceeds_four_pages_or_requests() -> None:
+    initial_html = fixture("continuation_initial_60_synthetic.html")
+    result, fetcher, sleeps = run(
+        {
+            TARGET_URL: FakeResponse(url=TARGET_URL, html=initial_html),
+            CONTINUATION_25_URL: FakeResponse(
+                url=CONTINUATION_25_URL, html=jobs_html(["2000"])
+            ),
+            CONTINUATION_50_URL: FakeResponse(
+                url=CONTINUATION_50_URL, html=jobs_html(["2001"])
+            ),
+            CONTINUATION_75_URL: FakeResponse(
+                url=CONTINUATION_75_URL, html=jobs_html(["2002"])
+            ),
+            CONTINUATION_100_URL: FakeResponse(
+                url=CONTINUATION_100_URL, html=jobs_html(["2003"])
+            ),
+        },
+        start_url=TARGET_URL,
+        config=live.LivePaginationConfig(continuation_start=25, continuation_step=25),
+    )
+
+    assert result["stop_reason"] == "page_limit"
+    assert result["pages"] == 4
+    assert result["requests"] == 4
+    assert CONTINUATION_100_URL not in fetcher.requested_urls
+    assert sleeps == [2.0, 2.0, 2.0]
+
+
+def test_without_continuation_flags_does_not_build_continuation_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_builder(_target_url: str, _start: int | str) -> str:
+        raise AssertionError("continuation URL must not be built without explicit config")
+
+    monkeypatch.setattr(live, "build_linkedin_continuation_url", forbidden_builder)
+    result, fetcher, _ = run(
+        {PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=jobs_html(["1001"]))}
+    )
+
+    assert result["stop_reason"] == "no_next_page"
+    assert fetcher.requested_urls == [PAGE_1_URL]
+
+
 def test_three_distinct_pages_are_fetched_sequentially() -> None:
     result, fetcher, sleeps = run(
         {
@@ -238,7 +538,7 @@ def test_four_page_limit_prevents_a_fifth_request() -> None:
     )
 
     assert result["found_job_ids"] == ["1001", "1002", "1003", "1004"]
-    assert result["stop_reason"] == "max_pages"
+    assert result["stop_reason"] == "page_limit"
     assert result["pages"] == 4
     assert result["requests"] == 4
     assert fetcher.requested_urls == [PAGE_1_URL, PAGE_2_URL, PAGE_3_URL, PAGE_4_URL]
@@ -365,7 +665,7 @@ def test_stops_at_max_pages() -> None:
         config=live.LivePaginationConfig(max_pages=1),
     )
 
-    assert result["stop_reason"] == "max_pages"
+    assert result["stop_reason"] == "page_limit"
     assert fetcher.requested_urls == [PAGE_1_URL]
 
 
@@ -379,7 +679,7 @@ def test_stops_at_max_requests() -> None:
         config=live.LivePaginationConfig(max_requests=1),
     )
 
-    assert result["stop_reason"] == "max_requests"
+    assert result["stop_reason"] == "request_limit"
     assert fetcher.requested_urls == [PAGE_1_URL]
 
 
@@ -526,6 +826,91 @@ def test_consent_interstitial_stops_without_another_request() -> None:
     assert fetcher.requested_urls == [PAGE_1_URL]
 
 
+def test_cli_continuation_flags_enable_validated_guest_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    initial_html = fixture("continuation_initial_60_synthetic.html")
+    overlap_html = fixture("continuation_overlap_start_25_synthetic.html")
+    fetcher = FakeFetcher(
+        {
+            TARGET_URL: FakeResponse(url=TARGET_URL, html=initial_html),
+            CONTINUATION_25_URL: FakeResponse(
+                url=CONTINUATION_25_URL, html=overlap_html
+            ),
+            CONTINUATION_50_URL: FakeResponse(url=CONTINUATION_50_URL, html=""),
+        }
+    )
+    captured_configs: list[live.LivePaginationConfig] = []
+
+    def fake_plain_fetcher(config: live.LivePaginationConfig) -> FakeFetcher:
+        captured_configs.append(config)
+        return fetcher
+
+    preflight_path = tmp_path / "preflight.json"
+    write_preflight(preflight_path, target_url=TARGET_URL, target_allowed=False)
+    monkeypatch.setattr(live, "PlainSessionFetcher", fake_plain_fetcher)
+    sleeps: list[float] = []
+
+    exit_code = live.main(
+        [
+            "--url",
+            TARGET_URL,
+            "--confirm-live-test",
+            "--robots-preflight-result",
+            str(preflight_path),
+            "--continuation-start",
+            "25",
+            "--continuation-step",
+            "25",
+        ],
+        sleep=sleeps.append,
+        clock=lambda: 0.0,
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert result["stop_reason"] == "empty_batch"
+    assert fetcher.requested_urls == [TARGET_URL, CONTINUATION_25_URL, CONTINUATION_50_URL]
+    assert sleeps == [2.0, 2.0]
+    assert len(captured_configs) == 1
+    assert captured_configs[0].continuation_start == 25
+    assert captured_configs[0].continuation_step == 25
+
+
+def test_cli_rejects_incomplete_continuation_flags_without_requests(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    def forbidden_fetcher(_config: live.LivePaginationConfig) -> FakeFetcher:
+        raise AssertionError("fetcher must not be created for invalid continuation config")
+
+    preflight_path = tmp_path / "preflight.json"
+    write_preflight(preflight_path, target_url=TARGET_URL, target_allowed=False)
+    monkeypatch.setattr(live, "PlainSessionFetcher", forbidden_fetcher)
+
+    exit_code = live.main(
+        [
+            "--url",
+            TARGET_URL,
+            "--confirm-live-test",
+            "--robots-preflight-result",
+            str(preflight_path),
+            "--continuation-start",
+            "25",
+        ],
+        clock=lambda: 0.0,
+    )
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert result["stop_reason"] == "invalid_continuation_config"
+    assert result["requests"] == 0
+    assert result["requested_urls"] == []
+
+
 def test_robots_warning_with_confirmation_allows_four_fake_pages(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -585,7 +970,7 @@ def test_robots_warning_with_confirmation_allows_four_fake_pages(
     result = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert result["stop_reason"] == "max_pages"
+    assert result["stop_reason"] == "page_limit"
     assert result["requests"] == 4
     assert result["requested_urls"] == [PAGE_1_URL, PAGE_2_URL, PAGE_3_URL, PAGE_4_URL]
     assert result["robots_preflight"]["target_allowed"] is False
