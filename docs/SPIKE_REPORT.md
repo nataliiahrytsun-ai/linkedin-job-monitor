@@ -137,6 +137,21 @@ ID/URL duplicate detection, pagination termination, and detail extraction.
 
 ## Test and quality results
 
+### Local pagination verification — 2026-08-05
+
+A network-free pagination runner was verified with an injected in-memory source
+and three minimal synthetic HTML pages. The sequence contains two new IDs on the
+first page, one duplicate plus one new ID on the second page, and only duplicate
+IDs on the third page. The runner accumulates IDs, deduplicates cards, counts
+pages and source calls, and stops on no new IDs, repeated URLs, identical
+content, `max_pages`, or `max_requests`.
+
+This verifies only the local pagination algorithm. Real LinkedIn pagination,
+endpoints, parameters, lazy loading, and selectors remain **Not verified**. No
+network requests were made during this step, the LinkedIn target was not
+requested, and the existing robots preflight was not changed. The Milestone 1
+status remains unchanged.
+
 The first focused run was **Fail** (5 passed, 2 failed): it revealed missing
 nested description text and incomplete cross-key duplicate handling. Those
 issues were fixed. The final results must be read from the final verification
@@ -172,7 +187,7 @@ fixtures with minimal approved fragments.
 | Compliant no-login access evaluated | **Pass** | Accepted early termination: robots preflight prohibited the target request. |
 | Tested fetchers/results documented | **Pass** | HTTP robots-only test and exclusions documented. |
 | Public job fields disposition recorded | **Pass** | Not verified under the accepted early termination rule; no live claim made. |
-| Pagination/detail disposition recorded | **Pass** | Not verified under the accepted early termination rule; candidate logic is labeled. |
+| Pagination/detail disposition recorded | **Pass** | Local pagination orchestration is fixture-verified; live LinkedIn pagination and details remain not verified. |
 | Counts, timings, failures, limitations recorded | **Pass** | One request, 0.367 s; policy stop recorded. |
 | Initial fixture extraction tests pass | **Pass** | Synthetic fixture suite passes in final verification. |
 | No access-control circumvention | **Pass** | No target request, stealth, proxy, login, or cookie. |
@@ -186,12 +201,13 @@ remain explicitly not verified and must not be presented as extraction evidence.
 
 Final executed repository checks:
 
-- Focused tests: **Pass**, 7 passed, 5 third-party lxml deprecation warnings,
-  0 failed in 0.06 s.
-- Full available suite: **Pass**, 8 passed, the same 5 warnings, 0 failed in
-  0.22 s. It includes the mocked no-network policy-gate test.
-- Ruff: **Pass**, no findings after annotating mutable test class attributes.
-- MyPy strict: **Pass**, no issues in 6 source files.
+- Focused pagination/extraction/preflight tests: **Pass**, 15 passed, 12
+  third-party lxml deprecation warnings, 0 failed in 0.20 s.
+- Full available suite: **Pass**, 15 passed, the same 12 warnings, 0 failed in
+  0.19 s. It includes the local pagination suite and mocked no-network policy
+  gate test.
+- Ruff: **Pass**, no findings.
+- MyPy strict: **Pass**, no issues in 8 source files.
 - Repository hygiene: **Pass** for ignored environments/caches/database patterns
   and the absence of stored credentials, cookies, browser profiles, databases,
   or full LinkedIn HTML responses.

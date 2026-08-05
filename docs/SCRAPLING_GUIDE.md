@@ -181,8 +181,15 @@ query/fragment as a fallback. This is fixture-verified, not live-verified.
 
 **Open question:** the real endpoint, parameters, page size, and lazy-loading
 behavior were not requested after the robots denial. Candidate termination is
-fixture-tested: stop on no new stable IDs, `max_pages`, or `max_requests`. Also
-retain request fingerprints so a repeated page cannot create an infinite loop.
+now verified locally with three synthetic pages and an injected in-memory page
+source. The runner accumulates stable job IDs across pages, deduplicates cards,
+counts fetched pages and source calls, and stops on no new IDs, a repeated URL,
+identical content, `max_pages`, or `max_requests`.
+
+This verifies the orchestration algorithm only. Real LinkedIn pagination,
+pagination URLs, page size, lazy loading, and current selectors remain **Not
+verified**. This local verification made no network requests and did not alter
+the robots preflight.
 
 ### Fallbacks and HTML-change detection
 
@@ -219,8 +226,10 @@ is **Not verified**.
 
 ## 7. Testing and diagnostics
 
-Normal tests instantiate `Selector` from minimal synthetic fixtures and make no
-network calls. Live preflight is a separate command:
+Normal tests instantiate `Selector` from minimal synthetic fixtures. Pagination
+tests use an injected in-memory source backed by three synthetic HTML files; the
+runner has no HTTP dependency and makes no network calls. Live preflight remains
+a separate command:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
@@ -277,4 +286,3 @@ whitelisting; no permission was supplied).
 - [Requests and responses](https://scrapling.readthedocs.io/en/latest/spiders/requests-responses.html)
 - [Spider sessions](https://scrapling.readthedocs.io/en/latest/spiders/sessions.html)
 - [Concurrency, statistics, streaming, pause/resume](https://scrapling.readthedocs.io/en/latest/spiders/advanced.html)
-
