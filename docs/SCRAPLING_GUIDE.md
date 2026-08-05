@@ -204,18 +204,28 @@ source. The runner accumulates stable job IDs across pages, deduplicates cards,
 counts fetched pages and source calls, and stops on no new IDs, a repeated URL,
 identical content, `max_pages`, or `max_requests`.
 
-This verifies the orchestration algorithm only. Full LinkedIn pagination,
-continuation sequencing, page size, and lazy loading remain **Not verified**.
-This local verification made no network requests and did not alter the robots
-preflight.
+Commit `5096e5a901220149916685660fdf1cba50c1231d` adds a validated
+`seeMoreJobPostings` continuation URL derived only from the confirmed company
+jobs path, `f_C`, and explicit `start`/step configuration. Synthetic/offline
+tests verify global Job ID deduplication, continuation after one or two
+overlap-only batches, reset after a batch with a new ID, `overlap_limit` on the
+third consecutive overlap, empty/repeated response termination, and the hard
+4-request/4-page limits. These tests made no network requests.
+
+Full LinkedIn pagination, the actual offset sequence beyond the configured
+diagnostic values, page size, and lazy loading remain **Not verified**.
 
 ### Limited pagination diagnostics closeout
 
 The canonical closeout is
 [`docs/diagnostics/linkedin-pagination-2026-08-05.md`](diagnostics/linkedin-pagination-2026-08-05.md).
 **Live extraction is Verified; full live pagination is Not verified.** The
-continuation endpoint was observed manually, but the runner does not implement
-or verify it. No further live run is authorized by this closeout.
+continuation endpoint was observed manually and is now implemented and verified
+synthetically/offline. Under the existing team instruction to test pagination
+locally with only a few requests, exactly one limited post-fix validation run is
+permitted with a fresh robots preflight, the exact prior target URL,
+`--confirm-live-test`, `--continuation-start 25`, and `--continuation-step 25`.
+No additional live run or production use is permitted.
 
 ### Fallbacks and HTML-change detection
 
@@ -255,7 +265,7 @@ concurrency at 1 initially, add bounded exponential backoff only for transient
 timeouts/5xx, and never retry 401/403/429 aggressively. Expected target runtime
 is **Not verified**.
 
-The completed final validation retained the separate fixed limits of at most 4
+The limited post-fix validation retains the separate fixed limits of at most 4
 pages and 4 target requests, concurrency 1, at least a 2-second delay, one
 attempt with no retry, and no followed technical-block continuation.
 
@@ -294,8 +304,9 @@ authwall/checkpoint, changed HTML, and JavaScript-only content. At the time of
 the completed milestone, the first two were confirmed (robots text directs
 crawlers to request whitelisting; no permission had been supplied). The
 existing team instruction covered the inconclusive first diagnostic, the
-corrective diagnostic, and the completed final validation. The closeout does
-not authorize another live run or production use.
+corrective diagnostic, the completed extraction validation, and exactly one
+limited post-fix continuation validation. It does not authorize an additional
+live run or production use.
 
 ## 8. Extension path
 

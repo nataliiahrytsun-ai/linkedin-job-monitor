@@ -108,14 +108,26 @@ DOM fragment now produces one card with ID `4447661197` and title
 `Delivery Manager`; the full suite passed with 60 tests, and Ruff and MyPy
 strict passed.
 
-The final limited plain-HTTP validation after that fix completed with HTTP 200,
+The final limited plain-HTTP extraction validation after that fix completed with HTTP 200,
 no redirects, and 60 unique LinkedIn Job IDs including `4447661197`; it stopped
 with `no_next_page`. Live extraction is **Verified**, while full live pagination
 remains **Not verified**. The canonical closeout is
 [`docs/diagnostics/linkedin-pagination-2026-08-05.md`](docs/diagnostics/linkedin-pagination-2026-08-05.md).
 
-This documented exception permits no further live run, production scraping, or
-full server-side scraping.
+Commit `5096e5a901220149916685660fdf1cba50c1231d` implements validated
+`seeMoreJobPostings` continuation URLs and synthetic/offline handling of
+overlapping batches. Two consecutive overlap-only batches are allowed, a batch
+with a new Job ID resets the counter, and the third consecutive overlap stops
+with `overlap_limit`; the hard limit remains 4 target requests and 4 pages.
+
+Under the existing team instruction to test pagination locally with only a few
+requests, exactly one limited post-fix validation run is permitted for this
+implementation. It requires a fresh robots preflight, the exact previously
+tested target URL, `--confirm-live-test`, `--continuation-start 25`, and
+`--continuation-step 25`, with all existing safety limits. Full live pagination
+must remain **Not verified** until the actual result satisfies the documented
+criteria. No additional live run, production scraping, or full server-side
+scraping is permitted.
 
 ## Scrapling
 

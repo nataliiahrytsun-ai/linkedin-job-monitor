@@ -346,7 +346,7 @@ Karte mit Job-ID `4447661197` und Titel `Delivery Manager` extrahiert. Die
 vollständige Testsuite bestand mit 60 Tests; Ruff und MyPy strict bestanden
 ebenfalls.
 
-Der finale begrenzte Plain-HTTP-Validierungslauf nach diesem Fix ist
+Der finale begrenzte Plain-HTTP-Extraktionslauf nach diesem Fix ist
 abgeschlossen. Er erhielt HTTP 200 ohne Redirects und extrahierte 60 eindeutige
 LinkedIn-Job-IDs einschließlich `4447661197`; der Lauf endete mit
 `stop_reason="no_next_page"`. Die Live-Extraktion ist **Verified**, die
@@ -354,8 +354,21 @@ vollständige Live-Pagination bleibt **Not verified**. Der kanonische Abschluss
 steht in
 [`docs/diagnostics/linkedin-pagination-2026-08-05.md`](diagnostics/linkedin-pagination-2026-08-05.md).
 
-Dieser dokumentierte Ausnahmefall erlaubt keinen weiteren Live-Lauf, kein
-Production Scraping und keinen vollständigen serverseitigen Scrape.
+Commit `5096e5a901220149916685660fdf1cba50c1231d` implementiert validierte
+`seeMoreJobPostings`-Continuation-URLs und die mit synthetischen Offline-Tests
+geprüfte Behandlung überlappender Batches. Zwei aufeinanderfolgende reine
+Overlap-Batches sind zulässig, ein Batch mit einer neuen Job-ID setzt den
+Zähler zurück, und der dritte aufeinanderfolgende Overlap beendet den Lauf mit
+`overlap_limit`; die harte Grenze bleibt bei 4 Target-Requests und 4 Seiten.
+
+Im Rahmen der bestehenden Teamanweisung, die Pagination lokal mit nur wenigen
+Requests zu testen, ist genau ein begrenzter Post-Fix-Validierungslauf für diese
+Implementierung zulässig. Er erfordert einen frischen Robots-Preflight, dieselbe
+exakte Target-URL, `--confirm-live-test`, `--continuation-start 25` und
+`--continuation-step 25` sowie alle bestehenden Sicherheitsgrenzen. Die
+vollständige Live-Pagination bleibt bis zu einem entsprechenden tatsächlichen
+Ergebnis **Not verified**. Weitere Live-Läufe, Production Scraping und ein
+vollständiger serverseitiger Scrape sind nicht zulässig.
 
 Außerhalb dieser Ausnahme gilt weiterhin: Wenn LinkedIn den öffentlichen Zugriff
 technisch blockiert, muss der Lauf kontrolliert fehlschlagen und einen
