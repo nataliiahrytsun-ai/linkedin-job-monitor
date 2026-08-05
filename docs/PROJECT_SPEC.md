@@ -303,6 +303,45 @@ weder vollständiges oder serverseitiges Scraping noch einen Production-Betrieb
 oder die Umgehung von LinkedIn-Beschränkungen. Production erfordert eine eigene
 Entscheidung des Teams.
 
+#### Ergebnis des ersten Laufs und ein Corrective Rerun
+
+Der erste begrenzte Live-Pagination-Lauf wurde mit exakt dieser URL ausgeführt:
+`https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C30242966`.
+Der aktuelle Robots-Preflight stellte genau einen Request an `robots.txt`,
+erhielt HTTP 200, zeichnete `target_allowed=false` auf und rief die Target-Seite
+nicht ab. Der mit `--confirm-live-test` bestätigte Live-Runner stellte danach
+genau einen Target-Request, erhielt HTTP 200 ohne Redirects, fand keine Job-IDs,
+stellte keinen weiteren Request und zeichnete `stop_reason="captcha"` auf.
+
+Das Ergebnis ist **Inconclusive** — the response was classified as CAPTCHA by
+the previous broad raw-HTML marker check, but the saved report does not contain
+enough evidence to confirm that a CAPTCHA was actually presented. Der frühere
+fehlerhafte Klassifikator wertete `captcha` oder `security verification` an
+beliebiger Stelle im Raw HTML als CAPTCHA-Signal; das konnte auch JavaScript,
+Metadaten, Resource-URLs oder versteckten Text betreffen. Commit
+`7613ef9d8bdcc8ac252047d61d7aa46edd2d4318` ersetzte die
+Raw-Substring-Suche durch eine strukturelle CAPTCHA-Diagnostik und ergänzte die
+sicheren Berichtsfelder `block_reason` und `block_evidence`. Die reale
+LinkedIn-Pagination bleibt **Not verified**.
+
+Im Rahmen der bestehenden Teamanweisung, die Pagination lokal mit nur wenigen
+Requests zu testen, ist genau ein korrigierender Diagnoselauf zulässig, weil der
+erste Lauf keine verlässlichen Erkenntnisse zur Pagination geliefert hat. Dafür
+sind ein neuer aktueller Robots-Preflight, dieselbe exakte Target-URL und
+`--confirm-live-test` zwingend. Es gelten weiterhin maximal 4 Target-Requests
+und 4 Joblistenseiten, sequenzielle Ausführung mit mindestens 2 Sekunden Pause,
+kein Login, keine Cookies, Proxies, IP-Wechsel, Stealth-Funktionen,
+Browser-Fetcher, Impersonation oder Retries, keine Detailseiten-Requests und
+keine Speicherung vollständiger HTML-Antworten. Bei einer bestätigten
+Blockierung oder einer anderen Abbruchbedingung muss der Lauf sofort ohne
+weiteren Request enden.
+
+Dieser begrenzte korrigierende Diagnoselauf erlaubt keinen weiteren
+Wiederholungslauf, kein Production Scraping und keinen vollständigen
+serverseitigen Scrape. Historische JSON-Berichte dürfen nicht verändert werden;
+der korrigierende Diagnoselauf darf vor seiner tatsächlichen Ausführung nicht
+als ausgeführt dargestellt werden.
+
 Außerhalb dieser Ausnahme gilt weiterhin: Wenn LinkedIn den öffentlichen Zugriff
 technisch blockiert, muss der Lauf kontrolliert fehlschlagen und einen
 verständlichen Fehlerstatus liefern. Es soll keine Umgehung implementiert werden.

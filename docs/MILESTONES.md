@@ -63,31 +63,49 @@ live extraction claim may be made.
 the runner stopped before the target request, and the result was documented as
 `Not feasible through compliant public access`.
 
-### Approved limited pagination follow-up
+### Limited pagination follow-up and one corrective rerun
 
-The completed outcome above remains the historical Milestone 1 result. For a
-future pagination spike only, the team now permits one manually confirmed local
-diagnostic run against public LinkedIn job-listing pages. The run must require
-`--confirm-live-test`.
+The completed outcome above remains the historical Milestone 1 result. The
+first manually confirmed limited live pagination run used exactly:
+`https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C30242966`.
 
-The runner must still check `robots.txt` and record its result. `Disallow: /` is
-a warning and an ordinary-operation limitation, but it does not block this
-specific confirmed diagnostic run. The exception is limited to:
+Its current robots preflight made one request to `robots.txt`, returned HTTP
+200, recorded `target_allowed=false`, and did not request the target page. With
+`--confirm-live-test`, the live runner then made exactly one target request,
+received HTTP 200 with no redirects, found no Job IDs, made no next request, and
+recorded `stop_reason="captcha"`.
 
-- at most 4 job-listing pages and 4 target-page requests;
-- sequential requests separated by at least 2 seconds;
-- no login, cookies, proxy, IP rotation, stealth, browser fetcher,
+The result is **Inconclusive** — the response was classified as CAPTCHA by the
+previous broad raw-HTML marker check, but the saved report does not contain
+enough evidence to confirm that a CAPTCHA was actually presented. The defective
+classifier matched `captcha` or `security verification` anywhere in raw HTML,
+including possible JavaScript, metadata, resource URLs, or hidden text. Commit
+`7613ef9d8bdcc8ac252047d61d7aa46edd2d4318` replaced that check with
+structural CAPTCHA diagnostics and added safe `block_reason` and
+`block_evidence` report fields. Real LinkedIn pagination remains **Not
+verified**.
+
+Under the existing team instruction to test pagination locally with only a few
+requests, exactly one corrective diagnostic rerun is permitted because the
+first run did not produce reliable pagination evidence. It must:
+
+- create a new current robots preflight and record its result;
+- use the same exact target URL above and require `--confirm-live-test`;
+- make at most 4 target requests across at most 4 job-listing pages;
+- run sequentially with at least 2 seconds between requests;
+- use no login, cookies, proxy, IP rotation, stealth, browser fetcher,
   impersonation, retry, detail-page request, or saved full HTML response;
-- early termination when pagination is sufficiently confirmed, no confirmed
-  next-page link or new job ID exists, or a URL/content repeats;
-- immediate termination without another request on HTTP 401, 403, or 429,
-  login/authwall/checkpoint redirect, CAPTCHA, access denied,
-  consent/interstitial content, or any other technical block.
+- terminate without another request on no confirmed next-page link, no new Job
+  ID, repeated URL/content, or a page/request limit;
+- terminate immediately without another request on HTTP 401, 403, or 429, a
+  login/authwall/checkpoint redirect, confirmed CAPTCHA, access denied,
+  consent/interstitial content, or any other confirmed technical block.
 
-This follow-up does not change the Milestone 1 status and does not claim that
-real LinkedIn pagination has been verified. It does not authorize Milestone 2
-LinkedIn scraping, production execution, full-server scraping, or circumvention.
-Any production use still requires a separate team decision.
+This limited corrective rerun does not change the Milestone 1 status, represent
+the rerun as completed, or permit additional reruns, Milestone 2 LinkedIn
+scraping, production execution, full server-side scraping, or circumvention.
+Any production use still requires a separate team decision. Historical
+diagnostic JSON files must remain unchanged.
 
 ---
 

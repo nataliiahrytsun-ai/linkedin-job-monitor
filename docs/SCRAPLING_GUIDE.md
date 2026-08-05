@@ -7,11 +7,14 @@ This guide describes Scrapling 0.4.8, the version installed and inspected on
 the [official documentation](https://scrapling.readthedocs.io/en/latest/). LinkedIn-specific
 claims use these labels:
 
-- **Verified:** observed in this repository's executed tests or live preflight.
-- **Not verified:** implemented against synthetic HTML only.
+- **Verified:** observed in this repository's executed tests, live preflight, or
+  separately approved live diagnostic.
+- **Not verified:** not established by reliable live evidence; it may have been
+  implemented or tested against synthetic HTML only.
 - **Assumption:** a proposed future design, not experimental evidence.
-- **Open question:** not yet answered by the approved but unexecuted limited
-  pagination diagnostic.
+- **Open question:** not answered by the inconclusive first limited pagination
+  diagnostic and not yet answered by the limited corrective rerun under the
+  existing team instruction.
 
 ## 1. Overview and project decision
 
@@ -21,9 +24,12 @@ an offline `Selector`. The project selected it because one library can support a
 small HTTP probe now and a bounded Spider crawl later, if compliant access is
 obtained.
 
-**Verified:** this milestone uses `FetcherSession` for a single public
+**Verified:** the original milestone used `FetcherSession` for a single public
 `robots.txt` request and `Selector` for offline fixture parsing. No target job
-page was requested because LinkedIn's current `User-agent: *` rule disallows `/`.
+page was requested during that original run because LinkedIn's current
+`User-agent: *` rule disallows `/`. A later limited diagnostic under the
+existing team instruction made one target request as recorded below; its result
+was inconclusive.
 
 The following are not used in this project at Milestone 1:
 
@@ -143,12 +149,16 @@ The selection order is:
 6. Consider `DynamicFetcher` only if allowed HTTP responses omit data that a
    normal public browser shows solely after JavaScript execution.
 
-**Verified:** only `FetcherSession` was actually tested, and only against
-`https://www.linkedin.com/robots.txt`. It returned HTTP 200 without redirect.
+**Verified:** `FetcherSession` was tested against
+`https://www.linkedin.com/robots.txt`, which returned HTTP 200 without redirect.
+The first limited diagnostic under the existing team instruction also made one
+ordinary target HTTP request, which returned HTTP 200 without redirects, but
+its content classification was inconclusive.
 
-**Not verified:** ordinary target HTTP, async target HTTP, browser rendering,
-job-card/detail extraction, performance differences, and session reuse across
-multiple target requests. `StealthyFetcher` must not be tested for LinkedIn.
+**Not verified:** successful target job-card extraction, async target HTTP,
+browser rendering, job-card/detail extraction, performance differences, and
+session reuse across multiple target requests. `StealthyFetcher` must not be
+tested for LinkedIn.
 
 ## 5. LinkedIn-specific extraction design
 
@@ -198,15 +208,34 @@ pagination URLs, page size, lazy loading, and current selectors remain **Not
 verified**. This local verification made no network requests and did not alter
 the robots preflight.
 
-### Approved future limited pagination diagnostic
+### First limited diagnostic and corrective rerun under the existing instruction
 
-The team has approved a future, manually confirmed local test of public LinkedIn
-job-listing pagination. This changes the rule for that test only; it is not
-evidence that the test has run or that real pagination works.
+The first manually confirmed limited live run used exactly:
+`https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C30242966`.
+Its new robots preflight made one `robots.txt` request, returned HTTP 200,
+recorded `target_allowed=false`, and did not request the target page. The live
+runner then made exactly one target request, received HTTP 200 with no
+redirects, found no Job IDs, made no next request, and recorded
+`stop_reason="captcha"`.
+
+This result is **Inconclusive** — the response was classified as CAPTCHA by the
+previous broad raw-HTML marker check, but the saved report does not contain
+enough evidence to confirm that a CAPTCHA was actually presented. The previous
+classifier matched `captcha` or `security verification` anywhere in raw HTML,
+including possible JavaScript, metadata, resource URLs, or hidden text. Commit
+`7613ef9d8bdcc8ac252047d61d7aa46edd2d4318` replaced raw-substring
+matching with structural CAPTCHA diagnostics and added safe `block_reason` and
+`block_evidence` fields. Real LinkedIn pagination remains **Not verified**.
+
+Under the existing team instruction to test pagination locally with only a few
+requests, exactly one corrective diagnostic rerun is permitted because the
+first run did not produce reliable pagination evidence. This describes a future
+run, not evidence that the rerun has occurred:
 
 - Require `--confirm-live-test`; without it, make no target request.
-- Check robots first and include its result in the diagnostic JSON. Record
-  `Disallow: /` as a warning rather than a blocker for this one test.
+- Create a new current robots preflight, check the same exact target URL above,
+  and include the robots result in the diagnostic JSON. Record `Disallow: /` as
+  a warning rather than a blocker for this one test.
 - Fetch at most 4 job-listing pages with at most 4 target-page requests.
 - Execute sequentially and wait at least 2 seconds between requests.
 - Use plain HTTP only: no login, cookies, proxy/IP rotation, stealth, browser
@@ -218,8 +247,9 @@ evidence that the test has run or that real pagination works.
   401/403/429, login/authwall/checkpoint redirect, CAPTCHA, access denied,
   consent/interstitial content, or any other technical block.
 
-This permission does not extend to normal crawling, production or server-side
-scraping, or circumvention. Production requires a separate team decision.
+This permission does not extend to another rerun, normal crawling, production
+or full server-side scraping, or circumvention. Production requires a separate
+team decision. Historical diagnostic JSON files must not be changed.
 
 ### Fallbacks and HTML-change detection
 
@@ -255,10 +285,11 @@ concurrency at 1 initially, add bounded exponential backoff only for transient
 timeouts/5xx, and never retry 401/403/429 aggressively. Expected target runtime
 is **Not verified**.
 
-The approved but unexecuted limited pagination diagnostic has a separate fixed
-configuration: at most 4 pages and 4 target requests, concurrency 1, at least a
-2-second delay, one attempt with no retry, and no followed technical-block
-continuation. The robots request and result are recorded separately.
+The not-yet-executed limited corrective pagination diagnostic under the
+existing team instruction has a separate fixed configuration: at most 4 pages
+and 4 target requests, concurrency 1, at least a 2-second delay, one attempt
+with no retry, and no followed technical-block continuation. A new robots
+request and result must be recorded separately before that rerun.
 
 ## 7. Testing and diagnostics
 
@@ -293,9 +324,10 @@ Diagnostic order:
 Likely blockers are robots denial, lack of express crawl permission, 403/429,
 authwall/checkpoint, changed HTML, and JavaScript-only content. At the time of
 the completed milestone, the first two were confirmed (robots text directs
-crawlers to request whitelisting; no permission had been supplied). The later
-team approval is limited to the future diagnostic described above and does not
-change that historical observation.
+crawlers to request whitelisting; no permission had been supplied). The
+existing team instruction covers only the inconclusive first diagnostic and
+exactly one future corrective rerun described above; it does not change that
+historical observation or authorize production use.
 
 ## 8. Extension path
 

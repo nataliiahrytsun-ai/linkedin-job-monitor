@@ -69,6 +69,40 @@ This exception authorizes only the limited local pagination spike. It does not
 authorize production scraping, full-server scraping, or circumvention of
 LinkedIn restrictions. Production use requires a separate team decision.
 
+### First pagination diagnostic and corrective rerun
+
+The first limited live pagination run used exactly:
+`https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C30242966`.
+Its fresh robots preflight made one request to `robots.txt`, received HTTP 200,
+recorded `target_allowed=false`, and did not request the target page. The
+confirmed live runner then made exactly one target request, received HTTP 200
+with no redirects, found no Job IDs, made no next request, and recorded
+`stop_reason="captcha"`.
+
+That result is **Inconclusive** — the response was classified as CAPTCHA by the
+previous broad raw-HTML marker check, but the saved report does not contain
+enough evidence to confirm that a CAPTCHA was actually presented. The previous
+classifier treated `captcha` or `security verification` anywhere in raw HTML,
+including possible JavaScript, metadata, resource URLs, or hidden text, as a
+CAPTCHA signal. Commit `7613ef9d8bdcc8ac252047d61d7aa46edd2d4318`
+replaced that raw-substring check with structural CAPTCHA diagnostics and added
+safe `block_reason` and `block_evidence` fields. Real LinkedIn pagination
+remains **Not verified**.
+
+Under the existing team instruction to test pagination locally with only a few
+requests, exactly one corrective diagnostic rerun is permitted because the
+first run did not produce reliable pagination evidence. It must use a new
+current robots preflight, the same exact target URL above, and
+`--confirm-live-test`. All existing limits remain mandatory: at most 4 target
+requests and 4 job-listing pages, sequential execution with at least 2 seconds
+between requests, no login, cookies, proxy/IP rotation, stealth, browser
+fetcher, impersonation, retry, detail-page requests, or full-HTML storage, and
+immediate termination on a confirmed block or any other termination condition.
+
+This documented exception does not permit any further rerun, production
+scraping, or full server-side scraping. Do not alter the historical JSON reports
+or describe the corrective rerun as completed before it actually runs.
+
 ## Scrapling
 
 Scrapling is the required scraping framework.
