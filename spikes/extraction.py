@@ -59,6 +59,42 @@ def _all_text(node: Selector, css: str) -> str | None:
     return _clean(" ".join(selected[0].xpath(".//text()").getall()))
 
 
+def _visible_link_text(link: Selector) -> str | None:
+    text_nodes = link.xpath(
+        ".//text()["
+        "not(ancestor::*[@hidden]) and "
+        "not(ancestor::*[@aria-hidden='true']) and "
+        "not(ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' sr-only ')]) and "
+        "not(ancestor::*[contains(translate(@style, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', "
+        "'abcdefghijklmnopqrstuvwxyz'), 'display:none')]) and "
+        "not(ancestor::*[contains(translate(@style, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', "
+        "'abcdefghijklmnopqrstuvwxyz'), 'visibility:hidden')])"
+        "]"
+    ).getall()
+    return _clean(" ".join(text_nodes))
+
+
+def _link_title(link: Selector) -> str | None:
+    return (
+        _first_text(link, selectors.JOB_TITLE)
+        or _first_text(link, selectors.JOB_LINK_SCREEN_READER_TITLE)
+        or _clean(link.attrib.get("aria-label"))
+        or _visible_link_text(link)
+    )
+
+
+def _validated_linkedin_job_url(href: str | None, base_url: str) -> str | None:
+    if not href:
+        return None
+    absolute_url = urljoin(base_url, href)
+    parsed = urlparse(absolute_url)
+    hostname = (parsed.hostname or "").casefold()
+    is_linkedin_host = hostname == "linkedin.com" or hostname.endswith(".linkedin.com")
+    if parsed.scheme not in {"http", "https"} or not is_linkedin_host:
+        return None
+    return absolute_url
+
+
 def extract_linkedin_job_id(*values: str | None) -> str | None:
     """Return the first numeric LinkedIn job ID found in attributes or URLs."""
     for value in values:
@@ -74,24 +110,51 @@ def extract_linkedin_job_id(*values: str | None) -> str | None:
 def extract_job_cards(html: str, base_url: str = "https://www.linkedin.com") -> list[JobCard]:
     page = Selector(content=html, url=base_url)
     cards: list[JobCard] = []
+    seen_job_ids: set[str] = set()
+
     for node in page.css(selectors.JOB_CARD):
-        link = node.css(selectors.JOB_LINK).get()
-        href = None
-        if link:
-            link_node = node.css(selectors.JOB_LINK)[0]
-            href = _clean(link_node.attrib.get("href"))
+        link_nodes = node.css(selectors.JOB_LINK)
+        link_node = link_nodes[0] if link_nodes else None
+        href = _clean(link_node.attrib.get("href")) if link_node is not None else None
         absolute_url = urljoin(base_url, href) if href else None
         id_candidates = [node.attrib.get(attribute) for attribute in selectors.JOB_ID_ATTRIBUTES]
+        job_id = extract_linkedin_job_id(*id_candidates, absolute_url)
+        if job_id is not None and job_id in seen_job_ids:
+            continue
         cards.append(
             JobCard(
-                linkedin_job_id=extract_linkedin_job_id(*id_candidates, absolute_url),
-                title=_first_text(node, selectors.JOB_TITLE),
+                linkedin_job_id=job_id,
+                title=_first_text(node, selectors.JOB_TITLE)
+                or (_link_title(link_node) if link_node is not None else None),
                 company=_first_text(node, selectors.JOB_COMPANY),
                 location=_first_text(node, selectors.JOB_LOCATION),
                 published_at=_clean(node.css(selectors.JOB_PUBLISHED_AT).get()),
                 job_url=absolute_url,
             )
         )
+        if job_id is not None:
+            seen_job_ids.add(job_id)
+
+    for link_node in page.css(selectors.JOB_LINK_FALLBACK):
+        href = _clean(link_node.attrib.get("href"))
+        absolute_url = _validated_linkedin_job_url(href, base_url)
+        job_id = extract_linkedin_job_id(absolute_url)
+        if absolute_url is None or job_id is None or not job_id.isdigit():
+            continue
+        if job_id in seen_job_ids:
+            continue
+        cards.append(
+            JobCard(
+                linkedin_job_id=job_id,
+                title=_link_title(link_node),
+                company=None,
+                location=None,
+                published_at=None,
+                job_url=absolute_url,
+            )
+        )
+        seen_job_ids.add(job_id)
+
     return cards
 
 

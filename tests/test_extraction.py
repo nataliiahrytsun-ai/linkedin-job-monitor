@@ -41,6 +41,77 @@ def test_missing_card_fields_are_none() -> None:
     assert card.published_at is None
 
 
+def test_extracts_rendered_standalone_job_link() -> None:
+    cards = extract_job_cards(
+        fixture("job_card_rendered_link_synthetic.html"),
+        base_url="https://in.linkedin.com/jobs/",
+    )
+
+    assert len(cards) == 1
+    assert cards[0].linkedin_job_id == "4447661197"
+    assert cards[0].title == "Delivery Manager"
+    assert cards[0].job_url == (
+        "https://in.linkedin.com/jobs/view/"
+        "delivery-manager-at-acuity-analytics-4447661197"
+    )
+
+
+def test_container_and_link_fallback_return_one_card_per_job_id() -> None:
+    html = """
+    <li class="jobs-search-results__list-item" data-job-id="4447661197">
+      <a href="/jobs/view/delivery-manager-4447661197">
+        <h3 class="base-search-card__title">Delivery Manager</h3>
+      </a>
+    </li>
+    """
+
+    cards = extract_job_cards(html)
+
+    assert len(cards) == 1
+    assert cards[0].linkedin_job_id == "4447661197"
+
+
+def test_standalone_job_link_rejects_non_linkedin_domain() -> None:
+    html = '<a href="https://example.com/jobs/view/example-4447661197">Example</a>'
+
+    assert extract_job_cards(html) == []
+
+
+def test_standalone_job_link_rejects_missing_numeric_job_id() -> None:
+    html = '<a href="https://www.linkedin.com/jobs/view/delivery-manager">Delivery Manager</a>'
+
+    assert extract_job_cards(html) == []
+
+
+def test_standalone_relative_job_link_resolves_against_linkedin_base_url() -> None:
+    html = '<a href="/jobs/view/delivery-manager-4447661197">Delivery Manager</a>'
+
+    cards = extract_job_cards(html, base_url="https://in.linkedin.com/jobs/search")
+
+    assert len(cards) == 1
+    assert cards[0].job_url == "https://in.linkedin.com/jobs/view/delivery-manager-4447661197"
+
+
+def test_standalone_job_link_allows_missing_title() -> None:
+    html = '<a href="https://www.linkedin.com/jobs/view/4447661197"></a>'
+
+    cards = extract_job_cards(html)
+
+    assert len(cards) == 1
+    assert cards[0].title is None
+
+
+def test_standalone_job_link_title_falls_back_to_aria_label_then_visible_text() -> None:
+    aria_html = (
+        '<a href="https://www.linkedin.com/jobs/view/4447661197" '
+        'aria-label="Delivery Manager"></a>'
+    )
+    text_html = '<a href="https://www.linkedin.com/jobs/view/4447661198">QA Manager</a>'
+
+    assert extract_job_cards(aria_html)[0].title == "Delivery Manager"
+    assert extract_job_cards(text_html)[0].title == "QA Manager"
+
+
 def test_extracts_id_from_supported_public_shapes() -> None:
     assert extract_linkedin_job_id("urn:li:jobPosting:123456") == "123456"
     assert extract_linkedin_job_id("https://www.linkedin.com/jobs/view/name-234567") == "234567"
