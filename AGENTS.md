@@ -110,8 +110,8 @@ strict passed.
 
 The final limited plain-HTTP extraction validation after that fix completed with HTTP 200,
 no redirects, and 60 unique LinkedIn Job IDs including `4447661197`; it stopped
-with `no_next_page`. Live extraction is **Verified**, while full live pagination
-remains **Not verified**. The canonical closeout is
+with `no_next_page`. Live extraction was **Verified**, while full live
+pagination remained **Not verified at that stage**. The canonical closeout is
 [`docs/diagnostics/linkedin-pagination-2026-08-05.md`](docs/diagnostics/linkedin-pagination-2026-08-05.md).
 
 Commit `5096e5a901220149916685660fdf1cba50c1231d` implements validated
@@ -121,13 +121,20 @@ with a new Job ID resets the counter, and the third consecutive overlap stops
 with `overlap_limit`; the hard limit remains 4 target requests and 4 pages.
 
 Under the existing team instruction to test pagination locally with only a few
-requests, exactly one limited post-fix validation run is permitted for this
-implementation. It requires a fresh robots preflight, the exact previously
-tested target URL, `--confirm-live-test`, `--continuation-start 25`, and
-`--continuation-step 25`, with all existing safety limits. Full live pagination
-must remain **Not verified** until the actual result satisfies the documented
-criteria. No additional live run, production scraping, or full server-side
-scraping is permitted.
+requests, exactly one limited post-fix validation run was completed for this
+implementation. It used a fresh robots preflight, the exact previously tested
+target URL, `--confirm-live-test`, `--continuation-start 25`, and
+`--continuation-step 25`, with all existing safety limits. The run made 4 target
+requests for 4 pages, used continuation offsets 25, 50, and 75, received HTTP
+200 without redirects for every request, and grew the saved 60-ID initial
+baseline to a globally deduplicated union of 82 IDs. It stopped at
+`page_limit`, with `block_reason=null` and `block_evidence=null`.
+
+Full live pagination is **Verified for this limited diagnostic** because the
+guest endpoint added 22 IDs outside the saved initial baseline without a block
+or limit violation. This does not claim collection of every displayed vacancy.
+No additional live run, production scraping, or full server-side scraping is
+permitted.
 
 ## Scrapling
 

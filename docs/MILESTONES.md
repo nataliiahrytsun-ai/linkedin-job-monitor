@@ -67,14 +67,15 @@ the runner stopped before the target request, and the result was documented as
 
 The canonical closeout is
 [`docs/diagnostics/linkedin-pagination-2026-08-05.md`](diagnostics/linkedin-pagination-2026-08-05.md).
-**Live extraction is Verified; full live pagination is Not verified.** The
+**Live extraction is Verified; full live pagination is Verified for the limited
+diagnostic.** The
 historical Milestone 1 outcome above is unchanged. Validated
 `seeMoreJobPostings` continuation and overlapping-batch handling are now
-implemented and verified with synthetic/offline tests. Under the existing team
-instruction to test pagination locally with only a few requests, exactly one
-limited post-fix validation run is permitted; full live pagination remains
-**Not verified** pending its actual result. No additional live run is permitted,
-and production use still requires a separate team decision.
+implemented, verified with synthetic/offline tests, and exercised by exactly one
+limited post-fix validation. It made 4 requests for 4 pages, used offsets 25,
+50, and 75, and produced 22 IDs outside the saved initial 60-ID baseline before
+stopping at `page_limit`; no technical block occurred. No additional live run
+is permitted, and production use still requires a separate team decision.
 
 ---
 

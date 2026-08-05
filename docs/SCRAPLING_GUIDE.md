@@ -12,8 +12,8 @@ claims use these labels:
 - **Not verified:** not established by reliable live evidence; it may have been
   implemented or tested against synthetic HTML only.
 - **Assumption:** a proposed future design, not experimental evidence.
-- **Open question:** not answered by the completed limited diagnostics; full
-  continuation handling remains unverified.
+- **Open question:** not answered by the completed limited diagnostics, such as
+  production-scale continuation behavior or complete vacancy collection.
 
 ## 1. Overview and project decision
 
@@ -26,9 +26,10 @@ obtained.
 **Verified:** the original milestone used `FetcherSession` for a single public
 `robots.txt` request and `Selector` for offline fixture parsing. No target job
 page was requested during that original run because LinkedIn's current
-`User-agent: *` rule disallows `/`. Three later limited diagnostics ran under
-the existing team instruction. The final one verified live extraction but did
-not verify full pagination.
+`User-agent: *` rule disallows `/`. Later limited diagnostics ran under the
+existing team instruction. The extraction validation verified live extraction;
+the single post-fix continuation validation later verified pagination within
+its strict four-request scope.
 
 The following are not used in this project at Milestone 1:
 
@@ -219,13 +220,14 @@ diagnostic values, page size, and lazy loading remain **Not verified**.
 
 The canonical closeout is
 [`docs/diagnostics/linkedin-pagination-2026-08-05.md`](diagnostics/linkedin-pagination-2026-08-05.md).
-**Live extraction is Verified; full live pagination is Not verified.** The
+**Live extraction is Verified; full live pagination is Verified for the limited
+diagnostic.** The
 continuation endpoint was observed manually and is now implemented and verified
-synthetically/offline. Under the existing team instruction to test pagination
-locally with only a few requests, exactly one limited post-fix validation run is
-permitted with a fresh robots preflight, the exact prior target URL,
-`--confirm-live-test`, `--continuation-start 25`, and `--continuation-step 25`.
-No additional live run or production use is permitted.
+synthetically/offline. Exactly one limited post-fix validation then made 4
+requests for 4 pages, used offsets 25, 50, and 75, received HTTP 200 without
+redirects, and added 22 IDs outside the saved initial 60-ID baseline. It stopped
+at `page_limit` with no technical block. No additional live run or production
+use is permitted.
 
 ### Fallbacks and HTML-change detection
 
@@ -265,7 +267,7 @@ concurrency at 1 initially, add bounded exponential backoff only for transient
 timeouts/5xx, and never retry 401/403/429 aggressively. Expected target runtime
 is **Not verified**.
 
-The limited post-fix validation retains the separate fixed limits of at most 4
+The completed post-fix validation retained the separate fixed limits of at most 4
 pages and 4 target requests, concurrency 1, at least a 2-second delay, one
 attempt with no retry, and no followed technical-block continuation.
 
@@ -305,8 +307,8 @@ the completed milestone, the first two were confirmed (robots text directs
 crawlers to request whitelisting; no permission had been supplied). The
 existing team instruction covered the inconclusive first diagnostic, the
 corrective diagnostic, the completed extraction validation, and exactly one
-limited post-fix continuation validation. It does not authorize an additional
-live run or production use.
+completed limited post-fix continuation validation. It does not authorize an
+additional live run or production use.
 
 ## 8. Extension path
 

@@ -349,8 +349,8 @@ ebenfalls.
 Der finale begrenzte Plain-HTTP-Extraktionslauf nach diesem Fix ist
 abgeschlossen. Er erhielt HTTP 200 ohne Redirects und extrahierte 60 eindeutige
 LinkedIn-Job-IDs einschließlich `4447661197`; der Lauf endete mit
-`stop_reason="no_next_page"`. Die Live-Extraktion ist **Verified**, die
-vollständige Live-Pagination bleibt **Not verified**. Der kanonische Abschluss
+`stop_reason="no_next_page"`. Die Live-Extraktion war **Verified**, die
+vollständige Live-Pagination blieb zu diesem Zeitpunkt **Not verified**. Der kanonische Abschluss
 steht in
 [`docs/diagnostics/linkedin-pagination-2026-08-05.md`](diagnostics/linkedin-pagination-2026-08-05.md).
 
@@ -362,13 +362,22 @@ Zähler zurück, und der dritte aufeinanderfolgende Overlap beendet den Lauf mit
 `overlap_limit`; die harte Grenze bleibt bei 4 Target-Requests und 4 Seiten.
 
 Im Rahmen der bestehenden Teamanweisung, die Pagination lokal mit nur wenigen
-Requests zu testen, ist genau ein begrenzter Post-Fix-Validierungslauf für diese
-Implementierung zulässig. Er erfordert einen frischen Robots-Preflight, dieselbe
-exakte Target-URL, `--confirm-live-test`, `--continuation-start 25` und
-`--continuation-step 25` sowie alle bestehenden Sicherheitsgrenzen. Die
-vollständige Live-Pagination bleibt bis zu einem entsprechenden tatsächlichen
-Ergebnis **Not verified**. Weitere Live-Läufe, Production Scraping und ein
-vollständiger serverseitiger Scrape sind nicht zulässig.
+Requests zu testen, wurde genau ein begrenzter Post-Fix-Validierungslauf für
+diese Implementierung abgeschlossen. Nach einem frischen Robots-Preflight
+verwendete er dieselbe exakte Target-URL, `--confirm-live-test`,
+`--continuation-start 25` und `--continuation-step 25` sowie alle bestehenden
+Sicherheitsgrenzen. Der Lauf stellte 4 Target-Requests für 4 Seiten, verwendete
+die Offsets 25, 50 und 75, erhielt jeweils HTTP 200 ohne Redirects und erweiterte
+die gespeicherte 60-ID-Ausgangsbasis zu einer global deduplizierten Menge von 82
+IDs. Er endete mit `page_limit`, `block_reason=null` und
+`block_evidence=null`.
+
+Die vollständige Live-Pagination ist für diesen begrenzten Diagnoselauf
+**Verified**, weil der Guest-Endpoint 22 IDs außerhalb der gespeicherten
+Ausgangsbasis lieferte, ohne Blockierung oder Überschreitung der Grenzen. Daraus
+folgt nicht, dass alle angezeigten Stellen erfasst wurden. Weitere Live-Läufe,
+Production Scraping und ein vollständiger serverseitiger Scrape sind nicht
+zulässig.
 
 Außerhalb dieser Ausnahme gilt weiterhin: Wenn LinkedIn den öffentlichen Zugriff
 technisch blockiert, muss der Lauf kontrolliert fehlschlagen und einen
