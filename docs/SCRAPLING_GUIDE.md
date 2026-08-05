@@ -8,12 +8,12 @@ the [official documentation](https://scrapling.readthedocs.io/en/latest/). Linke
 claims use these labels:
 
 - **Verified:** observed in this repository's executed tests, live preflight, or
-  separately approved live diagnostic.
+  a limited live diagnostic under the existing team instruction.
 - **Not verified:** not established by reliable live evidence; it may have been
   implemented or tested against synthetic HTML only.
 - **Assumption:** a proposed future design, not experimental evidence.
-- **Open question:** not answered by the inconclusive first limited pagination
-  diagnostic and not yet answered by the limited corrective rerun under the
+- **Open question:** not answered by the first or corrective limited pagination
+  diagnostics and not yet answered by the final validation run under the
   existing team instruction.
 
 ## 1. Overview and project decision
@@ -27,9 +27,9 @@ obtained.
 **Verified:** the original milestone used `FetcherSession` for a single public
 `robots.txt` request and `Selector` for offline fixture parsing. No target job
 page was requested during that original run because LinkedIn's current
-`User-agent: *` rule disallows `/`. A later limited diagnostic under the
-existing team instruction made one target request as recorded below; its result
-was inconclusive.
+`User-agent: *` rule disallows `/`. Two later limited diagnostics under the
+existing team instruction each made one target request as recorded below;
+neither verified pagination.
 
 The following are not used in this project at Milestone 1:
 
@@ -140,9 +140,9 @@ The selection order is:
 1. Fetch and evaluate `robots.txt` with a plain `FetcherSession`.
 2. Record the robots result in the diagnostic output. For ordinary operation,
    stop cleanly if prohibited and do not fetch the target.
-3. Only for the team-approved local pagination diagnostic, treat `Disallow: /`
-   as a warning and continue only when `--confirm-live-test` is present and all
-   limits below are enforced.
+3. Only for a local pagination diagnostic under the existing team instruction,
+   treat `Disallow: /` as a warning and continue only when
+   `--confirm-live-test` is present and all limits below are enforced.
 4. Use only the plain HTTP session for that diagnostic.
 5. Use `AsyncFetcher` only after several independent detail requests show a
    measured latency benefit, with bounded concurrency.
@@ -151,14 +151,15 @@ The selection order is:
 
 **Verified:** `FetcherSession` was tested against
 `https://www.linkedin.com/robots.txt`, which returned HTTP 200 without redirect.
-The first limited diagnostic under the existing team instruction also made one
-ordinary target HTTP request, which returned HTTP 200 without redirects, but
-its content classification was inconclusive.
+The first and corrective limited diagnostics under the existing team
+instruction each made one ordinary target HTTP request and received HTTP 200
+without redirects. The first result had an inconclusive CAPTCHA classification;
+the corrective result found no Job IDs and did not verify pagination.
 
-**Not verified:** successful target job-card extraction, async target HTTP,
-browser rendering, job-card/detail extraction, performance differences, and
-session reuse across multiple target requests. `StealthyFetcher` must not be
-tested for LinkedIn.
+**Not verified live:** successful job-card extraction from the target's
+plain-HTTP response, async target HTTP, browser rendering, job-card/detail
+extraction, performance differences, and session reuse across multiple target
+requests. `StealthyFetcher` must not be tested for LinkedIn.
 
 ## 5. LinkedIn-specific extraction design
 
@@ -173,8 +174,11 @@ Milestone 2 scope.
 
 ### Cards and details
 
-**Not verified:** the synthetic fixture exercises candidate job-card fields:
-job ID, title, company, location, publication date, and absolute job URL. The
+**Verified offline:** the synthetic fixtures exercise candidate job-card fields:
+job ID, title, company, location, publication date, and absolute job URL. An
+inspected real rendered DOM fragment is also parsed offline as one card with Job
+ID `4447661197`, title `Delivery Manager`, and its regional LinkedIn URL. This
+does not establish that the same link existed in a plain-HTTP response. The
 synthetic detail fixture exercises description, seniority, employment type, job
 function, and industry. A missing selector returns `None` and never crashes.
 
@@ -208,7 +212,7 @@ pagination URLs, page size, lazy loading, and current selectors remain **Not
 verified**. This local verification made no network requests and did not alter
 the robots preflight.
 
-### First limited diagnostic and corrective rerun under the existing instruction
+### Limited diagnostics, parser fix, and final validation
 
 The first manually confirmed limited live run used exactly:
 `https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C30242966`.
@@ -227,10 +231,34 @@ including possible JavaScript, metadata, resource URLs, or hidden text. Commit
 matching with structural CAPTCHA diagnostics and added safe `block_reason` and
 `block_evidence` fields. Real LinkedIn pagination remains **Not verified**.
 
+The corrective live run has completed. It made exactly one target request,
+received HTTP 200 with no redirects, recorded `pages=1`, `requests=1`,
+`found_job_ids=[]`, `stop_reason="no_new_job_ids"`, `block_reason=null`, and
+`block_evidence=null`, and made no next target request. It did not verify
+pagination.
+
+Offline inspection of a real rendered DOM fragment then identified the concrete
+zero-result parser bug. The old `extract_job_cards` began only at
+`li.jobs-search-results__list-item` or `li.job-card-container`. The inspected
+fragment instead exposed an `a.base-card__full-link[href*="/jobs/view/"]`; its
+URL correctly yielded Job ID `4447661197`, and its `span.sr-only` contained
+`Delivery Manager`. The old outer selector therefore never processed the link.
+
+Commit `b852de18d195df795bbfcc28c7b573b164702853` added a validated fallback for
+LinkedIn job links, support for regional LinkedIn subdomains, title extraction
+from `sr-only`, `aria-label`, or cleaned link text, and Job ID deduplication. The
+real manual DOM fragment now produces one offline card with ID `4447661197` and
+title `Delivery Manager`. The full suite passed with 60 tests; Ruff and MyPy
+strict also passed.
+
+This does not prove that the plain-HTTP response contained the same link. The
+link may have been present but ignored by the old parser, or it may have appeared
+only in rendered browser DOM and been absent from the plain-HTTP response. Real
+LinkedIn pagination remains **Not verified**.
+
 Under the existing team instruction to test pagination locally with only a few
-requests, exactly one corrective diagnostic rerun is permitted because the
-first run did not produce reliable pagination evidence. This describes a future
-run, not evidence that the rerun has occurred:
+requests, exactly one final validation run is permitted after the concrete
+parser fix. It has not run:
 
 - Require `--confirm-live-test`; without it, make no target request.
 - Create a new current robots preflight, check the same exact target URL above,
@@ -247,15 +275,21 @@ run, not evidence that the rerun has occurred:
   401/403/429, login/authwall/checkpoint redirect, CAPTCHA, access denied,
   consent/interstitial content, or any other technical block.
 
-This permission does not extend to another rerun, normal crawling, production
+This final validation run permits no further rerun, normal crawling, production
 or full server-side scraping, or circumvention. Production requires a separate
-team decision. Historical diagnostic JSON files must not be changed.
+team decision. Historical diagnostic JSON files must not be changed, and the
+final validation run must not be described as completed before it actually
+runs.
 
 ### Fallbacks and HTML-change detection
 
-Candidate selectors are ordered broad alternatives in one module. A future live
-fixture must validate each selector before promotion to production. Treat any of
-these as a structural-change signal:
+Known card-container selectors remain the primary path. Commit
+`b852de18d195df795bbfcc28c7b573b164702853` added a fallback for standalone
+`a[href*="/jobs/view/"]` links only when the resolved URL has a LinkedIn host and
+a numeric Job ID. Titles fall back from existing selectors to `span.sr-only`,
+`aria-label`, and cleaned link text; results are deduplicated by Job ID. A future
+reliable live result must still validate which markup plain HTTP actually
+contains. Treat any of these as a structural-change signal:
 
 - HTTP 200 but zero cards where a previous successful run had jobs;
 - cards without both ID and URL;
@@ -268,7 +302,7 @@ Do not use adaptive selection to turn such a signal into an unreviewed match.
 ## 6. Conservative performance configuration
 
 The completed 2026-07-28 robots-only preflight used this configuration; it is
-historical evidence, not the configuration of the approved future diagnostic:
+historical evidence, not the configuration of the final validation run:
 
 | Setting | Value | Meaning |
 |---|---:|---|
@@ -285,11 +319,11 @@ concurrency at 1 initially, add bounded exponential backoff only for transient
 timeouts/5xx, and never retry 401/403/429 aggressively. Expected target runtime
 is **Not verified**.
 
-The not-yet-executed limited corrective pagination diagnostic under the
-existing team instruction has a separate fixed configuration: at most 4 pages
-and 4 target requests, concurrency 1, at least a 2-second delay, one attempt
-with no retry, and no followed technical-block continuation. A new robots
-request and result must be recorded separately before that rerun.
+The not-yet-executed final validation run under the existing team instruction
+has a separate fixed configuration: at most 4 pages and 4 target requests,
+concurrency 1, at least a 2-second delay, one attempt with no retry, and no
+followed technical-block continuation. A new robots request and result must be
+recorded separately before that run.
 
 ## 7. Testing and diagnostics
 
@@ -325,9 +359,10 @@ Likely blockers are robots denial, lack of express crawl permission, 403/429,
 authwall/checkpoint, changed HTML, and JavaScript-only content. At the time of
 the completed milestone, the first two were confirmed (robots text directs
 crawlers to request whitelisting; no permission had been supplied). The
-existing team instruction covers only the inconclusive first diagnostic and
-exactly one future corrective rerun described above; it does not change that
-historical observation or authorize production use.
+existing team instruction covers only the inconclusive first diagnostic, the
+completed corrective diagnostic, and exactly one future final validation run
+described above; it does not change that historical observation or authorize
+production use.
 
 ## 8. Extension path
 

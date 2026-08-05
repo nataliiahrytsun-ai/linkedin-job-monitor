@@ -69,7 +69,7 @@ This exception authorizes only the limited local pagination spike. It does not
 authorize production scraping, full-server scraping, or circumvention of
 LinkedIn restrictions. Production use requires a separate team decision.
 
-### First pagination diagnostic and corrective rerun
+### Pagination diagnostics, parser fix, and final validation
 
 The first limited live pagination run used exactly:
 `https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C30242966`.
@@ -89,19 +89,44 @@ replaced that raw-substring check with structural CAPTCHA diagnostics and added
 safe `block_reason` and `block_evidence` fields. Real LinkedIn pagination
 remains **Not verified**.
 
-Under the existing team instruction to test pagination locally with only a few
-requests, exactly one corrective diagnostic rerun is permitted because the
-first run did not produce reliable pagination evidence. It must use a new
-current robots preflight, the same exact target URL above, and
-`--confirm-live-test`. All existing limits remain mandatory: at most 4 target
-requests and 4 job-listing pages, sequential execution with at least 2 seconds
-between requests, no login, cookies, proxy/IP rotation, stealth, browser
-fetcher, impersonation, retry, detail-page requests, or full-HTML storage, and
-immediate termination on a confirmed block or any other termination condition.
+The corrective live run has now completed. It made exactly one target request,
+received HTTP 200 with no redirects, recorded `pages=1`, `requests=1`,
+`found_job_ids=[]`, `stop_reason="no_new_job_ids"`, `block_reason=null`, and
+`block_evidence=null`, and made no next target request. It did not verify real
+LinkedIn pagination.
 
-This documented exception does not permit any further rerun, production
-scraping, or full server-side scraping. Do not alter the historical JSON reports
-or describe the corrective rerun as completed before it actually runs.
+Offline inspection after that run found a concrete parser bug. The old
+`extract_job_cards` started only from `li.jobs-search-results__list-item` or
+`li.job-card-container`, while the inspected rendered DOM fragment exposed an
+`a.base-card__full-link[href*="/jobs/view/"]`. Its URL yielded Job ID
+`4447661197`, and its `span.sr-only` contained `Delivery Manager`, but the old
+outer selector never processed the link. Commit
+`b852de18d195df795bbfcc28c7b573b164702853` added a validated LinkedIn job-link
+fallback, support for regional LinkedIn subdomains, title extraction from
+`sr-only`, `aria-label`, or link text, and Job ID deduplication. The real manual
+DOM fragment now produces one card with ID `4447661197` and title
+`Delivery Manager`; the full suite passed with 60 tests, and Ruff and MyPy
+strict passed.
+
+This offline result does not establish what the plain-HTTP response contained.
+Either the link was present and the old parser ignored it, or it appeared only
+in rendered browser DOM and was absent from the plain-HTTP response. Real
+LinkedIn pagination remains **Not verified**.
+
+Under the existing team instruction to test pagination locally with only a few
+requests, exactly one final validation run is permitted after this concrete
+parser fix. It has not run. It must use a new current robots preflight, the same
+exact target URL above, and `--confirm-live-test`. All existing limits remain
+mandatory: at most 4 target requests and 4 job-listing pages, sequential
+execution with at least 2 seconds between requests, no login, cookies, proxy/IP
+rotation, stealth, browser fetcher, impersonation, retry, detail-page requests,
+or full-HTML storage, and immediate termination on any block or other
+termination condition.
+
+This documented exception permits no further rerun, production scraping, or
+full server-side scraping. Historical JSON reports must not be changed, and the
+final validation run must not be described as completed before it actually
+runs.
 
 ## Scrapling
 

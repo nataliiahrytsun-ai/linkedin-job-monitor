@@ -63,7 +63,7 @@ live extraction claim may be made.
 the runner stopped before the target request, and the result was documented as
 `Not feasible through compliant public access`.
 
-### Limited pagination follow-up and one corrective rerun
+### Limited pagination diagnostics and one final validation run
 
 The completed outcome above remains the historical Milestone 1 result. The
 first manually confirmed limited live pagination run used exactly:
@@ -85,9 +85,31 @@ structural CAPTCHA diagnostics and added safe `block_reason` and
 `block_evidence` report fields. Real LinkedIn pagination remains **Not
 verified**.
 
+The corrective live run has completed. It made exactly one target request,
+received HTTP 200 with no redirects, recorded `pages=1`, `requests=1`,
+`found_job_ids=[]`, `stop_reason="no_new_job_ids"`, `block_reason=null`, and
+`block_evidence=null`, and made no next target request. This did not verify
+pagination.
+
+Subsequent offline inspection found that the old `extract_job_cards` considered
+only `li.jobs-search-results__list-item` and `li.job-card-container` as card
+roots. The inspected rendered DOM instead exposed an
+`a.base-card__full-link[href*="/jobs/view/"]`; its URL contained Job ID
+`4447661197`, and its `span.sr-only` contained `Delivery Manager`. The old outer
+selector therefore never processed that link. Commit
+`b852de18d195df795bbfcc28c7b573b164702853` added a validated job-link fallback,
+regional LinkedIn-subdomain support, `sr-only`/`aria-label`/link-text title
+fallbacks, and Job ID deduplication. The real manual DOM fragment now produces
+one card with the expected ID and title. The full suite passed with 60 tests;
+Ruff and MyPy strict also passed.
+
+This does not prove that the plain-HTTP response contained the same link. It may
+have been present but ignored by the old parser, or it may have appeared only in
+rendered browser DOM. Real LinkedIn pagination remains **Not verified**.
+
 Under the existing team instruction to test pagination locally with only a few
-requests, exactly one corrective diagnostic rerun is permitted because the
-first run did not produce reliable pagination evidence. It must:
+requests, exactly one final validation run is permitted after the concrete
+parser fix. It has not run. It must:
 
 - create a new current robots preflight and record its result;
 - use the same exact target URL above and require `--confirm-live-test`;
@@ -95,17 +117,15 @@ first run did not produce reliable pagination evidence. It must:
 - run sequentially with at least 2 seconds between requests;
 - use no login, cookies, proxy, IP rotation, stealth, browser fetcher,
   impersonation, retry, detail-page request, or saved full HTML response;
-- terminate without another request on no confirmed next-page link, no new Job
-  ID, repeated URL/content, or a page/request limit;
-- terminate immediately without another request on HTTP 401, 403, or 429, a
-  login/authwall/checkpoint redirect, confirmed CAPTCHA, access denied,
-  consent/interstitial content, or any other confirmed technical block.
+- terminate immediately without another request on any technical block or any
+  other configured termination condition.
 
-This limited corrective rerun does not change the Milestone 1 status, represent
-the rerun as completed, or permit additional reruns, Milestone 2 LinkedIn
-scraping, production execution, full server-side scraping, or circumvention.
-Any production use still requires a separate team decision. Historical
-diagnostic JSON files must remain unchanged.
+This final validation run does not change the Milestone 1 status or permit any
+further rerun, Milestone 2 LinkedIn scraping, production execution, full
+server-side scraping, or circumvention. Any production use still requires a
+separate team decision. Historical diagnostic JSON files must remain unchanged,
+and the final validation run must not be represented as completed before it
+actually runs.
 
 ---
 

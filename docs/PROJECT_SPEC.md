@@ -303,7 +303,7 @@ weder vollständiges oder serverseitiges Scraping noch einen Production-Betrieb
 oder die Umgehung von LinkedIn-Beschränkungen. Production erfordert eine eigene
 Entscheidung des Teams.
 
-#### Ergebnis des ersten Laufs und ein Corrective Rerun
+#### Pagination-Diagnoseläufe, Parser-Fix und finaler Validierungslauf
 
 Der erste begrenzte Live-Pagination-Lauf wurde mit exakt dieser URL ausgeführt:
 `https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C30242966`.
@@ -324,23 +324,48 @@ Raw-Substring-Suche durch eine strukturelle CAPTCHA-Diagnostik und ergänzte die
 sicheren Berichtsfelder `block_reason` und `block_evidence`. Die reale
 LinkedIn-Pagination bleibt **Not verified**.
 
-Im Rahmen der bestehenden Teamanweisung, die Pagination lokal mit nur wenigen
-Requests zu testen, ist genau ein korrigierender Diagnoselauf zulässig, weil der
-erste Lauf keine verlässlichen Erkenntnisse zur Pagination geliefert hat. Dafür
-sind ein neuer aktueller Robots-Preflight, dieselbe exakte Target-URL und
-`--confirm-live-test` zwingend. Es gelten weiterhin maximal 4 Target-Requests
-und 4 Joblistenseiten, sequenzielle Ausführung mit mindestens 2 Sekunden Pause,
-kein Login, keine Cookies, Proxies, IP-Wechsel, Stealth-Funktionen,
-Browser-Fetcher, Impersonation oder Retries, keine Detailseiten-Requests und
-keine Speicherung vollständiger HTML-Antworten. Bei einer bestätigten
-Blockierung oder einer anderen Abbruchbedingung muss der Lauf sofort ohne
-weiteren Request enden.
+Der korrigierende Live-Lauf ist abgeschlossen. Er stellte genau einen
+Target-Request, erhielt HTTP 200 ohne Redirects und zeichnete `pages=1`,
+`requests=1`, `found_job_ids=[]`, `stop_reason="no_new_job_ids"`,
+`block_reason=null` und `block_evidence=null` auf. Ein weiterer Target-Request
+wurde nicht gestellt. Dieser Lauf bestätigte die Pagination nicht.
 
-Dieser begrenzte korrigierende Diagnoselauf erlaubt keinen weiteren
-Wiederholungslauf, kein Production Scraping und keinen vollständigen
-serverseitigen Scrape. Historische JSON-Berichte dürfen nicht verändert werden;
-der korrigierende Diagnoselauf darf vor seiner tatsächlichen Ausführung nicht
-als ausgeführt dargestellt werden.
+Die anschließende Offline-Diagnose eines realen rendered DOM-Fragments fand
+einen konkreten Parser-Fehler. Das frühere `extract_job_cards` begann nur bei
+`li.jobs-search-results__list-item` oder `li.job-card-container`. Das untersuchte
+Fragment enthielt stattdessen einen
+`a.base-card__full-link[href*="/jobs/view/"]`. Die URL lieferte korrekt die
+Job-ID `4447661197`, und der Titel `Delivery Manager` stand in `span.sr-only`;
+der alte äußere Selektor ließ den Code diese Verlinkung jedoch nie verarbeiten.
+
+Commit `b852de18d195df795bbfcc28c7b573b164702853` ergänzte einen validierten
+Fallback für LinkedIn-Job-Links, Unterstützung regionaler LinkedIn-Subdomains,
+Titel-Fallbacks über `sr-only`, `aria-label` und Link-Text sowie Deduplizierung
+nach Job-ID. Das reale manuelle DOM-Fragment wird offline jetzt als genau eine
+Karte mit Job-ID `4447661197` und Titel `Delivery Manager` extrahiert. Die
+vollständige Testsuite bestand mit 60 Tests; Ruff und MyPy strict bestanden
+ebenfalls.
+
+Dieses Offline-Ergebnis beweist nicht, dass die Plain-HTTP-Antwort dieselbe
+Verlinkung enthielt. Entweder war sie vorhanden und wurde vom alten Parser
+ignoriert, oder sie entstand nur im rendered Browser-DOM und fehlte in der
+Plain-HTTP-Antwort. Die reale LinkedIn-Pagination bleibt **Not verified**.
+
+Im Rahmen der bestehenden Teamanweisung, die Pagination lokal mit nur wenigen
+Requests zu testen, ist nach diesem konkreten Parser-Fix genau ein finaler
+Validierungslauf zulässig. Er wurde noch nicht ausgeführt. Zwingend sind ein
+neuer aktueller Robots-Preflight, dieselbe exakte Target-URL und
+`--confirm-live-test`. Es gelten maximal 4 Target-Requests und 4
+Joblistenseiten, sequenzielle Ausführung mit mindestens 2 Sekunden Pause, kein
+Login, keine Cookies, Proxies, IP-Wechsel, Stealth-Funktionen, Browser-Fetcher,
+Impersonation oder Retries, keine Detailseiten-Requests und keine Speicherung
+vollständiger HTML-Antworten. Bei jeder Blockierung oder anderen
+Abbruchbedingung muss der Lauf sofort ohne weiteren Request enden.
+
+Dieser finale Validierungslauf erlaubt keinen weiteren Wiederholungslauf, kein
+Production Scraping und keinen vollständigen serverseitigen Scrape. Historische
+JSON-Berichte dürfen nicht verändert werden; der finale Validierungslauf darf
+vor seiner tatsächlichen Ausführung nicht als ausgeführt dargestellt werden.
 
 Außerhalb dieser Ausnahme gilt weiterhin: Wenn LinkedIn den öffentlichen Zugriff
 technisch blockiert, muss der Lauf kontrolliert fehlschlagen und einen
