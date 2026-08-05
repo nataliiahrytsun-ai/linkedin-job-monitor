@@ -10,7 +10,8 @@ claims use these labels:
 - **Verified:** observed in this repository's executed tests or live preflight.
 - **Not verified:** implemented against synthetic HTML only.
 - **Assumption:** a proposed future design, not experimental evidence.
-- **Open question:** cannot be answered without permission for automated LinkedIn access.
+- **Open question:** not yet answered by the approved but unexecuted limited
+  pagination diagnostic.
 
 ## 1. Overview and project decision
 
@@ -131,11 +132,15 @@ manual selector review are preferred.
 The selection order is:
 
 1. Fetch and evaluate `robots.txt` with a plain `FetcherSession`.
-2. If prohibited, stop cleanly. Do not fetch the target.
-3. If permission and robots allow access, test the plain HTTP session first.
-4. Use `AsyncFetcher` only after several independent detail requests show a
+2. Record the robots result in the diagnostic output. For ordinary operation,
+   stop cleanly if prohibited and do not fetch the target.
+3. Only for the team-approved local pagination diagnostic, treat `Disallow: /`
+   as a warning and continue only when `--confirm-live-test` is present and all
+   limits below are enforced.
+4. Use only the plain HTTP session for that diagnostic.
+5. Use `AsyncFetcher` only after several independent detail requests show a
    measured latency benefit, with bounded concurrency.
-5. Consider `DynamicFetcher` only if allowed HTTP responses omit data that a
+6. Consider `DynamicFetcher` only if allowed HTTP responses omit data that a
    normal public browser shows solely after JavaScript execution.
 
 **Verified:** only `FetcherSession` was actually tested, and only against
@@ -151,8 +156,10 @@ multiple target requests. `StealthyFetcher` must not be tested for LinkedIn.
 
 The company job URL is configuration, never Acuity-specific parser logic. Before
 every live crawl, validate HTTPS and the `linkedin.com` host, fetch robots, and
-stop if the user agent cannot fetch the URL. The current spike does the robots
-gate but production URL validation is Milestone 2 scope.
+record the result. Ordinary and production runs stop if the user agent cannot
+fetch the URL. The only exception is the explicitly confirmed limited local
+pagination diagnostic defined below; production URL validation remains
+Milestone 2 scope.
 
 ### Cards and details
 
@@ -191,6 +198,29 @@ pagination URLs, page size, lazy loading, and current selectors remain **Not
 verified**. This local verification made no network requests and did not alter
 the robots preflight.
 
+### Approved future limited pagination diagnostic
+
+The team has approved a future, manually confirmed local test of public LinkedIn
+job-listing pagination. This changes the rule for that test only; it is not
+evidence that the test has run or that real pagination works.
+
+- Require `--confirm-live-test`; without it, make no target request.
+- Check robots first and include its result in the diagnostic JSON. Record
+  `Disallow: /` as a warning rather than a blocker for this one test.
+- Fetch at most 4 job-listing pages with at most 4 target-page requests.
+- Execute sequentially and wait at least 2 seconds between requests.
+- Use plain HTTP only: no login, cookies, proxy/IP rotation, stealth, browser
+  fetcher, impersonation, or retry.
+- Do not request detail pages or save complete HTML responses.
+- Stop when pagination is sufficiently confirmed, the next-page link is absent
+  or unconfirmed, there are no new job IDs, or a URL/content repeats.
+- Stop immediately without another request or alternative continuation on HTTP
+  401/403/429, login/authwall/checkpoint redirect, CAPTCHA, access denied,
+  consent/interstitial content, or any other technical block.
+
+This permission does not extend to normal crawling, production or server-side
+scraping, or circumvention. Production requires a separate team decision.
+
 ### Fallbacks and HTML-change detection
 
 Candidate selectors are ordered broad alternatives in one module. A future live
@@ -207,7 +237,8 @@ Do not use adaptive selection to turn such a signal into an unreviewed match.
 
 ## 6. Conservative performance configuration
 
-The spike configuration is explicit:
+The completed 2026-07-28 robots-only preflight used this configuration; it is
+historical evidence, not the configuration of the approved future diagnostic:
 
 | Setting | Value | Meaning |
 |---|---:|---|
@@ -223,6 +254,11 @@ The spike configuration is explicit:
 concurrency at 1 initially, add bounded exponential backoff only for transient
 timeouts/5xx, and never retry 401/403/429 aggressively. Expected target runtime
 is **Not verified**.
+
+The approved but unexecuted limited pagination diagnostic has a separate fixed
+configuration: at most 4 pages and 4 target requests, concurrency 1, at least a
+2-second delay, one attempt with no retry, and no followed technical-block
+continuation. The robots request and result are recorded separately.
 
 ## 7. Testing and diagnostics
 
@@ -242,7 +278,9 @@ controlled policy stop, not a parser crash.
 Diagnostic order:
 
 1. Record URL, status, final URL, redirect count, timing, and request count.
-2. Confirm robots and permission before looking at HTML.
+2. Check and record robots. For the limited pagination diagnostic, a denial is a
+   warning and continuation requires `--confirm-live-test`; ordinary operation
+   still stops.
 3. Distinguish network timeout from HTTP error and policy denial.
 4. Detect authwall/checkpoint/CAPTCHA explicitly; never solve or bypass it.
 5. If selectors return no jobs, compare a minimal approved fixture and selector
@@ -253,9 +291,11 @@ Diagnostic order:
    abort the company run.
 
 Likely blockers are robots denial, lack of express crawl permission, 403/429,
-authwall/checkpoint, changed HTML, and JavaScript-only content. Only the first
-two were confirmed in this milestone (robots text directs crawlers to request
-whitelisting; no permission was supplied).
+authwall/checkpoint, changed HTML, and JavaScript-only content. At the time of
+the completed milestone, the first two were confirmed (robots text directs
+crawlers to request whitelisting; no permission had been supplied). The later
+team approval is limited to the future diagnostic described above and does not
+change that historical observation.
 
 ## 8. Extension path
 

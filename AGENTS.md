@@ -42,7 +42,32 @@ Never implement:
 - stealth features intended to bypass LinkedIn restrictions.
 
 If public access is blocked, fail cleanly, record the limitation, and do not
-implement a workaround.
+implement a workaround, except for the team-approved limited pagination test
+defined below.
+
+### Limited pagination test exception
+
+For the pagination spike only, a manually confirmed local diagnostic run may
+perform a small number of unauthenticated requests to publicly accessible
+LinkedIn job-listing pages.
+
+- Check `robots.txt` and record its result in the diagnostic output.
+- Treat `Disallow: /` as a warning and an ordinary-operation limitation, not as
+  a blocker for this specific test when `--confirm-live-test` is present.
+- Fetch at most 4 job-listing pages with at most 4 target-page requests.
+- Run sequentially with a delay of at least 2 seconds between requests.
+- Do not use login, cookies, proxies, IP rotation, stealth, browser fetching,
+  impersonation, retries, or job-detail requests.
+- Do not save complete LinkedIn HTML responses.
+- Stop as soon as pagination is sufficiently confirmed, or on no confirmed
+  next-page link, no new job IDs, a repeated URL, or repeated content.
+- On HTTP 401, 403, or 429, a login/authwall/checkpoint redirect, CAPTCHA,
+  access denied, consent/interstitial content, or any other technical block,
+  stop immediately without another request or an alternative continuation.
+
+This exception authorizes only the limited local pagination spike. It does not
+authorize production scraping, full-server scraping, or circumvention of
+LinkedIn restrictions. Production use requires a separate team decision.
 
 ## Scrapling
 

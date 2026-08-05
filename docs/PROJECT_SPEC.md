@@ -269,7 +269,43 @@ Nicht implementieren:
 
 Robots.txt, Nutzungsbedingungen, Datenschutzanforderungen und angemessene Request-Raten müssen berücksichtigt werden. Auch das Scrapling-Projekt weist ausdrücklich darauf hin, geltende Gesetze, Website-Nutzungsbedingungen und robots.txt zu respektieren.
 
-Wenn LinkedIn den öffentlichen Zugriff technisch blockiert, muss der Lauf kontrolliert fehlschlagen und einen verständlichen Fehlerstatus liefern. Es soll keine Umgehung implementiert werden.
+### Begrenzte Ausnahme für den Pagination-Spike
+
+Nur für den lokalen technischen Pagination-Spike darf ein manuell bestätigter
+Diagnoselauf wenige gewöhnliche, nicht authentifizierte Requests an öffentlich
+sichtbare LinkedIn-Joblistenseiten senden. Der Lauf ist ausschließlich mit dem
+expliziten Flag `--confirm-live-test` zulässig.
+
+`robots.txt` muss weiterhin vor dem Test geprüft und das Ergebnis im
+Diagnosebericht aufgezeichnet werden. Ein Ergebnis `Disallow: /` ist eine
+Warnung und Einschränkung für den gewöhnlichen Betrieb, blockiert aber diesen
+einzelnen, ausdrücklich bestätigten Diagnosetest nicht.
+
+Für diesen Test gelten zwingend folgende Grenzen:
+
+- maximal 4 Joblistenseiten und maximal 4 Target-Page-Requests;
+- sequenzielle Ausführung mit mindestens 2 Sekunden Pause zwischen Requests;
+- keine Anmeldung, Cookies, Proxies, IP-Wechsel, Stealth-Funktionen,
+  Browser-Fetcher, Impersonation oder Retries;
+- keine Requests an Jobdetailseiten;
+- keine Speicherung vollständiger LinkedIn-HTML-Antworten;
+- Abbruch, sobald die Pagination ausreichend bestätigt ist, kein bestätigter
+  Next-Page-Link oder keine neue Job-ID vorliegt oder URL beziehungsweise Inhalt
+  wiederholt wird.
+
+Bei HTTP 401, 403 oder 429, Redirect auf Login, Authwall oder Checkpoint,
+CAPTCHA, Access Denied, Consent/Interstitial oder jeder anderen technischen
+Blockierung muss der Test sofort und ohne weiteren Request oder alternativen
+Fortsetzungsweg enden.
+
+Diese Ausnahme gilt nur für den begrenzten lokalen Pagination-Spike. Sie erlaubt
+weder vollständiges oder serverseitiges Scraping noch einen Production-Betrieb
+oder die Umgehung von LinkedIn-Beschränkungen. Production erfordert eine eigene
+Entscheidung des Teams.
+
+Außerhalb dieser Ausnahme gilt weiterhin: Wenn LinkedIn den öffentlichen Zugriff
+technisch blockiert, muss der Lauf kontrolliert fehlschlagen und einen
+verständlichen Fehlerstatus liefern. Es soll keine Umgehung implementiert werden.
 
 # Technische Anforderungen
 

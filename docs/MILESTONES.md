@@ -63,6 +63,32 @@ live extraction claim may be made.
 the runner stopped before the target request, and the result was documented as
 `Not feasible through compliant public access`.
 
+### Approved limited pagination follow-up
+
+The completed outcome above remains the historical Milestone 1 result. For a
+future pagination spike only, the team now permits one manually confirmed local
+diagnostic run against public LinkedIn job-listing pages. The run must require
+`--confirm-live-test`.
+
+The runner must still check `robots.txt` and record its result. `Disallow: /` is
+a warning and an ordinary-operation limitation, but it does not block this
+specific confirmed diagnostic run. The exception is limited to:
+
+- at most 4 job-listing pages and 4 target-page requests;
+- sequential requests separated by at least 2 seconds;
+- no login, cookies, proxy, IP rotation, stealth, browser fetcher,
+  impersonation, retry, detail-page request, or saved full HTML response;
+- early termination when pagination is sufficiently confirmed, no confirmed
+  next-page link or new job ID exists, or a URL/content repeats;
+- immediate termination without another request on HTTP 401, 403, or 429,
+  login/authwall/checkpoint redirect, CAPTCHA, access denied,
+  consent/interstitial content, or any other technical block.
+
+This follow-up does not change the Milestone 1 status and does not claim that
+real LinkedIn pagination has been verified. It does not authorize Milestone 2
+LinkedIn scraping, production execution, full-server scraping, or circumvention.
+Any production use still requires a separate team decision.
+
 ---
 
 ## Milestone 2 — Backend and Scraping Pipeline
