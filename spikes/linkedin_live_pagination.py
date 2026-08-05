@@ -29,9 +29,73 @@ REDIRECT_MARKERS = {
     "authwall": ("/authwall",),
     "checkpoint": ("/checkpoint",),
 }
-CAPTCHA_MARKERS = ("captcha", "security verification")
 ACCESS_DENIED_MARKERS = ("access denied", "not authorized to access")
 CONSENT_MARKERS = ("consent interstitial", "before accessing linkedin", "sign in to linkedin")
+UPPERCASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+LOWERCASE = "abcdefghijklmnopqrstuvwxyz"
+VISIBLE_XPATH = (
+    "not(ancestor-or-self::*["
+    "@hidden or "
+    "translate(normalize-space(@aria-hidden), 'TRUE', 'true') = 'true' or "
+    "contains(translate(@style, ' ', ''), 'display:none') or "
+    "contains(translate(@style, ' ', ''), 'visibility:hidden')"
+    "])"
+)
+CAPTCHA_FORM_XPATH = (
+    "//form[("
+    f"contains(translate(concat(@id, ' ', @class, ' ', @action), '{UPPERCASE}', "
+    f"'{LOWERCASE}'), 'captcha') or "
+    f".//*[(contains(translate(concat(@id, ' ', @name, ' ', @class), '{UPPERCASE}', "
+    f"'{LOWERCASE}'), 'captcha')) and {VISIBLE_XPATH}]"
+    f") and {VISIBLE_XPATH}]"
+)
+CAPTCHA_IFRAME_XPATH = (
+    "//iframe[("
+    f"contains(translate(concat(@src, ' ', @title, ' ', @name), '{UPPERCASE}', "
+    f"'{LOWERCASE}'), 'captcha') or "
+    f"contains(translate(@src, '{UPPERCASE}', '{LOWERCASE}'), 'recaptcha') or "
+    f"contains(translate(@src, '{UPPERCASE}', '{LOWERCASE}'), 'hcaptcha') or "
+    f"contains(translate(@src, '{UPPERCASE}', '{LOWERCASE}'), 'turnstile') or "
+    f"contains(translate(@src, '{UPPERCASE}', '{LOWERCASE}'), 'arkoselabs') or "
+    f"contains(translate(@src, '{UPPERCASE}', '{LOWERCASE}'), 'funcaptcha')"
+    f") and {VISIBLE_XPATH}]"
+)
+CAPTCHA_CONTAINER_XPATH = (
+    "//*[self::div or self::section][("
+    f"contains(translate(concat(@id, ' ', @class), '{UPPERCASE}', '{LOWERCASE}'), "
+    "'captcha-challenge') or "
+    f"contains(translate(concat(@id, ' ', @class), '{UPPERCASE}', '{LOWERCASE}'), "
+    "'captcha-container') or "
+    f"contains(translate(concat(@id, ' ', @class), '{UPPERCASE}', '{LOWERCASE}'), "
+    "'g-recaptcha') or "
+    f"contains(translate(concat(@id, ' ', @class), '{UPPERCASE}', '{LOWERCASE}'), "
+    "'h-captcha') or "
+    f"contains(translate(concat(@id, ' ', @class), '{UPPERCASE}', '{LOWERCASE}'), "
+    "'cf-turnstile') or "
+    f"contains(translate(concat(@id, ' ', @class), '{UPPERCASE}', '{LOWERCASE}'), "
+    "'arkose') or "
+    f"contains(translate(concat(@id, ' ', @class), '{UPPERCASE}', '{LOWERCASE}'), "
+    "'funcaptcha')"
+    f") and {VISIBLE_XPATH}]"
+)
+CAPTCHA_TEXT_PHRASES = (
+    "security verification",
+    "verify you are human",
+    "verify that you are human",
+    "complete the security check",
+    "complete the captcha",
+    "captcha challenge",
+)
+VISIBLE_TEXT_XPATH = (
+    ".//text()[not(ancestor::script) and not(ancestor::style) "
+    "and not(ancestor::template) and not(ancestor::noscript) "
+    "and not(ancestor::*["
+    "@hidden or "
+    "translate(normalize-space(@aria-hidden), 'TRUE', 'true') = 'true' or "
+    "contains(translate(@style, ' ', ''), 'display:none') or "
+    "contains(translate(@style, ' ', ''), 'visibility:hidden')"
+    "])]"
+)
 
 
 class RedirectLike(Protocol):
@@ -125,6 +189,12 @@ class RobotsPreflightResult:
         return "robots.txt disallows the target for ordinary operation"
 
 
+@dataclass(frozen=True, slots=True)
+class BlockDetection:
+    reason: str
+    evidence: str
+
+
 def _diagnostic_result(
     *,
     requested_urls: list[str],
@@ -136,6 +206,8 @@ def _diagnostic_result(
     started: float,
     clock: Callable[[], float],
     stop_reason: str,
+    block_reason: str | None = None,
+    block_evidence: str | None = None,
 ) -> dict[str, object]:
     return {
         "requested_urls": requested_urls,
@@ -146,6 +218,8 @@ def _diagnostic_result(
         "requests": requests,
         "duration_seconds": round(clock() - started, 3),
         "stop_reason": stop_reason,
+        "block_reason": block_reason,
+        "block_evidence": block_evidence,
     }
 
 
@@ -165,6 +239,8 @@ def empty_diagnostic(
         "requests": 0,
         "duration_seconds": round(duration_seconds, 3),
         "stop_reason": stop_reason,
+        "block_reason": None,
+        "block_evidence": None,
         "robots_preflight": robots.diagnostic() if robots else None,
         "robots_warning": robots.warning if robots else None,
     }
@@ -194,14 +270,50 @@ def _header(response: ResponseLike, name: str) -> str | None:
     )
 
 
-def _body_block_reason(html: str, *, has_job_cards: bool) -> str | None:
+def _visible_text(node: Selector) -> str:
+    text_nodes = node.xpath(VISIBLE_TEXT_XPATH).getall()
+    return " ".join(str(value) for value in text_nodes).casefold()
+
+
+def _captcha_detection(page: Selector, *, has_job_cards: bool) -> BlockDetection | None:
+    if page.xpath(CAPTCHA_FORM_XPATH):
+        return BlockDetection("captcha", "visible CAPTCHA form")
+    if page.xpath(CAPTCHA_IFRAME_XPATH):
+        return BlockDetection("captcha", "visible CAPTCHA iframe or provider challenge")
+    if page.xpath(CAPTCHA_CONTAINER_XPATH):
+        return BlockDetection("captcha", "visible CAPTCHA challenge container")
+    if has_job_cards:
+        return None
+
+    title_text = " ".join(str(value) for value in page.xpath("//title/text()").getall()).casefold()
+    if any(phrase in title_text for phrase in CAPTCHA_TEXT_PHRASES):
+        return BlockDetection("captcha", "page title explicitly requests security verification")
+
+    main_nodes = page.xpath(
+        f"//*[self::main or self::h1 or self::h2 or @role='main'][{VISIBLE_XPATH}]"
+    )
+    if any(
+        phrase in _visible_text(node)
+        for node in main_nodes
+        for phrase in CAPTCHA_TEXT_PHRASES
+    ):
+        return BlockDetection("captcha", "visible main text requests security verification")
+    return None
+
+
+def _body_block_detection(
+    html: str, page: Selector, *, has_job_cards: bool
+) -> BlockDetection | None:
+    captcha = _captcha_detection(page, has_job_cards=has_job_cards)
+    if captcha is not None:
+        return captcha
     folded = html.casefold()
-    if any(marker in folded for marker in CAPTCHA_MARKERS):
-        return "captcha"
     if any(marker in folded for marker in ACCESS_DENIED_MARKERS):
-        return "access_denied"
+        return BlockDetection("access_denied", "response text contains an access-denied marker")
     if not has_job_cards and any(marker in folded for marker in CONSENT_MARKERS):
-        return "consent_interstitial"
+        return BlockDetection(
+            "consent_interstitial", "response text contains a consent/interstitial marker"
+        )
     return None
 
 
@@ -242,6 +354,8 @@ def run_live_pagination(
     requests = 0
     current_url = start_url
     stop_reason = "invalid_start_url"
+    block_reason: str | None = None
+    block_evidence: str | None = None
 
     if not _is_linkedin_https_url(start_url):
         return _diagnostic_result(
@@ -276,6 +390,8 @@ def run_live_pagination(
         except Exception as exc:  # The diagnostic must fail closed and emit JSON.
             requests += 1
             stop_reason = f"fetch_error_{type(exc).__name__}"
+            block_reason = stop_reason
+            block_evidence = f"fetcher raised {type(exc).__name__}"
             break
         requests += 1
         pages += 1
@@ -291,18 +407,26 @@ def run_live_pagination(
 
         if status in BLOCKING_STATUSES:
             stop_reason = f"http_{status}"
+            block_reason = stop_reason
+            block_evidence = f"HTTP status {status}"
             break
         if status >= 400:
             stop_reason = f"http_error_{status}"
+            block_reason = stop_reason
+            block_evidence = f"HTTP status {status}"
             break
 
         redirect_targets = [*history_urls, *([location_url] if location_url else [])]
         redirect_reason = _redirect_reason(redirect_targets)
         if redirect_reason is not None:
             stop_reason = redirect_reason
+            block_reason = stop_reason
+            block_evidence = "redirect target matches a login/authwall/checkpoint path"
             break
         if 300 <= status < 400:
             stop_reason = "redirect_other" if location_url else "redirect_without_location"
+            block_reason = stop_reason
+            block_evidence = "HTTP redirect response"
             break
         if final_url != current_url and final_url in seen_urls:
             stop_reason = "repeated_url"
@@ -316,10 +440,13 @@ def run_live_pagination(
             break
         seen_content_hashes.add(content_hash)
 
+        page = Selector(content=html, url=final_url)
         page_cards = extract_job_cards(html, base_url=final_url)
-        block_reason = _body_block_reason(html, has_job_cards=bool(page_cards))
-        if block_reason is not None:
-            stop_reason = block_reason
+        block = _body_block_detection(html, page, has_job_cards=bool(page_cards))
+        if block is not None:
+            stop_reason = block.reason
+            block_reason = block.reason
+            block_evidence = block.evidence
             break
 
         page_job_ids = {
@@ -347,6 +474,8 @@ def run_live_pagination(
         started=started,
         clock=clock,
         stop_reason=stop_reason,
+        block_reason=block_reason,
+        block_evidence=block_evidence,
     )
 
 

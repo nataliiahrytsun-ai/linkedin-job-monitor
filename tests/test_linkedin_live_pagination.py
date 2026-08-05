@@ -287,6 +287,64 @@ def test_stops_on_identical_content() -> None:
     assert fetcher.requested_urls == [PAGE_1_URL, PAGE_2_URL]
 
 
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "<script>const captchaState = 'security verification';</script>",
+        '<script src="https://static.example.test/captcha.js"></script>',
+        "<!-- captcha challenge -->",
+    ],
+)
+def test_incidental_captcha_text_is_not_classified_as_captcha(marker: str) -> None:
+    result, fetcher, _ = run(
+        {PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=jobs_html([], marker=marker))}
+    )
+
+    assert result["stop_reason"] == "no_new_job_ids"
+    assert result["block_reason"] is None
+    assert result["block_evidence"] is None
+    assert fetcher.requested_urls == [PAGE_1_URL]
+
+
+def test_job_cards_with_incidental_captcha_text_are_processed() -> None:
+    marker = "<script>window.captchaResource = '/captcha.js';</script>"
+    result, fetcher, _ = run(
+        {
+            PAGE_1_URL: FakeResponse(
+                url=PAGE_1_URL,
+                html=jobs_html(["1001"], marker=marker),
+            )
+        }
+    )
+
+    assert result["found_job_ids"] == ["1001"]
+    assert result["stop_reason"] == "no_next_page"
+    assert result["block_reason"] is None
+    assert fetcher.requested_urls == [PAGE_1_URL]
+
+
+def test_hidden_captcha_container_is_not_sufficient_evidence() -> None:
+    marker = '<div class="captcha-challenge" style="display: none">CAPTCHA</div>'
+    result, fetcher, _ = run(
+        {PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=jobs_html([], marker=marker))}
+    )
+
+    assert result["stop_reason"] == "no_new_job_ids"
+    assert result["block_reason"] is None
+    assert fetcher.requested_urls == [PAGE_1_URL]
+
+
+def test_hidden_security_verification_text_is_not_sufficient_evidence() -> None:
+    marker = "<main><div hidden>Security Verification</div><h1>Public jobs</h1></main>"
+    result, fetcher, _ = run(
+        {PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=jobs_html([], marker=marker))}
+    )
+
+    assert result["stop_reason"] == "no_new_job_ids"
+    assert result["block_reason"] is None
+    assert fetcher.requested_urls == [PAGE_1_URL]
+
+
 def test_stops_when_there_is_no_next_page() -> None:
     result, fetcher, _ = run(
         {PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=jobs_html(["1001"]))}
@@ -378,16 +436,79 @@ def test_blocking_redirect_stops_without_another_request(marker: str) -> None:
     assert fetcher.requested_urls == [PAGE_1_URL]
 
 
-@pytest.mark.parametrize(
-    ("marker", "reason"),
-    [("CAPTCHA challenge", "captcha"), ("Access Denied", "access_denied")],
-)
-def test_blocking_body_stops_without_another_request(marker: str, reason: str) -> None:
+def test_access_denied_body_stops_without_another_request() -> None:
     result, fetcher, _ = run(
-        {PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=jobs_html([], marker=marker))}
+        {
+            PAGE_1_URL: FakeResponse(
+                url=PAGE_1_URL, html=jobs_html([], marker="Access Denied")
+            )
+        }
     )
 
-    assert result["stop_reason"] == reason
+    assert result["stop_reason"] == "access_denied"
+    assert fetcher.requested_urls == [PAGE_1_URL]
+
+
+def test_visible_captcha_form_stops_with_safe_evidence() -> None:
+    html = jobs_html(
+        [],
+        PAGE_2_URL,
+        marker='<form id="captcha-form"><input name="captcha-token"></form>',
+    )
+    result, fetcher, _ = run({PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=html)})
+
+    assert result["stop_reason"] == "captcha"
+    assert result["block_reason"] == "captcha"
+    assert result["block_evidence"] == "visible CAPTCHA form"
+    assert result["requests"] == 1
+    assert fetcher.requested_urls == [PAGE_1_URL]
+
+
+@pytest.mark.parametrize(
+    ("marker", "evidence"),
+    [
+        (
+            '<iframe src="https://www.google.com/recaptcha/api2/anchor"></iframe>',
+            "visible CAPTCHA iframe or provider challenge",
+        ),
+        (
+            '<div class="captcha-challenge">Complete the challenge</div>',
+            "visible CAPTCHA challenge container",
+        ),
+    ],
+)
+def test_visible_captcha_iframe_or_challenge_stops(
+    marker: str, evidence: str
+) -> None:
+    html = jobs_html([], PAGE_2_URL, marker=marker)
+    result, fetcher, _ = run({PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=html)})
+
+    assert result["stop_reason"] == "captcha"
+    assert result["block_reason"] == "captcha"
+    assert result["block_evidence"] == evidence
+    assert fetcher.requested_urls == [PAGE_1_URL]
+
+
+def test_security_verification_page_without_jobs_is_captcha() -> None:
+    html = (
+        "<html><head><title>Security Verification</title></head>"
+        "<body><main><h1>Verify you are human</h1></main></body></html>"
+    )
+    result, fetcher, _ = run({PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=html)})
+
+    assert result["stop_reason"] == "captcha"
+    assert result["block_reason"] == "captcha"
+    assert result["block_evidence"] == "page title explicitly requests security verification"
+    assert fetcher.requested_urls == [PAGE_1_URL]
+
+
+def test_visible_main_security_verification_text_is_captcha() -> None:
+    html = "<html><body><main><h1>Verify you are human</h1></main></body></html>"
+    result, fetcher, _ = run({PAGE_1_URL: FakeResponse(url=PAGE_1_URL, html=html)})
+
+    assert result["stop_reason"] == "captcha"
+    assert result["block_reason"] == "captcha"
+    assert result["block_evidence"] == "visible main text requests security verification"
     assert fetcher.requested_urls == [PAGE_1_URL]
 
 
