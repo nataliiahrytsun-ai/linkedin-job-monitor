@@ -1,5 +1,10 @@
 # Acuity Analytics LinkedIn Technical Spike Report
 
+> This report records the original 2026-07-28 robots-only milestone outcome.
+> For current extraction and pagination evidence, see the canonical
+> [LinkedIn pagination diagnostic closeout](diagnostics/linkedin-pagination-2026-08-05.md):
+> live extraction is **Verified** and full live pagination is **Not verified**.
+
 ## Decision
 
 **Classification: `Not feasible through compliant public access`.**
@@ -98,7 +103,9 @@ Final executed preflight result:
 | Policy block | Yes, before target request |
 
 An earlier direct robots probe also returned 200 in 0.318 s with no redirect.
-The final runner measurement above is the canonical result.
+The runner measurement above is canonical only for the original robots-only
+milestone run; the later diagnostic closeout linked above is canonical for
+current extraction and pagination status.
 
 ## Requested spike questions
 
@@ -193,9 +200,10 @@ fixtures with minimal approved fragments.
 | No access-control circumvention | **Pass** | No target request, stealth, proxy, login, or cookie. |
 | `SCRAPLING_GUIDE.md` and `SPIKE_REPORT.md` exist | **Pass** | Both repository documents exist. |
 
-**Milestone 1 is complete under the documented early termination rule.** Live
-job-field, pagination, detail-page, JavaScript, and target-response behavior
-remain explicitly not verified and must not be presented as extraction evidence.
+**Milestone 1 is complete under the documented early termination rule.** This
+is the historical milestone conclusion. Later diagnostics verified live job ID
+extraction but not full live pagination; current status is maintained in the
+canonical closeout linked above.
 
 ## Final verification
 

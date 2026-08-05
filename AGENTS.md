@@ -108,25 +108,14 @@ DOM fragment now produces one card with ID `4447661197` and title
 `Delivery Manager`; the full suite passed with 60 tests, and Ruff and MyPy
 strict passed.
 
-This offline result does not establish what the plain-HTTP response contained.
-Either the link was present and the old parser ignored it, or it appeared only
-in rendered browser DOM and was absent from the plain-HTTP response. Real
-LinkedIn pagination remains **Not verified**.
+The final limited plain-HTTP validation after that fix completed with HTTP 200,
+no redirects, and 60 unique LinkedIn Job IDs including `4447661197`; it stopped
+with `no_next_page`. Live extraction is **Verified**, while full live pagination
+remains **Not verified**. The canonical closeout is
+[`docs/diagnostics/linkedin-pagination-2026-08-05.md`](docs/diagnostics/linkedin-pagination-2026-08-05.md).
 
-Under the existing team instruction to test pagination locally with only a few
-requests, exactly one final validation run is permitted after this concrete
-parser fix. It has not run. It must use a new current robots preflight, the same
-exact target URL above, and `--confirm-live-test`. All existing limits remain
-mandatory: at most 4 target requests and 4 job-listing pages, sequential
-execution with at least 2 seconds between requests, no login, cookies, proxy/IP
-rotation, stealth, browser fetcher, impersonation, retry, detail-page requests,
-or full-HTML storage, and immediate termination on any block or other
-termination condition.
-
-This documented exception permits no further rerun, production scraping, or
-full server-side scraping. Historical JSON reports must not be changed, and the
-final validation run must not be described as completed before it actually
-runs.
+This documented exception permits no further live run, production scraping, or
+full server-side scraping.
 
 ## Scrapling
 

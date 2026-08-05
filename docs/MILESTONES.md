@@ -63,69 +63,14 @@ live extraction claim may be made.
 the runner stopped before the target request, and the result was documented as
 `Not feasible through compliant public access`.
 
-### Limited pagination diagnostics and one final validation run
+### Limited pagination diagnostics closeout
 
-The completed outcome above remains the historical Milestone 1 result. The
-first manually confirmed limited live pagination run used exactly:
-`https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C30242966`.
-
-Its current robots preflight made one request to `robots.txt`, returned HTTP
-200, recorded `target_allowed=false`, and did not request the target page. With
-`--confirm-live-test`, the live runner then made exactly one target request,
-received HTTP 200 with no redirects, found no Job IDs, made no next request, and
-recorded `stop_reason="captcha"`.
-
-The result is **Inconclusive** — the response was classified as CAPTCHA by the
-previous broad raw-HTML marker check, but the saved report does not contain
-enough evidence to confirm that a CAPTCHA was actually presented. The defective
-classifier matched `captcha` or `security verification` anywhere in raw HTML,
-including possible JavaScript, metadata, resource URLs, or hidden text. Commit
-`7613ef9d8bdcc8ac252047d61d7aa46edd2d4318` replaced that check with
-structural CAPTCHA diagnostics and added safe `block_reason` and
-`block_evidence` report fields. Real LinkedIn pagination remains **Not
-verified**.
-
-The corrective live run has completed. It made exactly one target request,
-received HTTP 200 with no redirects, recorded `pages=1`, `requests=1`,
-`found_job_ids=[]`, `stop_reason="no_new_job_ids"`, `block_reason=null`, and
-`block_evidence=null`, and made no next target request. This did not verify
-pagination.
-
-Subsequent offline inspection found that the old `extract_job_cards` considered
-only `li.jobs-search-results__list-item` and `li.job-card-container` as card
-roots. The inspected rendered DOM instead exposed an
-`a.base-card__full-link[href*="/jobs/view/"]`; its URL contained Job ID
-`4447661197`, and its `span.sr-only` contained `Delivery Manager`. The old outer
-selector therefore never processed that link. Commit
-`b852de18d195df795bbfcc28c7b573b164702853` added a validated job-link fallback,
-regional LinkedIn-subdomain support, `sr-only`/`aria-label`/link-text title
-fallbacks, and Job ID deduplication. The real manual DOM fragment now produces
-one card with the expected ID and title. The full suite passed with 60 tests;
-Ruff and MyPy strict also passed.
-
-This does not prove that the plain-HTTP response contained the same link. It may
-have been present but ignored by the old parser, or it may have appeared only in
-rendered browser DOM. Real LinkedIn pagination remains **Not verified**.
-
-Under the existing team instruction to test pagination locally with only a few
-requests, exactly one final validation run is permitted after the concrete
-parser fix. It has not run. It must:
-
-- create a new current robots preflight and record its result;
-- use the same exact target URL above and require `--confirm-live-test`;
-- make at most 4 target requests across at most 4 job-listing pages;
-- run sequentially with at least 2 seconds between requests;
-- use no login, cookies, proxy, IP rotation, stealth, browser fetcher,
-  impersonation, retry, detail-page request, or saved full HTML response;
-- terminate immediately without another request on any technical block or any
-  other configured termination condition.
-
-This final validation run does not change the Milestone 1 status or permit any
-further rerun, Milestone 2 LinkedIn scraping, production execution, full
-server-side scraping, or circumvention. Any production use still requires a
-separate team decision. Historical diagnostic JSON files must remain unchanged,
-and the final validation run must not be represented as completed before it
-actually runs.
+The canonical closeout is
+[`docs/diagnostics/linkedin-pagination-2026-08-05.md`](diagnostics/linkedin-pagination-2026-08-05.md).
+**Live extraction is Verified; full live pagination is Not verified.** The
+historical Milestone 1 outcome above is unchanged. No further live validation
+run is authorized by this closeout, and production use still requires a
+separate team decision.
 
 ---
 

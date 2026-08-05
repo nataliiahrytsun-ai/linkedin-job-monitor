@@ -12,9 +12,8 @@ claims use these labels:
 - **Not verified:** not established by reliable live evidence; it may have been
   implemented or tested against synthetic HTML only.
 - **Assumption:** a proposed future design, not experimental evidence.
-- **Open question:** not answered by the first or corrective limited pagination
-  diagnostics and not yet answered by the final validation run under the
-  existing team instruction.
+- **Open question:** not answered by the completed limited diagnostics; full
+  continuation handling remains unverified.
 
 ## 1. Overview and project decision
 
@@ -27,9 +26,9 @@ obtained.
 **Verified:** the original milestone used `FetcherSession` for a single public
 `robots.txt` request and `Selector` for offline fixture parsing. No target job
 page was requested during that original run because LinkedIn's current
-`User-agent: *` rule disallows `/`. Two later limited diagnostics under the
-existing team instruction each made one target request as recorded below;
-neither verified pagination.
+`User-agent: *` rule disallows `/`. Three later limited diagnostics ran under
+the existing team instruction. The final one verified live extraction but did
+not verify full pagination.
 
 The following are not used in this project at Milestone 1:
 
@@ -151,15 +150,13 @@ The selection order is:
 
 **Verified:** `FetcherSession` was tested against
 `https://www.linkedin.com/robots.txt`, which returned HTTP 200 without redirect.
-The first and corrective limited diagnostics under the existing team
-instruction each made one ordinary target HTTP request and received HTTP 200
-without redirects. The first result had an inconclusive CAPTCHA classification;
-the corrective result found no Job IDs and did not verify pagination.
+The first, corrective, and final limited diagnostics used ordinary target HTTP.
+The final validation received HTTP 200 without redirects and extracted 60
+unique LinkedIn Job IDs.
 
-**Not verified live:** successful job-card extraction from the target's
-plain-HTTP response, async target HTTP, browser rendering, job-card/detail
-extraction, performance differences, and session reuse across multiple target
-requests. `StealthyFetcher` must not be tested for LinkedIn.
+**Not verified live:** async target HTTP, detail extraction, performance
+differences, and session reuse across multiple target requests.
+`StealthyFetcher` must not be tested for LinkedIn.
 
 ## 5. LinkedIn-specific extraction design
 
@@ -177,10 +174,10 @@ Milestone 2 scope.
 **Verified offline:** the synthetic fixtures exercise candidate job-card fields:
 job ID, title, company, location, publication date, and absolute job URL. An
 inspected real rendered DOM fragment is also parsed offline as one card with Job
-ID `4447661197`, title `Delivery Manager`, and its regional LinkedIn URL. This
-does not establish that the same link existed in a plain-HTTP response. The
-synthetic detail fixture exercises description, seniority, employment type, job
-function, and industry. A missing selector returns `None` and never crashes.
+ID `4447661197`, title `Delivery Manager`, and its regional LinkedIn URL. The
+final plain-HTTP validation extracted 60 unique Job IDs including `4447661197`.
+The synthetic detail fixture exercises description, seniority, employment type,
+job function, and industry. A missing selector returns `None` and never crashes.
 
 Descriptions and criteria are modeled as detail-page fields because result cards
 usually cannot be assumed to contain full descriptions. Whether separate detail
@@ -207,79 +204,18 @@ source. The runner accumulates stable job IDs across pages, deduplicates cards,
 counts fetched pages and source calls, and stops on no new IDs, a repeated URL,
 identical content, `max_pages`, or `max_requests`.
 
-This verifies the orchestration algorithm only. Real LinkedIn pagination,
-pagination URLs, page size, lazy loading, and current selectors remain **Not
-verified**. This local verification made no network requests and did not alter
-the robots preflight.
+This verifies the orchestration algorithm only. Full LinkedIn pagination,
+continuation sequencing, page size, and lazy loading remain **Not verified**.
+This local verification made no network requests and did not alter the robots
+preflight.
 
-### Limited diagnostics, parser fix, and final validation
+### Limited pagination diagnostics closeout
 
-The first manually confirmed limited live run used exactly:
-`https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C30242966`.
-Its new robots preflight made one `robots.txt` request, returned HTTP 200,
-recorded `target_allowed=false`, and did not request the target page. The live
-runner then made exactly one target request, received HTTP 200 with no
-redirects, found no Job IDs, made no next request, and recorded
-`stop_reason="captcha"`.
-
-This result is **Inconclusive** — the response was classified as CAPTCHA by the
-previous broad raw-HTML marker check, but the saved report does not contain
-enough evidence to confirm that a CAPTCHA was actually presented. The previous
-classifier matched `captcha` or `security verification` anywhere in raw HTML,
-including possible JavaScript, metadata, resource URLs, or hidden text. Commit
-`7613ef9d8bdcc8ac252047d61d7aa46edd2d4318` replaced raw-substring
-matching with structural CAPTCHA diagnostics and added safe `block_reason` and
-`block_evidence` fields. Real LinkedIn pagination remains **Not verified**.
-
-The corrective live run has completed. It made exactly one target request,
-received HTTP 200 with no redirects, recorded `pages=1`, `requests=1`,
-`found_job_ids=[]`, `stop_reason="no_new_job_ids"`, `block_reason=null`, and
-`block_evidence=null`, and made no next target request. It did not verify
-pagination.
-
-Offline inspection of a real rendered DOM fragment then identified the concrete
-zero-result parser bug. The old `extract_job_cards` began only at
-`li.jobs-search-results__list-item` or `li.job-card-container`. The inspected
-fragment instead exposed an `a.base-card__full-link[href*="/jobs/view/"]`; its
-URL correctly yielded Job ID `4447661197`, and its `span.sr-only` contained
-`Delivery Manager`. The old outer selector therefore never processed the link.
-
-Commit `b852de18d195df795bbfcc28c7b573b164702853` added a validated fallback for
-LinkedIn job links, support for regional LinkedIn subdomains, title extraction
-from `sr-only`, `aria-label`, or cleaned link text, and Job ID deduplication. The
-real manual DOM fragment now produces one offline card with ID `4447661197` and
-title `Delivery Manager`. The full suite passed with 60 tests; Ruff and MyPy
-strict also passed.
-
-This does not prove that the plain-HTTP response contained the same link. The
-link may have been present but ignored by the old parser, or it may have appeared
-only in rendered browser DOM and been absent from the plain-HTTP response. Real
-LinkedIn pagination remains **Not verified**.
-
-Under the existing team instruction to test pagination locally with only a few
-requests, exactly one final validation run is permitted after the concrete
-parser fix. It has not run:
-
-- Require `--confirm-live-test`; without it, make no target request.
-- Create a new current robots preflight, check the same exact target URL above,
-  and include the robots result in the diagnostic JSON. Record `Disallow: /` as
-  a warning rather than a blocker for this one test.
-- Fetch at most 4 job-listing pages with at most 4 target-page requests.
-- Execute sequentially and wait at least 2 seconds between requests.
-- Use plain HTTP only: no login, cookies, proxy/IP rotation, stealth, browser
-  fetcher, impersonation, or retry.
-- Do not request detail pages or save complete HTML responses.
-- Stop when pagination is sufficiently confirmed, the next-page link is absent
-  or unconfirmed, there are no new job IDs, or a URL/content repeats.
-- Stop immediately without another request or alternative continuation on HTTP
-  401/403/429, login/authwall/checkpoint redirect, CAPTCHA, access denied,
-  consent/interstitial content, or any other technical block.
-
-This final validation run permits no further rerun, normal crawling, production
-or full server-side scraping, or circumvention. Production requires a separate
-team decision. Historical diagnostic JSON files must not be changed, and the
-final validation run must not be described as completed before it actually
-runs.
+The canonical closeout is
+[`docs/diagnostics/linkedin-pagination-2026-08-05.md`](diagnostics/linkedin-pagination-2026-08-05.md).
+**Live extraction is Verified; full live pagination is Not verified.** The
+continuation endpoint was observed manually, but the runner does not implement
+or verify it. No further live run is authorized by this closeout.
 
 ### Fallbacks and HTML-change detection
 
@@ -287,9 +223,9 @@ Known card-container selectors remain the primary path. Commit
 `b852de18d195df795bbfcc28c7b573b164702853` added a fallback for standalone
 `a[href*="/jobs/view/"]` links only when the resolved URL has a LinkedIn host and
 a numeric Job ID. Titles fall back from existing selectors to `span.sr-only`,
-`aria-label`, and cleaned link text; results are deduplicated by Job ID. A future
-reliable live result must still validate which markup plain HTTP actually
-contains. Treat any of these as a structural-change signal:
+`aria-label`, and cleaned link text; results are deduplicated by Job ID. The
+final plain-HTTP validation confirmed live extraction through this parser. Treat
+any of these as a structural-change signal:
 
 - HTTP 200 but zero cards where a previous successful run had jobs;
 - cards without both ID and URL;
@@ -302,7 +238,7 @@ Do not use adaptive selection to turn such a signal into an unreviewed match.
 ## 6. Conservative performance configuration
 
 The completed 2026-07-28 robots-only preflight used this configuration; it is
-historical evidence, not the configuration of the final validation run:
+historical evidence rather than the later diagnostic configuration:
 
 | Setting | Value | Meaning |
 |---|---:|---|
@@ -319,11 +255,9 @@ concurrency at 1 initially, add bounded exponential backoff only for transient
 timeouts/5xx, and never retry 401/403/429 aggressively. Expected target runtime
 is **Not verified**.
 
-The not-yet-executed final validation run under the existing team instruction
-has a separate fixed configuration: at most 4 pages and 4 target requests,
-concurrency 1, at least a 2-second delay, one attempt with no retry, and no
-followed technical-block continuation. A new robots request and result must be
-recorded separately before that run.
+The completed final validation retained the separate fixed limits of at most 4
+pages and 4 target requests, concurrency 1, at least a 2-second delay, one
+attempt with no retry, and no followed technical-block continuation.
 
 ## 7. Testing and diagnostics
 
@@ -359,10 +293,9 @@ Likely blockers are robots denial, lack of express crawl permission, 403/429,
 authwall/checkpoint, changed HTML, and JavaScript-only content. At the time of
 the completed milestone, the first two were confirmed (robots text directs
 crawlers to request whitelisting; no permission had been supplied). The
-existing team instruction covers only the inconclusive first diagnostic, the
-completed corrective diagnostic, and exactly one future final validation run
-described above; it does not change that historical observation or authorize
-production use.
+existing team instruction covered the inconclusive first diagnostic, the
+corrective diagnostic, and the completed final validation. The closeout does
+not authorize another live run or production use.
 
 ## 8. Extension path
 

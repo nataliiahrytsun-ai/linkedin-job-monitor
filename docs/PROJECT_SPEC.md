@@ -346,26 +346,16 @@ Karte mit Job-ID `4447661197` und Titel `Delivery Manager` extrahiert. Die
 vollständige Testsuite bestand mit 60 Tests; Ruff und MyPy strict bestanden
 ebenfalls.
 
-Dieses Offline-Ergebnis beweist nicht, dass die Plain-HTTP-Antwort dieselbe
-Verlinkung enthielt. Entweder war sie vorhanden und wurde vom alten Parser
-ignoriert, oder sie entstand nur im rendered Browser-DOM und fehlte in der
-Plain-HTTP-Antwort. Die reale LinkedIn-Pagination bleibt **Not verified**.
+Der finale begrenzte Plain-HTTP-Validierungslauf nach diesem Fix ist
+abgeschlossen. Er erhielt HTTP 200 ohne Redirects und extrahierte 60 eindeutige
+LinkedIn-Job-IDs einschließlich `4447661197`; der Lauf endete mit
+`stop_reason="no_next_page"`. Die Live-Extraktion ist **Verified**, die
+vollständige Live-Pagination bleibt **Not verified**. Der kanonische Abschluss
+steht in
+[`docs/diagnostics/linkedin-pagination-2026-08-05.md`](diagnostics/linkedin-pagination-2026-08-05.md).
 
-Im Rahmen der bestehenden Teamanweisung, die Pagination lokal mit nur wenigen
-Requests zu testen, ist nach diesem konkreten Parser-Fix genau ein finaler
-Validierungslauf zulässig. Er wurde noch nicht ausgeführt. Zwingend sind ein
-neuer aktueller Robots-Preflight, dieselbe exakte Target-URL und
-`--confirm-live-test`. Es gelten maximal 4 Target-Requests und 4
-Joblistenseiten, sequenzielle Ausführung mit mindestens 2 Sekunden Pause, kein
-Login, keine Cookies, Proxies, IP-Wechsel, Stealth-Funktionen, Browser-Fetcher,
-Impersonation oder Retries, keine Detailseiten-Requests und keine Speicherung
-vollständiger HTML-Antworten. Bei jeder Blockierung oder anderen
-Abbruchbedingung muss der Lauf sofort ohne weiteren Request enden.
-
-Dieser finale Validierungslauf erlaubt keinen weiteren Wiederholungslauf, kein
-Production Scraping und keinen vollständigen serverseitigen Scrape. Historische
-JSON-Berichte dürfen nicht verändert werden; der finale Validierungslauf darf
-vor seiner tatsächlichen Ausführung nicht als ausgeführt dargestellt werden.
+Dieser dokumentierte Ausnahmefall erlaubt keinen weiteren Live-Lauf, kein
+Production Scraping und keinen vollständigen serverseitigen Scrape.
 
 Außerhalb dieser Ausnahme gilt weiterhin: Wenn LinkedIn den öffentlichen Zugriff
 technisch blockiert, muss der Lauf kontrolliert fehlschlagen und einen
