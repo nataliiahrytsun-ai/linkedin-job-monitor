@@ -1,0 +1,38 @@
+[
+  {
+    "source": "fixture",
+    "source_job_id": "fixture-python-developer",
+    "title": "Python Developer",
+    "country": "Austria",
+    "city": "Vienna",
+    "location": "Vienna, Austria",
+    "workplace_type": "hybrid",
+    "employment_type": "full-time",
+    "seniority_level": "mid-senior",
+    "job_function": "engineering",
+    "industry": "software",
+    "published_at": "2026-08-01T09:00:00Z",
+    "description": "Build reliable internal services.",
+    "source_job_url": "https://jobs.example.test/openings/python-developer"
+  },
+  {
+    "source": "fixture",
+    "title": "Damaged Identity-Free Job"
+  },
+  {
+    "source": "fixture",
+    "source_job_id": "fixture-data-analyst",
+    "title": "Data Analyst",
+    "country": "Austria",
+    "city": "Linz",
+    "location": "Linz, Austria",
+    "workplace_type": "onsite",
+    "employment_type": "full-time",
+    "seniority_level": "associate",
+    "job_function": "analytics",
+    "industry": "software",
+    "published_at": "2026-08-02T09:00:00Z",
+    "description": "Turn synthetic business data into reports.",
+    "source_job_url": "https://jobs.example.test/openings/data-analyst"
+  }
+]

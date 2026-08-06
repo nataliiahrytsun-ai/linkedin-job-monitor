@@ -145,6 +145,8 @@ def test_run_one_creates_three_jobs_and_success_run_without_network(
     assert result.jobs_created == 3
     assert result.jobs_updated == 0
     assert result.jobs_unchanged == 0
+    assert result.jobs_failed == 0
+    assert result.errors == ()
     assert result.scrape_run.status == "success"
     assert result.scrape_run.jobs_found == 3
     assert result.scrape_run.jobs_created == 3
@@ -154,6 +156,7 @@ def test_run_one_creates_three_jobs_and_success_run_without_network(
     assert set(jobs_for(company_record).values_list("company_id", flat=True)) == {
         company_record.pk
     }
+    assert result.reconciliation is not None
     assert result.reconciliation.seen_jobs == 3
     assert result.reconciliation.unseen_jobs == 0
     assert all(
@@ -201,6 +204,7 @@ def test_run_two_updates_creates_and_records_first_sales_miss() -> None:
     sales = job_by_source_id(company_record, "fixture-sales-manager")
     assert sales.status == "active"
     assert sales.consecutive_successful_misses == 1
+    assert result.reconciliation is not None
     assert result.reconciliation.miss_counters_incremented == 1
 
 
@@ -214,6 +218,7 @@ def test_run_three_marks_sales_not_found_without_missing_seen_jobs() -> None:
     sales = job_by_source_id(company_record, "fixture-sales-manager")
     assert sales.status == "not_found"
     assert sales.consecutive_successful_misses == 2
+    assert result.reconciliation is not None
     assert result.reconciliation.jobs_marked_not_found == 1
     assert result.jobs_created == 0
     assert result.jobs_updated == 0
@@ -241,6 +246,7 @@ def test_closed_missing_job_keeps_explicit_status_and_counter() -> None:
     sales.refresh_from_db()
     assert sales.status == "closed"
     assert sales.consecutive_successful_misses == 0
+    assert result.reconciliation is not None
     assert result.reconciliation.closed_jobs_unchanged == 1
 
 
@@ -295,6 +301,7 @@ def test_empty_success_fixture_is_valid_and_reconciles_absence(tmp_path: Path) -
     assert result.jobs_created == 0
     assert result.jobs_updated == 0
     assert result.jobs_unchanged == 0
+    assert result.reconciliation is not None
     assert result.reconciliation.unseen_jobs == 3
     counters = jobs_for(company_record).values_list(
         "consecutive_successful_misses", flat=True

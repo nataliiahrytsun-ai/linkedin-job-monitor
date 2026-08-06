@@ -5,12 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from django.db import transaction  # type: ignore[import-untyped]
 
 from scraping.normalization import NormalizedJobPosting, normalize_job_posting
-from scraping.persistence import PersistenceOutcome, persist_job_posting
+from scraping.persistence import (
+    JobPersistenceError,
+    PersistenceOutcome,
+    PersistenceResult,
+    persist_job_posting,
+)
 from scraping.reconciliation import (
     DEFAULT_SUCCESSFUL_MISS_THRESHOLD,
     ReconciliationResult,
@@ -66,7 +71,19 @@ class FixturePipelineResult:
     jobs_created: int
     jobs_updated: int
     jobs_unchanged: int
-    reconciliation: ReconciliationResult
+    jobs_failed: int
+    errors: tuple[JobProcessingError, ...]
+    reconciliation: ReconciliationResult | None
+
+
+@dataclass(frozen=True, slots=True)
+class JobProcessingError:
+    """Safe diagnostic for one recoverable fixture record error."""
+
+    record_index: int
+    stage: Literal["normalization", "persistence"]
+    safe_error_type: str
+    safe_message: str
 
 
 class FixturePipelineError(Exception):
@@ -79,6 +96,26 @@ class FixturePipelineError(Exception):
 
 class InvalidPipelineTimestampError(ValueError):
     """The deterministic fixture pipeline timestamps are invalid."""
+
+
+class InvalidPipelineConfigurationError(ValueError):
+    """A fixture pipeline execution option is invalid."""
+
+
+class _RecoverableJobProcessingError(Exception):
+    def __init__(
+        self,
+        *,
+        stage: Literal["normalization", "persistence"],
+        original: Exception,
+    ) -> None:
+        super().__init__(stage)
+        self.stage = stage
+        self.original = original
+
+
+class AllJobRecordsFailedError(Exception):
+    """Every fixture record failed expected per-job processing."""
 
 
 def _validate_timestamps(*, started_at: datetime, finished_at: datetime) -> None:
@@ -150,6 +187,45 @@ def _safe_failure_message(error: Exception) -> str:
     return f"Fixture pipeline failed: {type(error).__name__}"
 
 
+def _process_record(
+    *,
+    company: CompanyRecord,
+    record: FixtureRecord,
+    record_index: int,
+    seen_at: datetime,
+) -> PersistenceResult:
+    try:
+        normalized = _normalize_fixture_record(record, index=record_index)
+    except ValueError as error:
+        raise _RecoverableJobProcessingError(
+            stage="normalization",
+            original=error,
+        ) from error
+
+    try:
+        return persist_job_posting(
+            company=company,
+            job=normalized,
+            seen_at=seen_at,
+        )
+    except JobPersistenceError as error:
+        raise _RecoverableJobProcessingError(
+            stage="persistence",
+            original=error,
+        ) from error
+
+
+def _safe_job_error(
+    *, record_index: int, error: _RecoverableJobProcessingError
+) -> JobProcessingError:
+    return JobProcessingError(
+        record_index=record_index,
+        stage=error.stage,
+        safe_error_type=type(error.original).__name__,
+        safe_message=f"Job record failed during {error.stage}.",
+    )
+
+
 def run_fixture_pipeline(
     *,
     company: CompanyRecord,
@@ -157,9 +233,20 @@ def run_fixture_pipeline(
     started_at: datetime,
     finished_at: datetime,
     miss_threshold: int = DEFAULT_SUCCESSFUL_MISS_THRESHOLD,
+    recover_job_errors: bool = False,
 ) -> FixturePipelineResult:
-    """Run one all-or-nothing local fixture batch through backend services."""
+    """Run one local fixture batch through the source-neutral backend.
+
+    Strict mode remains the default and fails the whole batch on a per-job
+    validation or persistence error. With ``recover_job_errors=True``, expected
+    per-job errors are isolated by savepoints; a mixed batch commits as PARTIAL
+    without reconciliation, while an all-invalid batch still fails atomically.
+    """
     _validate_timestamps(started_at=started_at, finished_at=finished_at)
+    if type(recover_job_errors) is not bool:
+        raise InvalidPipelineConfigurationError(
+            "recover_job_errors must be a bool"
+        )
     scrape_run = start_scrape_run(company=company, started_at=started_at)
 
     try:
@@ -169,14 +256,23 @@ def run_fixture_pipeline(
             jobs_created = 0
             jobs_updated = 0
             jobs_unchanged = 0
+            job_errors: list[JobProcessingError] = []
 
             for index, record in enumerate(records):
-                normalized = _normalize_fixture_record(record, index=index)
-                persisted = persist_job_posting(
-                    company=company,
-                    job=normalized,
-                    seen_at=finished_at,
-                )
+                try:
+                    with transaction.atomic():
+                        persisted = _process_record(
+                            company=company,
+                            record=record,
+                            record_index=index,
+                            seen_at=finished_at,
+                        )
+                except _RecoverableJobProcessingError as error:
+                    if not recover_job_errors:
+                        raise error.original from error
+                    job_errors.append(_safe_job_error(record_index=index, error=error))
+                    continue
+
                 seen_job_ids.append(persisted.job_posting.pk)
                 if persisted.outcome is PersistenceOutcome.CREATED:
                     jobs_created += 1
@@ -186,20 +282,42 @@ def run_fixture_pipeline(
                     jobs_unchanged += 1
 
             jobs_found = len(records)
-            completed_run = finish_scrape_run(
-                scrape_run=scrape_run,
-                status=TerminalRunStatus.SUCCESS,
-                finished_at=finished_at,
-                jobs_found=jobs_found,
-                jobs_created=jobs_created,
-                jobs_updated=jobs_updated,
-                requests_made=0,
-            )
-            reconciliation = reconcile_jobs_after_successful_run(
-                scrape_run=cast(ReconciliationScrapeRunRecord, completed_run),
-                seen_job_posting_ids=seen_job_ids,
-                miss_threshold=miss_threshold,
-            )
+            jobs_failed = len(job_errors)
+            jobs_succeeded = jobs_created + jobs_updated + jobs_unchanged
+            if jobs_failed and jobs_succeeded == 0:
+                raise AllJobRecordsFailedError(
+                    "all fixture job records failed processing"
+                )
+
+            if jobs_failed:
+                completed_run = finish_scrape_run(
+                    scrape_run=scrape_run,
+                    status=TerminalRunStatus.PARTIAL,
+                    finished_at=finished_at,
+                    jobs_found=jobs_found,
+                    jobs_created=jobs_created,
+                    jobs_updated=jobs_updated,
+                    requests_made=0,
+                    error_message=(
+                        f"{jobs_failed} of {jobs_found} job records failed processing"
+                    ),
+                )
+                reconciliation = None
+            else:
+                completed_run = finish_scrape_run(
+                    scrape_run=scrape_run,
+                    status=TerminalRunStatus.SUCCESS,
+                    finished_at=finished_at,
+                    jobs_found=jobs_found,
+                    jobs_created=jobs_created,
+                    jobs_updated=jobs_updated,
+                    requests_made=0,
+                )
+                reconciliation = reconcile_jobs_after_successful_run(
+                    scrape_run=cast(ReconciliationScrapeRunRecord, completed_run),
+                    seen_job_posting_ids=seen_job_ids,
+                    miss_threshold=miss_threshold,
+                )
 
         return FixturePipelineResult(
             scrape_run=completed_run,
@@ -207,6 +325,8 @@ def run_fixture_pipeline(
             jobs_created=jobs_created,
             jobs_updated=jobs_updated,
             jobs_unchanged=jobs_unchanged,
+            jobs_failed=jobs_failed,
+            errors=tuple(job_errors),
             reconciliation=reconciliation,
         )
     except Exception as error:
