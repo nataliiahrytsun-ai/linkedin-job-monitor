@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}Home · Job Monitor{% endblock %}
+
+{% block content %}
+  <section class="intro" aria-labelledby="page-title">
+    <p class="eyebrow">Internal workspace</p>
+    <h1 id="page-title">Job Monitor</h1>
+    <p class="lead">
+      Keep company vacancies organized, follow job changes, and review the
+      outcome of each monitoring run in one place.
+    </p>
+    <p class="project-state">
+      The backend foundation is ready. User-facing tools will be added in the
+      next steps.
+    </p>
+  </section>
+
+  <section aria-labelledby="workspace-title">
+    <h2 id="workspace-title">Workspace</h2>
+    <div class="card-grid">
+      <article class="card">
+        <div class="card-heading">
+          <h3>Companies</h3>
+          <span class="status-badge">Coming next</span>
+        </div>
+        <p>Add and maintain the organizations whose vacancies are monitored.</p>
+      </article>
+      <article class="card">
+        <div class="card-heading">
+          <h3>Jobs</h3>
+          <span class="status-badge">Coming next</span>
+        </div>
+        <p>Browse saved vacancies and narrow the list with useful filters.</p>
+      </article>
+      <article class="card">
+        <div class="card-heading">
+          <h3>Scrape runs</h3>
+          <span class="status-badge">Coming next</span>
+        </div>
+        <p>Review completed checks, their status, and any recoverable errors.</p>
+      </article>
+      <article class="card">
+        <div class="card-heading">
+          <h3>Dashboard</h3>
+          <span class="status-badge">Coming next</span>
+        </div>
+        <p>See a concise overview of monitored companies, jobs, and recent runs.</p>
+      </article>
+    </div>
+  </section>
+{% endblock %}

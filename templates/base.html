@@ -1,0 +1,41 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Job Monitor{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+  <header class="site-header">
+    <div class="container header-layout">
+      <a class="brand" href="{% url 'home' %}">Job Monitor</a>
+      <nav aria-label="Primary">
+        <ul class="navigation">
+          <li><a href="{% url 'home' %}" aria-current="page">Home</a></li>
+          <li><span class="nav-placeholder" aria-disabled="true">Companies</span></li>
+          <li><span class="nav-placeholder" aria-disabled="true">Jobs</span></li>
+          <li><span class="nav-placeholder" aria-disabled="true">Scrape runs</span></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-content" class="container main-content">
+    {% if messages %}
+      <div class="messages" aria-label="Messages">
+        {% for message in messages %}
+          <p class="message">{{ message }}</p>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">Internal vacancy monitoring workspace</div>
+  </footer>
+</body>
+</html>
