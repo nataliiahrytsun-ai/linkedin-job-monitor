@@ -1,0 +1,1 @@
+"""Company management Django app."""
