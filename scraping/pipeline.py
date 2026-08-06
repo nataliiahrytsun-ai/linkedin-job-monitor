@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from django.db import transaction  # type: ignore[import-untyped]
+from django.utils import timezone  # type: ignore[import-untyped]
 
 from scraping.normalization import NormalizedJobPosting, normalize_job_posting
 from scraping.persistence import (
@@ -129,6 +131,17 @@ def _validate_timestamps(*, started_at: datetime, finished_at: datetime) -> None
         )
 
 
+def _clock_timestamp(
+    *, clock: Callable[[], datetime], name: str, started_at: datetime | None = None
+) -> datetime:
+    value = clock()
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise InvalidPipelineTimestampError(f"{name} must be timezone-aware")
+    if started_at is not None and value < started_at:
+        raise InvalidPipelineTimestampError(f"{name} cannot be earlier than started_at")
+    return value
+
+
 def _optional_string(record: FixtureRecord, field: str, *, index: int) -> str | None:
     value = record.get(field)
     if value is None or isinstance(value, str):
@@ -230,10 +243,11 @@ def run_fixture_pipeline(
     *,
     company: CompanyRecord,
     fixture_path: Path,
-    started_at: datetime,
-    finished_at: datetime,
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
     miss_threshold: int = DEFAULT_SUCCESSFUL_MISS_THRESHOLD,
     recover_job_errors: bool = False,
+    clock: Callable[[], datetime] = timezone.now,
 ) -> FixturePipelineResult:
     """Run one local fixture batch through the source-neutral backend.
 
@@ -242,12 +256,28 @@ def run_fixture_pipeline(
     per-job errors are isolated by savepoints; a mixed batch commits as PARTIAL
     without reconciliation, while an all-invalid batch still fails atomically.
     """
-    _validate_timestamps(started_at=started_at, finished_at=finished_at)
     if type(recover_job_errors) is not bool:
         raise InvalidPipelineConfigurationError(
             "recover_job_errors must be a bool"
         )
-    scrape_run = start_scrape_run(company=company, started_at=started_at)
+    if not callable(clock):
+        raise InvalidPipelineConfigurationError("clock must be callable")
+
+    resolved_started_at = started_at or _clock_timestamp(
+        clock=clock,
+        name="started_at",
+    )
+    if finished_at is not None:
+        _validate_timestamps(
+            started_at=resolved_started_at,
+            finished_at=finished_at,
+        )
+    elif started_at is not None and (
+        started_at.tzinfo is None or started_at.utcoffset() is None
+    ):
+        raise InvalidPipelineTimestampError("started_at must be timezone-aware")
+
+    scrape_run = start_scrape_run(company=company, started_at=resolved_started_at)
 
     try:
         records = load_fixture_records(fixture_path)
@@ -259,13 +289,18 @@ def run_fixture_pipeline(
             job_errors: list[JobProcessingError] = []
 
             for index, record in enumerate(records):
+                observed_at = finished_at or _clock_timestamp(
+                    clock=clock,
+                    name="observed_at",
+                    started_at=resolved_started_at,
+                )
                 try:
                     with transaction.atomic():
                         persisted = _process_record(
                             company=company,
                             record=record,
                             record_index=index,
-                            seen_at=finished_at,
+                            seen_at=observed_at,
                         )
                 except _RecoverableJobProcessingError as error:
                     if not recover_job_errors:
@@ -290,10 +325,15 @@ def run_fixture_pipeline(
                 )
 
             if jobs_failed:
+                terminal_finished_at = finished_at or _clock_timestamp(
+                    clock=clock,
+                    name="finished_at",
+                    started_at=resolved_started_at,
+                )
                 completed_run = finish_scrape_run(
                     scrape_run=scrape_run,
                     status=TerminalRunStatus.PARTIAL,
-                    finished_at=finished_at,
+                    finished_at=terminal_finished_at,
                     jobs_found=jobs_found,
                     jobs_created=jobs_created,
                     jobs_updated=jobs_updated,
@@ -304,10 +344,15 @@ def run_fixture_pipeline(
                 )
                 reconciliation = None
             else:
+                terminal_finished_at = finished_at or _clock_timestamp(
+                    clock=clock,
+                    name="finished_at",
+                    started_at=resolved_started_at,
+                )
                 completed_run = finish_scrape_run(
                     scrape_run=scrape_run,
                     status=TerminalRunStatus.SUCCESS,
-                    finished_at=finished_at,
+                    finished_at=terminal_finished_at,
                     jobs_found=jobs_found,
                     jobs_created=jobs_created,
                     jobs_updated=jobs_updated,
@@ -330,10 +375,15 @@ def run_fixture_pipeline(
             reconciliation=reconciliation,
         )
     except Exception as error:
+        failure_finished_at = finished_at or _clock_timestamp(
+            clock=clock,
+            name="finished_at",
+            started_at=resolved_started_at,
+        )
         failed_run = finish_scrape_run(
             scrape_run=scrape_run,
             status=TerminalRunStatus.FAILED,
-            finished_at=finished_at,
+            finished_at=failure_finished_at,
             jobs_found=0,
             jobs_created=0,
             jobs_updated=0,
