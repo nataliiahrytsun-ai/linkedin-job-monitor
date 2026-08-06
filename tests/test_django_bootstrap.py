@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import os
 import subprocess
 import sys
@@ -34,11 +33,24 @@ def _run_manage(*arguments: str, database_path: Path) -> subprocess.CompletedPro
 
 
 def test_django_settings_import_and_configuration(tmp_path: Path) -> None:
-    settings = importlib.import_module("job_monitor.settings")
+    database_path = tmp_path / "settings.sqlite3"
+    code = (
+        "from django.conf import settings; "
+        f"expected={EXPECTED_APPS!r}; "
+        "assert set(settings.INSTALLED_APPS) >= expected; "
+        "assert settings.DATABASES['default']['ENGINE'] == "
+        "'django.db.backends.sqlite3'"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=PROJECT_ROOT,
+        env=_isolated_environment(database_path),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
-    assert set(settings.INSTALLED_APPS) >= EXPECTED_APPS
-    assert settings.DATABASES["default"]["ENGINE"] == "django.db.backends.sqlite3"
-    assert settings.BASE_DIR / "db.sqlite3" == PROJECT_ROOT / "db.sqlite3"
+    assert result.returncode == 0, result.stderr
     assert not (PROJECT_ROOT / "db.sqlite3").exists()
 
 
