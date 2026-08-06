@@ -156,7 +156,7 @@ Track 2-B blocker only.
 | Core models and migrations | Completed | `Company`, `JobPosting`, `ScrapeRun`, constraints, and indexes | `7d030e1` — `feat: add core data models and initial migrations` |
 | Normalization and identity hashing | Completed | Immutable DTO, canonical normalization, `content_hash`, and `dedupe_key` | `308eeb3` — `feat: add normalized job data and identity hashing` |
 | Single-job persistence | Completed | Atomic `CREATED`/`UPDATED`/`UNCHANGED` persistence and URL-to-ID upgrade | `d261edf` — `feat: add job posting persistence service` |
-| ScrapeRun lifecycle | Planned | Atomic start/finalization, status transitions, counters, and errors | Not implemented |
+| ScrapeRun lifecycle | Completed | Atomic start/finalization, duplicate-run rejection, terminal transitions, counters, timestamps, Decimal duration, and errors; JobPosting lifecycle remains untouched | `8fd051a` — `feat: add scrape run lifecycle service` |
 | Successful-run reconciliation | Planned | Reconcile unseen jobs only after complete successful runs | Not implemented |
 | Configurable inactivity behavior | Planned | Configurable successful-miss threshold without schema changes | Not implemented |
 | Fixture-based backend pipeline | Planned | Offline source-neutral fixture input through normalization and persistence | Not implemented |
@@ -165,6 +165,13 @@ Track 2-B blocker only.
 | Backend integration tests | Planned | Repeatable complete offline backend flows | Not implemented |
 | Operational documentation | Planned | Installation, migration, execution, and troubleshooting instructions | Not implemented |
 | Manual milestone gate | Planned | Recorded manual `Pass`/`Fail`/`Blocked` results | Not performed |
+
+Commit `8fd051a` provides atomic start of one `RUNNING` run per company,
+database-backed rejection of a duplicate `RUNNING` run, and terminal
+transitions to `SUCCESS`, `PARTIAL`, or `FAILED`. It records validated counters,
+timestamps, deterministic Decimal duration, and error information while keeping
+`Company.last_scrape_status` synchronized. It does not change `JobPosting`
+statuses or successful-miss counters.
 
 ### Required lifecycle and reconciliation behavior
 
@@ -307,17 +314,20 @@ The tasks below are an implementation decomposition, not new original customer
 requirements. Each implementation commit must include focused tests where it
 introduces behavior.
 
-| Proposed commit | Work package | Plain-language result | Dependencies | Not included |
-|---|---|---|---|---|
-| `feat: add scrape run lifecycle service` | Run lifecycle | Start and finish runs with correct statuses and counters | Existing models | Reconciliation, fetching |
-| `feat: reconcile jobs after successful runs` | Reconciliation | Track successful misses without harming failed runs | Lifecycle and persistence | Production source |
-| `feat: add fixture-based backend pipeline` | Pipeline | Process offline fixture jobs end to end | Lifecycle and reconciliation | Production adapter |
-| `feat: isolate recoverable job processing errors` | Error handling | Preserve successful items when one item fails | Fixture pipeline | Retry worker |
-| `feat: add controlled background execution` | Background execution | Return control promptly and prevent duplicate runs | Stable pipeline | Celery, scheduler |
-| `test: add backend pipeline integration coverage` | Integration gate | Prove repeated complete offline flows | All Track 2-A services | Live source |
-| `docs: document backend operation and checks` | Documentation | Reproducible installation and operation | Stable Track 2-A | Production claims |
-| `feat: add permitted source adapter` | Track 2-B adapter | Convert an approved source to normalized jobs | Source approval | Other providers |
-| `test: validate permitted source backend flow` | Track 2-B acceptance | Prove the approved source end to end | Adapter and permission | Unapproved live tests |
+| Status | Proposed commit | Work package | Plain-language result | Dependencies | Not included |
+|---|---|---|---|---|---|
+| Completed (`8fd051a`) | `feat: add scrape run lifecycle service` | Run lifecycle | Start and finish runs with correct statuses and counters | Existing models | Reconciliation, fetching |
+| Planned | `feat: reconcile jobs after successful runs` | Reconciliation | Track successful misses without harming failed runs | Lifecycle and persistence | Production source |
+| Planned | `feat: add fixture-based backend pipeline` | Pipeline | Process offline fixture jobs end to end | Lifecycle and reconciliation | Production adapter |
+| Planned | `feat: isolate recoverable job processing errors` | Error handling | Preserve successful items when one item fails | Fixture pipeline | Retry worker |
+| Planned | `feat: add controlled background execution` | Background execution | Return control promptly and prevent duplicate runs | Stable pipeline | Celery, scheduler |
+| Planned | `test: add backend pipeline integration coverage` | Integration gate | Prove repeated complete offline flows | All Track 2-A services | Live source |
+| Planned | `docs: document backend operation and checks` | Documentation | Reproducible installation and operation | Stable Track 2-A | Production claims |
+| Blocked | `feat: add permitted source adapter` | Track 2-B adapter | Convert an approved source to normalized jobs | Source approval | Other providers |
+| Blocked | `test: validate permitted source backend flow` | Track 2-B acceptance | Prove the approved source end to end | Adapter and permission | Unapproved live tests |
+
+The next `Planned` work package is **Successful-run reconciliation**, proposed
+as `feat: reconcile jobs after successful runs`.
 
 ---
 
@@ -534,7 +544,7 @@ customer requirements.
 | Stable content hash | PROJECT_SPEC §2, §4 | 2-A | Identity hashing | Completed | `308eeb3` | Deterministic hash tests |
 | ID/fallback deduplication | PROJECT_SPEC §3, §4 | 2-A | Identity/persistence | Completed | `308eeb3`, `d261edf` | Identity upgrade and uniqueness tests |
 | Create/update/last_seen | PROJECT_SPEC §4 | 2-A | Persistence | Completed | `d261edf` | Persistence tests |
-| Run history and errors | PROJECT_SPEC §4, §7 | 2-A | ScrapeRun lifecycle | Planned | Not implemented | Lifecycle tests and fixture flow |
+| Run history and errors | PROJECT_SPEC §4, §7 | 2-A | ScrapeRun lifecycle | Completed | `8fd051a` | Lifecycle transition, counter, atomicity, and JobPosting-safety tests |
 | Inactive after successful misses | PROJECT_SPEC §4 | 2-A | Reconciliation | Planned | Not implemented | Reconciliation tests |
 | Failed run never deactivates jobs | AGENTS: Data rules; PROJECT_SPEC §7 | 2-A | Reconciliation | Planned | Not implemented | Partial/failed safety tests |
 | One item failure does not abort run | PROJECT_SPEC §7 | 2-A | Recoverable pipeline | Planned | Not implemented | Fixture integration test |
