@@ -1,0 +1,12 @@
+[
+  {
+    "source": "fixture",
+    "source_job_id": "fixture-will-roll-back",
+    "title": "Temporary Test Job",
+    "source_job_url": "https://jobs.example.test/openings/will-roll-back"
+  },
+  {
+    "source": "fixture",
+    "title": "Invalid Identity-Free Job"
+  }
+]
