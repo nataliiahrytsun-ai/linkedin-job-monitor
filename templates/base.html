@@ -14,8 +14,12 @@
       <a class="brand" href="{% url 'home' %}">Job Monitor</a>
       <nav aria-label="Primary">
         <ul class="navigation">
-          <li><a href="{% url 'home' %}" aria-current="page">Home</a></li>
-          <li><span class="nav-placeholder" aria-disabled="true">Companies</span></li>
+          <li>
+            <a href="{% url 'home' %}"{% if request.resolver_match.url_name == 'home' %} aria-current="page"{% endif %}>Home</a>
+          </li>
+          <li>
+            <a href="{% url 'companies:list' %}"{% if request.resolver_match.namespace == 'companies' %} aria-current="page"{% endif %}>Companies</a>
+          </li>
           <li><span class="nav-placeholder" aria-disabled="true">Jobs</span></li>
           <li><span class="nav-placeholder" aria-disabled="true">Scrape runs</span></li>
         </ul>
@@ -25,9 +29,9 @@
 
   <main id="main-content" class="container main-content">
     {% if messages %}
-      <div class="messages" aria-label="Messages">
+      <div class="messages" aria-label="Messages" role="status" aria-live="polite">
         {% for message in messages %}
-          <p class="message">{{ message }}</p>
+          <p class="message{% if message.tags %} message-{{ message.tags }}{% endif %}">{{ message }}</p>
         {% endfor %}
       </div>
     {% endif %}

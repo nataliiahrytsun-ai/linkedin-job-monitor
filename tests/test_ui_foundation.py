@@ -51,14 +51,14 @@ class HomePageTests(SimpleTestCase):  # type: ignore[misc]
         assert '<link rel="stylesheet" href="/static/css/app.css">' in html
         assert 'class="skip-link" href="#main-content"' in html
 
-    def test_unavailable_sections_are_not_links_to_missing_routes(self) -> None:
+    def test_only_available_sections_link_to_real_routes(self) -> None:
         html = self.client.get("/").content.decode()
 
-        assert 'href="/companies/' not in html
+        assert 'href="/companies/"' in html
         assert 'href="/jobs/' not in html
         assert 'href="/scrape-runs/' not in html
-        assert html.count("Coming next") == 4
-        assert html.count('aria-disabled="true"') == 3
+        assert html.count("Coming next") == 3
+        assert html.count('aria-disabled="true"') == 2
 
     def test_unknown_url_still_returns_not_found(self) -> None:
         response = self.client.get("/not-a-real-page/")

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Companies · Job Monitor{% endblock %}
+
+{% block content %}
+  <div class="page-heading">
+    <div>
+      <p class="eyebrow">Configuration</p>
+      <h1>Companies</h1>
+      <p class="lead">Manage the organizations and vacancy sources monitored here.</p>
+    </div>
+    <a class="button button-primary" href="{% url 'companies:create' %}">Add company</a>
+  </div>
+
+  {% if companies %}
+    <div class="table-scroll">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th scope="col">Company</th>
+            <th scope="col">Type</th>
+            <th scope="col">Source</th>
+            <th scope="col">Monitoring</th>
+            <th scope="col">Last status</th>
+            <th scope="col">Last checked</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for company in companies %}
+            <tr>
+              <th scope="row">{{ company.name }}</th>
+              <td>{{ company.get_company_type_display }}</td>
+              <td>{{ company.source }}</td>
+              <td>
+                {% if company.is_active %}
+                  <span class="status-badge status-active">ACTIVE</span>
+                {% else %}
+                  <span class="status-badge status-inactive">INACTIVE</span>
+                {% endif %}
+              </td>
+              <td><span class="status-badge">{{ company.get_last_scrape_status_display }}</span></td>
+              <td>
+                {% if company.last_scraped_at %}
+                  {{ company.last_scraped_at|date:"Y-m-d H:i" }}
+                {% else %}
+                  Never
+                {% endif %}
+              </td>
+              <td>
+                <div class="row-actions">
+                  <a class="button button-secondary" href="{% url 'companies:edit' company.pk %}">Edit</a>
+                  <form method="post" action="{% url 'companies:toggle_active' company.pk %}">
+                    {% csrf_token %}
+                    <button class="button button-secondary" type="submit">
+                      {% if company.is_active %}Deactivate{% else %}Activate{% endif %}
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <section class="empty-state">
+      <h2>No companies yet</h2>
+      <p>Add the first company when you have a permitted vacancy source to configure.</p>
+      <a class="button button-primary" href="{% url 'companies:create' %}">Add first company</a>
+    </section>
+  {% endif %}
+{% endblock %}
