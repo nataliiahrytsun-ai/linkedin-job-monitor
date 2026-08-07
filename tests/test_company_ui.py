@@ -76,7 +76,9 @@ def test_company_list_empty_state_navigation_and_template_contract() -> None:
         template.name for template in response.templates if template.name
     ]
     assert "No companies yet" in html
-    assert reverse("companies:create") in html
+    assert "Add company" in html
+    assert html.count(f'href="{reverse("companies:create")}"') == 1
+    assert "Add first company" not in html
     assert f'href="{reverse("companies:list")}"' in html
     assert 'href="/jobs/' not in html
     assert 'href="/scrape-runs/' not in html
@@ -100,6 +102,8 @@ def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     assert "ACTIVE" in html
     assert "INACTIVE" in html
     assert "Failed" in html
+    assert "Add company" in html
+    assert html.count(f'href="{reverse("companies:create")}"') == 1
     assert "Edit" in html
     assert "Activate" in html
     assert "Deactivate" in html
