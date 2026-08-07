@@ -55,6 +55,20 @@ def create_company(**overrides: object) -> Any:
     return model("companies.Company").objects.create(**values)
 
 
+def create_job(company: Any, **overrides: object) -> Any:
+    sequence = model("jobs.JobPosting").objects.count() + 1
+    values: dict[str, object] = {
+        "company": company,
+        "source": company.source,
+        "source_job_id": f"job-{sequence}",
+        "title": f"Role {sequence}",
+        "content_hash": f"{sequence:064x}",
+        "dedupe_key": f"{sequence + 100:064x}",
+    }
+    values.update(overrides)
+    return model("jobs.JobPosting").objects.create(**values)
+
+
 def valid_company_data(**overrides: str) -> dict[str, str]:
     values = {
         "name": "New Company",
@@ -88,8 +102,8 @@ def test_company_list_empty_state_navigation_and_template_contract() -> None:
 
 
 def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
-    create_company(name="Zulu", is_active=False, last_scrape_status="failed")
-    create_company(
+    zulu = create_company(name="Zulu", is_active=False, last_scrape_status="failed")
+    alpha = create_company(
         name="Alpha",
         source_jobs_url="https://jobs.example.test/alpha/openings",
         company_type="supplier",
@@ -104,9 +118,156 @@ def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     assert "Failed" in html
     assert "Add company" in html
     assert html.count(f'href="{reverse("companies:create")}"') == 1
+    assert f'href="{reverse("companies:detail", args=(alpha.pk,))}"' in html
+    assert f'href="{reverse("companies:detail", args=(zulu.pk,))}"' in html
     assert "Edit" in html
     assert "Activate" in html
     assert "Deactivate" in html
+
+
+def test_company_detail_renders_information_navigation_and_empty_states() -> None:
+    company = create_company(
+        name="Acuity Analytics",
+        company_type="client",
+        last_scrape_status="never",
+    )
+
+    response = client().get(reverse("companies:detail", args=(company.pk,)))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "companies/company_detail.html" in [
+        template.name for template in response.templates if template.name
+    ]
+    assert html.count("<h1") == 1
+    assert "Acuity Analytics" in html
+    assert "Kunde" in html
+    assert "fixture" in html
+    assert "ACTIVE" in html
+    assert "Not run yet" in html
+    assert "Never" in html
+    assert "No jobs found yet" in html
+    assert "Jobs aktualisieren" in html
+    assert 'type="button" disabled' in html
+    assert f'href="{reverse("companies:list")}"' in html
+    assert f'href="{reverse("companies:edit", args=(company.pk,))}"' in html
+    assert f'action="{reverse("companies:toggle_active", args=(company.pk,))}"' in html
+    assert 'method="post"' in html
+    assert '<meta name="viewport"' in html
+    assert 'class="table-scroll"' not in html
+
+
+def test_company_detail_shows_safe_source_link_and_missing_url_fallback() -> None:
+    configured = create_company(name="Configured")
+    missing = create_company(
+        name="Missing URL",
+        source="another-fixture",
+        source_jobs_url=None,
+        is_active=False,
+    )
+
+    configured_html = client().get(
+        reverse("companies:detail", args=(configured.pk,))
+    ).content.decode()
+    missing_html = client().get(
+        reverse("companies:detail", args=(missing.pk,))
+    ).content.decode()
+
+    assert 'href="https://jobs.example.test/example/openings"' in configured_html
+    assert 'target="_blank"' in configured_html
+    assert 'rel="noopener noreferrer"' in configured_html
+    assert ">https://jobs.example.test/example/openings</a>" in configured_html
+    assert "Not configured" in missing_html
+    assert "INACTIVE" in missing_html
+
+
+def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> None:
+    company = create_company(name="Visible Company")
+    other_company = create_company(
+        name="Other Company",
+        source_jobs_url="https://jobs.example.test/other/openings",
+    )
+    older = create_job(
+        company,
+        source_job_id="active-job",
+        title="Current Analyst",
+        location="Vienna",
+        country="Austria",
+        published_at=datetime(2026, 8, 1, 9, tzinfo=UTC),
+        last_seen_at=datetime(2026, 8, 2, 9, tzinfo=UTC),
+        source_job_url="https://jobs.example.test/jobs/active",
+        status="active",
+    )
+    newer = create_job(
+        company,
+        source_job_id="missing-job",
+        title="Former Engineer",
+        location=None,
+        country=None,
+        published_at=None,
+        last_seen_at=datetime(2026, 8, 3, 9, tzinfo=UTC),
+        source_job_url=None,
+        status="not_found",
+    )
+    create_job(company, source_job_id="closed-job", title="Closed Role", status="closed")
+    create_job(other_company, source_job_id="hidden-job", title="Hidden Other Job")
+
+    response = client().get(reverse("companies:detail", args=(company.pk,)))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert response.context["active_job_count"] == 1
+    assert response.context["jobs"].count() == 3
+    assert html.index(newer.title) < html.index(older.title)
+    assert "Current Analyst" in html
+    assert "Vienna" in html
+    assert "Austria" in html
+    assert "2026-08-01" in html
+    assert "ACTIVE" in html
+    assert "NOT_FOUND" in html
+    assert "CLOSED" in html
+    assert 'href="https://jobs.example.test/jobs/active"' in html
+    assert 'target="_blank"' in html
+    assert 'rel="noopener noreferrer"' in html
+    assert "Hidden Other Job" not in html
+    assert older.source_job_id not in html
+    assert older.content_hash not in html
+    assert older.dedupe_key not in html
+    assert "None" not in html
+    assert 'class="table-scroll"' in html
+
+
+def test_company_detail_get_is_read_only_and_starts_no_execution() -> None:
+    company = create_company(
+        last_scrape_status="success",
+        last_scraped_at=datetime(2026, 8, 6, 12, tzinfo=UTC),
+    )
+    job = create_job(company)
+    company_before = model("companies.Company").objects.values().get(pk=company.pk)
+    job_before = model("jobs.JobPosting").objects.values().get(pk=job.pk)
+
+    with (
+        patch("scraping.pipeline.run_fixture_pipeline") as pipeline,
+        patch(
+            "scraping.background.ControlledBackgroundExecutor.submit_fixture_pipeline"
+        ) as background_submit,
+    ):
+        response = client().get(reverse("companies:detail", args=(company.pk,)))
+
+    assert response.status_code == 200
+    assert "SUCCESS" in response.content.decode()
+    assert "2026-08-06 12:00" in response.content.decode()
+    assert model("companies.Company").objects.values().get(pk=company.pk) == company_before
+    assert model("jobs.JobPosting").objects.values().get(pk=job.pk) == job_before
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
+    pipeline.assert_not_called()
+    background_submit.assert_not_called()
+
+
+def test_unknown_company_detail_returns_not_found() -> None:
+    response = client().get(reverse("companies:detail", args=(999_999,)))
+
+    assert response.status_code == 404
 
 
 def test_company_list_get_does_not_change_database() -> None:

@@ -29,7 +29,9 @@
         <tbody>
           {% for company in companies %}
             <tr>
-              <th scope="row">{{ company.name }}</th>
+              <th scope="row">
+                <a href="{% url 'companies:detail' company.pk %}">{{ company.name }}</a>
+              </th>
               <td>{{ company.get_company_type_display }}</td>
               <td>{{ company.source }}</td>
               <td>

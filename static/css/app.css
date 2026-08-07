@@ -319,6 +319,12 @@ h3 {
   margin: 0;
 }
 
+.button:disabled {
+  background: #98a2b3;
+  color: #ffffff;
+  cursor: not-allowed;
+}
+
 .status-active {
   background: #ecfdf3;
   border-color: #abefc6;
@@ -345,6 +351,66 @@ h3 {
 
 .back-link {
   margin-bottom: 1rem;
+}
+
+.detail-panel {
+  margin-bottom: 2.5rem;
+}
+
+.detail-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.25rem 2rem;
+}
+
+.detail-grid dt {
+  margin-bottom: 0.25rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.detail-grid dd {
+  margin: 0;
+}
+
+.external-url {
+  overflow-wrap: anywhere;
+}
+
+.detail-section {
+  margin-top: 2rem;
+}
+
+.section-heading {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+}
+
+.section-heading h2,
+.section-note {
+  margin-bottom: 0;
+}
+
+.section-note {
+  color: var(--muted);
+}
+
+.refresh-action {
+  align-items: center;
+}
+
+.refresh-action .help-text {
+  margin: 0;
+}
+
+.jobs-table {
+  min-width: 50rem;
 }
 
 .form-container {
@@ -454,5 +520,9 @@ h3 {
 
   .page-heading .button {
     align-self: flex-start;
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
   }
 }

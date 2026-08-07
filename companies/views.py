@@ -7,12 +7,31 @@ from django.views.decorators.http import require_POST
 
 from companies.forms import CompanyForm
 from companies.models import Company
+from jobs.models import JobPosting
 
 
 def company_list(request: HttpRequest) -> HttpResponse:
     """Show all configured companies in a stable order."""
     companies = Company.objects.order_by("name", "pk")
     return render(request, "companies/company_list.html", {"companies": companies})
+
+
+def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    """Show one company and its saved vacancies without starting a run."""
+    company = get_object_or_404(Company, pk=pk)
+    jobs = company.job_postings.order_by("-last_seen_at", "-pk")
+    active_job_count = company.job_postings.filter(
+        status=JobPosting.Status.ACTIVE
+    ).count()
+    return render(
+        request,
+        "companies/company_detail.html",
+        {
+            "company": company,
+            "jobs": jobs,
+            "active_job_count": active_job_count,
+        },
+    )
 
 
 def company_create(request: HttpRequest) -> HttpResponse:
