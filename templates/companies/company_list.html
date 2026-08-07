@@ -13,13 +13,12 @@
   </div>
 
   {% if companies %}
-    <div class="table-scroll">
-      <table class="data-table">
+    <div class="company-table-container">
+      <table class="company-table">
         <thead>
           <tr>
             <th scope="col">Company</th>
             <th scope="col">Type</th>
-            <th scope="col">Source</th>
             <th scope="col">Monitoring</th>
             <th scope="col">Last status</th>
             <th scope="col">Last checked</th>
@@ -29,10 +28,20 @@
         <tbody>
           {% for company in companies %}
             <tr>
-              <th scope="row">
+              <th class="company-cell" scope="row">
                 <a href="{% url 'companies:detail' company.pk %}">{{ company.name }}</a>
+                <span class="company-type-compact">
+                  {% if company.company_type == "client" %}
+                    Customer
+                  {% elif company.company_type == "supplier" %}
+                    Supplier
+                  {% else %}
+                    Other
+                  {% endif %}
+                </span>
               </th>
-              <td>
+              <td class="company-type-cell">
+                <span class="visually-hidden">Company type: </span>
                 {% if company.company_type == "client" %}
                   Customer
                 {% elif company.company_type == "supplier" %}
@@ -41,24 +50,30 @@
                   Other
                 {% endif %}
               </td>
-              <td>{{ company.source }}</td>
-              <td>
+              <td class="company-monitoring-cell">
+                <span class="visually-hidden">Monitoring: </span>
                 {% if company.is_active %}
                   <span class="status-badge status-active">ACTIVE</span>
                 {% else %}
                   <span class="status-badge status-inactive">INACTIVE</span>
                 {% endif %}
               </td>
-              <td><span class="status-badge">{{ company.get_last_scrape_status_display }}</span></td>
-              <td>
-                {% if company.last_scraped_at %}
-                  {{ company.last_scraped_at|date:"Y-m-d H:i" }}
-                {% else %}
-                  Never
-                {% endif %}
+              <td class="company-last-status-cell">
+                <span class="responsive-field-label">Last status</span>
+                <span class="responsive-field-value">{{ company.get_last_scrape_status_display }}</span>
               </td>
-              <td>
-                <div class="row-actions">
+              <td class="company-last-checked-cell">
+                <span class="responsive-field-label">Last checked</span>
+                <span class="responsive-field-value">
+                  {% if company.last_scraped_at %}
+                    {{ company.last_scraped_at|date:"Y-m-d H:i" }}
+                  {% else %}
+                    Never
+                  {% endif %}
+                </span>
+              </td>
+              <td class="company-actions-cell">
+                <div class="row-actions company-list-actions">
                   <a class="button button-secondary" href="{% url 'companies:edit' company.pk %}">Edit</a>
                   <form method="post" action="{% url 'companies:toggle_active' company.pk %}">
                     {% csrf_token %}

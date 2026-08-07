@@ -4,6 +4,7 @@ import importlib
 import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -134,6 +135,57 @@ def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     assert "Edit" in html
     assert "Activate" in html
     assert "Deactivate" in html
+    assert '<table class="company-table">' in html
+    assert html.count('<th scope="col">') == 6
+
+    list_start = html.index('<table class="company-table">')
+    list_end = html.index("</table>", list_start)
+    list_html = html[list_start:list_end]
+    assert "fixture" not in list_html
+    assert "Source" not in list_html
+    assert "ACTIVE" in list_html
+    assert "INACTIVE" in list_html
+    assert "Failed" in list_html
+    assert "Customer" in list_html
+    assert "Supplier" in list_html
+    assert "Other" in list_html
+    assert "Last status" in list_html
+    assert "Last checked" in list_html
+    assert f'href="{reverse("companies:detail", args=(alpha.pk,))}"' in list_html
+    assert f'href="{reverse("companies:edit", args=(alpha.pk,))}"' in list_html
+    assert f'action="{reverse("companies:toggle_active", args=(alpha.pk,))}"' in list_html
+    assert 'method="post"' in list_html
+
+
+def test_company_list_responsive_layout_contract() -> None:
+    css = (Path(__file__).resolve().parents[1] / "static" / "css" / "app.css").read_text(
+        encoding="utf-8"
+    )
+    tablet_start = css.index("@media (max-width: 70rem)")
+    mobile_start = css.index("@media (max-width: 40rem)")
+    desktop_css = css[:tablet_start]
+    tablet_css = css[tablet_start:mobile_start]
+    mobile_css = css[mobile_start:]
+
+    assert ".company-table" in desktop_css
+    assert "border-collapse: collapse" in desktop_css
+    assert ".company-table thead th" in desktop_css
+    assert ".company-type-compact" in desktop_css
+    assert ".company-table-container" in desktop_css
+    container_start = desktop_css.index(".company-table-container")
+    container_end = desktop_css.index("}", container_start)
+    assert "min-width" not in desktop_css[container_start:container_end]
+    assert ".company-table thead" in tablet_css
+    assert ".company-table tbody tr" in tablet_css
+    assert '"company monitoring status actions"' in tablet_css
+    assert '"company monitoring checked actions"' in tablet_css
+    assert ".company-type-compact" in tablet_css
+    assert ".responsive-field-label" in tablet_css
+    assert ".company-table tbody tr" in mobile_css
+    assert '"company monitoring"' in mobile_css
+    assert '"status status"' in mobile_css
+    assert '"checked checked"' in mobile_css
+    assert '"actions actions"' in mobile_css
 
 
 def test_company_detail_renders_information_navigation_and_empty_states() -> None:
@@ -162,6 +214,7 @@ def test_company_detail_renders_information_navigation_and_empty_states() -> Non
     assert "No jobs found yet" in html
     assert "Update jobs" in html
     assert "Jobs aktualisieren" not in html
+    assert "Available in the next step" not in html
     assert 'type="button" disabled' in html
     assert 'class="page-heading detail-header"' in html
     assert 'class="company-meta"' in html
@@ -169,12 +222,19 @@ def test_company_detail_renders_information_navigation_and_empty_states() -> Non
     assert "Monitoring status" not in html
     for label in (
         "Vacancy source",
-        "Source jobs URL",
+        "Jobs URL",
         "Last run status",
         "Last run time",
         "Active jobs",
     ):
         assert label in html
+    assert "Source jobs URL" not in html
+    assert 'class="detail-row detail-source-row"' in html
+    assert 'class="detail-row detail-monitoring-row"' in html
+    assert html.index("Vacancy source") < html.index("Jobs URL")
+    assert html.index("Jobs URL") < html.index("Last run status")
+    assert html.index("Last run status") < html.index("Last run time")
+    assert html.index("Last run time") < html.index("Active jobs")
     assert f'href="{reverse("companies:list")}"' in html
     assert f'href="{reverse("companies:edit", args=(company.pk,))}"' in html
     assert f'action="{reverse("companies:toggle_active", args=(company.pk,))}"' in html

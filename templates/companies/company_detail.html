@@ -37,54 +37,57 @@
         </form>
       </div>
       <div class="update-jobs-action">
-        <button class="button button-primary" type="button" disabled aria-describedby="update-jobs-note">Update jobs</button>
-        <span class="help-text" id="update-jobs-note">Available in the next step</span>
+        <button class="button button-primary" type="button" disabled>Update jobs</button>
       </div>
     </div>
   </div>
 
   <section class="card detail-panel" aria-labelledby="company-information-heading">
     <h2 id="company-information-heading">Company information</h2>
-    <dl class="detail-grid">
-      <div>
-        <dt>Vacancy source</dt>
-        <dd>{{ company.source }}</dd>
-      </div>
-      <div>
-        <dt>Last run status</dt>
-        <dd>
-          {% if company.last_scrape_status == "never" %}
-            <span class="status-badge">Not run yet</span>
-          {% else %}
-            <span class="status-badge">{{ company.last_scrape_status|upper }}</span>
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>Active jobs</dt>
-        <dd>{{ active_job_count }}</dd>
-      </div>
-      <div class="detail-grid-wide">
-        <dt>Source jobs URL</dt>
-        <dd class="external-url">
-          {% if company.source_jobs_url %}
-            <a href="{{ company.source_jobs_url }}" target="_blank" rel="noopener noreferrer">{{ company.source_jobs_url }}</a>
-          {% else %}
-            Not configured
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>Last run time</dt>
-        <dd>
-          {% if company.last_scraped_at %}
-            {{ company.last_scraped_at|date:"Y-m-d H:i" }}
-          {% else %}
-            Never
-          {% endif %}
-        </dd>
-      </div>
-    </dl>
+    <div class="detail-groups">
+      <dl class="detail-row detail-source-row">
+        <div>
+          <dt>Vacancy source</dt>
+          <dd>{{ company.source }}</dd>
+        </div>
+        <div>
+          <dt>Jobs URL</dt>
+          <dd class="external-url">
+            {% if company.source_jobs_url %}
+              <a href="{{ company.source_jobs_url }}" target="_blank" rel="noopener noreferrer">{{ company.source_jobs_url }}</a>
+            {% else %}
+              Not configured
+            {% endif %}
+          </dd>
+        </div>
+      </dl>
+      <dl class="detail-row detail-monitoring-row">
+        <div>
+          <dt>Last run status</dt>
+          <dd>
+            {% if company.last_scrape_status == "never" %}
+              <span class="status-badge">Not run yet</span>
+            {% else %}
+              <span class="status-badge">{{ company.last_scrape_status|upper }}</span>
+            {% endif %}
+          </dd>
+        </div>
+        <div>
+          <dt>Last run time</dt>
+          <dd>
+            {% if company.last_scraped_at %}
+              {{ company.last_scraped_at|date:"Y-m-d H:i" }}
+            {% else %}
+              Never
+            {% endif %}
+          </dd>
+        </div>
+        <div>
+          <dt>Active jobs</dt>
+          <dd>{{ active_job_count }}</dd>
+        </div>
+      </dl>
+    </div>
   </section>
 
   <section class="detail-section" aria-labelledby="jobs-heading">
