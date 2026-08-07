@@ -353,8 +353,46 @@ h3 {
   margin-bottom: 1rem;
 }
 
+.detail-header {
+  margin-bottom: 1.5rem;
+  align-items: center;
+}
+
+.detail-header h1 {
+  margin-bottom: 0.4rem;
+  font-size: clamp(2rem, 5vw, 3rem);
+}
+
+.company-meta {
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.detail-header-actions {
+  display: grid;
+  justify-items: end;
+  gap: 0.6rem;
+}
+
+.update-jobs-action {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem 0.75rem;
+}
+
+.update-jobs-action .help-text {
+  margin: 0;
+}
+
 .detail-panel {
-  margin-bottom: 2.5rem;
+  margin-bottom: 2rem;
 }
 
 .detail-grid {
@@ -373,6 +411,11 @@ h3 {
 
 .detail-grid dd {
   margin: 0;
+  font-weight: 700;
+}
+
+.detail-grid-wide {
+  grid-column: span 2;
 }
 
 .external-url {
@@ -383,30 +426,18 @@ h3 {
   margin-top: 2rem;
 }
 
-.section-heading {
-  margin-bottom: 1rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem 2rem;
-}
-
-.section-heading h2,
 .section-note {
-  margin-bottom: 0;
-}
-
-.section-note {
+  margin-top: -0.75rem;
   color: var(--muted);
 }
 
-.refresh-action {
-  align-items: center;
+.empty-jobs-state {
+  padding-block: 0.75rem;
+  color: var(--muted);
 }
 
-.refresh-action .help-text {
-  margin: 0;
+.empty-jobs-state p:last-child {
+  margin-bottom: 0;
 }
 
 .jobs-table {
@@ -522,7 +553,23 @@ h3 {
     align-self: flex-start;
   }
 
+  .detail-header {
+    align-items: stretch;
+  }
+
+  .detail-header-actions {
+    justify-items: start;
+  }
+
+  .update-jobs-action {
+    justify-content: flex-start;
+  }
+
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .detail-grid-wide {
+    grid-column: auto;
   }
 }

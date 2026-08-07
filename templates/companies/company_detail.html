@@ -5,25 +5,41 @@
 {% block content %}
   <p class="back-link"><a href="{% url 'companies:list' %}">← Back to companies</a></p>
 
-  <div class="page-heading">
+  <div class="page-heading detail-header">
     <div>
       <p class="eyebrow">Company</p>
       <h1>{{ company.name }}</h1>
-      <p class="lead">{{ company.get_company_type_display }}</p>
-      {% if company.is_active %}
-        <span class="status-badge status-active">ACTIVE</span>
-      {% else %}
-        <span class="status-badge status-inactive">INACTIVE</span>
-      {% endif %}
+      <p class="company-meta">
+        <span>
+          {% if company.company_type == "client" %}
+            Customer
+          {% elif company.company_type == "supplier" %}
+            Supplier
+          {% else %}
+            Other
+          {% endif %}
+        </span>
+        {% if company.is_active %}
+          <span class="status-badge status-active">ACTIVE</span>
+        {% else %}
+          <span class="status-badge status-inactive">INACTIVE</span>
+        {% endif %}
+      </p>
     </div>
-    <div class="row-actions">
-      <a class="button button-secondary" href="{% url 'companies:edit' company.pk %}">Edit</a>
-      <form method="post" action="{% url 'companies:toggle_active' company.pk %}">
-        {% csrf_token %}
-        <button class="button button-secondary" type="submit">
-          {% if company.is_active %}Deactivate{% else %}Activate{% endif %}
-        </button>
-      </form>
+    <div class="detail-header-actions">
+      <div class="row-actions">
+        <a class="button button-secondary" href="{% url 'companies:edit' company.pk %}">Edit</a>
+        <form method="post" action="{% url 'companies:toggle_active' company.pk %}">
+          {% csrf_token %}
+          <button class="button button-secondary" type="submit">
+            {% if company.is_active %}Deactivate{% else %}Activate{% endif %}
+          </button>
+        </form>
+      </div>
+      <div class="update-jobs-action">
+        <button class="button button-primary" type="button" disabled aria-describedby="update-jobs-note">Update jobs</button>
+        <span class="help-text" id="update-jobs-note">Available in the next step</span>
+      </div>
     </div>
   </div>
 
@@ -31,26 +47,8 @@
     <h2 id="company-information-heading">Company information</h2>
     <dl class="detail-grid">
       <div>
-        <dt>Company type</dt>
-        <dd>{{ company.get_company_type_display }}</dd>
-      </div>
-      <div>
         <dt>Vacancy source</dt>
         <dd>{{ company.source }}</dd>
-      </div>
-      <div>
-        <dt>Source jobs URL</dt>
-        <dd class="external-url">
-          {% if company.source_jobs_url %}
-            <a href="{{ company.source_jobs_url }}" target="_blank" rel="noopener noreferrer">{{ company.source_jobs_url }}</a>
-          {% else %}
-            Not configured
-          {% endif %}
-        </dd>
-      </div>
-      <div>
-        <dt>Monitoring status</dt>
-        <dd>{% if company.is_active %}ACTIVE{% else %}INACTIVE{% endif %}</dd>
       </div>
       <div>
         <dt>Last run status</dt>
@@ -59,6 +57,20 @@
             <span class="status-badge">Not run yet</span>
           {% else %}
             <span class="status-badge">{{ company.last_scrape_status|upper }}</span>
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Active jobs</dt>
+        <dd>{{ active_job_count }}</dd>
+      </div>
+      <div class="detail-grid-wide">
+        <dt>Source jobs URL</dt>
+        <dd class="external-url">
+          {% if company.source_jobs_url %}
+            <a href="{{ company.source_jobs_url }}" target="_blank" rel="noopener noreferrer">{{ company.source_jobs_url }}</a>
+          {% else %}
+            Not configured
           {% endif %}
         </dd>
       </div>
@@ -72,24 +84,12 @@
           {% endif %}
         </dd>
       </div>
-      <div>
-        <dt>Active jobs</dt>
-        <dd>{{ active_job_count }}</dd>
-      </div>
     </dl>
   </section>
 
   <section class="detail-section" aria-labelledby="jobs-heading">
-    <div class="section-heading">
-      <div>
-        <h2 id="jobs-heading">Jobs</h2>
-        <p class="section-note" id="refresh-note">Saved vacancies for this company.</p>
-      </div>
-      <div class="row-actions refresh-action">
-        <button class="button button-primary" type="button" disabled aria-describedby="refresh-note">Jobs aktualisieren</button>
-        <span class="help-text">Available in the next step</span>
-      </div>
-    </div>
+    <h2 id="jobs-heading">Jobs</h2>
+    <p class="section-note">Saved vacancies for this company.</p>
 
     {% if jobs %}
       <div class="table-scroll">
@@ -131,7 +131,7 @@
         </table>
       </div>
     {% else %}
-      <div class="empty-state">
+      <div class="empty-jobs-state">
         <p><strong>No jobs found yet</strong></p>
         <p>Saved vacancies will appear here after a successful check.</p>
       </div>

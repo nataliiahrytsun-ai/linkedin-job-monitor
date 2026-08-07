@@ -103,6 +103,11 @@ def test_company_list_empty_state_navigation_and_template_contract() -> None:
 
 def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     zulu = create_company(name="Zulu", is_active=False, last_scrape_status="failed")
+    beta = create_company(
+        name="Beta",
+        company_type="client",
+        source_jobs_url="https://jobs.example.test/beta/openings",
+    )
     alpha = create_company(
         name="Alpha",
         source_jobs_url="https://jobs.example.test/alpha/openings",
@@ -112,13 +117,19 @@ def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     html = client().get(reverse("companies:list")).content.decode()
 
     assert html.index("Alpha") < html.index("Zulu")
+    assert html.index("Alpha") < html.index("Beta") < html.index("Zulu")
+    assert "Customer" in html
     assert "Supplier" in html
+    assert "Other" in html
+    assert "Kunde" not in html
+    assert "Sonstige" not in html
     assert "ACTIVE" in html
     assert "INACTIVE" in html
     assert "Failed" in html
     assert "Add company" in html
     assert html.count(f'href="{reverse("companies:create")}"') == 1
     assert f'href="{reverse("companies:detail", args=(alpha.pk,))}"' in html
+    assert f'href="{reverse("companies:detail", args=(beta.pk,))}"' in html
     assert f'href="{reverse("companies:detail", args=(zulu.pk,))}"' in html
     assert "Edit" in html
     assert "Activate" in html
@@ -141,14 +152,29 @@ def test_company_detail_renders_information_navigation_and_empty_states() -> Non
     ]
     assert html.count("<h1") == 1
     assert "Acuity Analytics" in html
-    assert "Kunde" in html
+    assert html.count("Customer") == 1
+    assert "Kunde" not in html
+    assert "Sonstige" not in html
     assert "fixture" in html
     assert "ACTIVE" in html
     assert "Not run yet" in html
     assert "Never" in html
     assert "No jobs found yet" in html
-    assert "Jobs aktualisieren" in html
+    assert "Update jobs" in html
+    assert "Jobs aktualisieren" not in html
     assert 'type="button" disabled' in html
+    assert 'class="page-heading detail-header"' in html
+    assert 'class="company-meta"' in html
+    assert "Company type" not in html
+    assert "Monitoring status" not in html
+    for label in (
+        "Vacancy source",
+        "Source jobs URL",
+        "Last run status",
+        "Last run time",
+        "Active jobs",
+    ):
+        assert label in html
     assert f'href="{reverse("companies:list")}"' in html
     assert f'href="{reverse("companies:edit", args=(company.pk,))}"' in html
     assert f'action="{reverse("companies:toggle_active", args=(company.pk,))}"' in html
@@ -179,6 +205,8 @@ def test_company_detail_shows_safe_source_link_and_missing_url_fallback() -> Non
     assert ">https://jobs.example.test/example/openings</a>" in configured_html
     assert "Not configured" in missing_html
     assert "INACTIVE" in missing_html
+    assert "Other" in missing_html
+    assert "Sonstige" not in missing_html
 
 
 def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> None:
@@ -296,6 +324,11 @@ def test_create_get_has_csrf_labels_and_only_user_managed_fields() -> None:
         assert label in html
     for excluded in ("last_scrape_status", "last_scraped_at", "created_at", "updated_at"):
         assert f'name="{excluded}"' not in html
+    assert '<option value="client">Customer</option>' in html
+    assert '<option value="supplier">Supplier</option>' in html
+    assert '<option value="other" selected>Other</option>' in html
+    assert "Kunde" not in html
+    assert "Sonstige" not in html
     assert html.count("<h1") == 1
     assert model("companies.Company").objects.count() == 0
 
@@ -311,6 +344,7 @@ def test_valid_create_uses_redirect_normalizes_source_and_refresh_does_not_dupli
     assert response.url == reverse("companies:list")
     company = model("companies.Company").objects.get()
     assert company.source == "fixture"
+    assert company.company_type == "client"
 
     redirected = browser.get(response.url)
     assert b"was added" in redirected.content

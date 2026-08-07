@@ -10,6 +10,16 @@ from companies.models import Company
 class CompanyForm(forms.ModelForm):
     """Create or edit the user-managed fields of a company."""
 
+    company_type = forms.ChoiceField(
+        label="Company type",
+        initial=Company.CompanyType.OTHER.value,
+        choices=(
+            (Company.CompanyType.CLIENT.value, "Customer"),
+            (Company.CompanyType.SUPPLIER.value, "Supplier"),
+            (Company.CompanyType.OTHER.value, "Other"),
+        ),
+    )
+
     source_jobs_url = forms.URLField(
         label="Source jobs URL",
         required=False,
