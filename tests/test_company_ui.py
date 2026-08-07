@@ -103,7 +103,12 @@ def test_company_list_empty_state_navigation_and_template_contract() -> None:
 
 
 def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
-    zulu = create_company(name="Zulu", is_active=False, last_scrape_status="failed")
+    zulu = create_company(
+        name="Zulu International Company With A Long Name",
+        is_active=False,
+        last_scrape_status="failed",
+        last_scraped_at=datetime(2026, 8, 7, 14, 33, tzinfo=UTC),
+    )
     beta = create_company(
         name="Beta",
         company_type="client",
@@ -127,6 +132,7 @@ def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     assert "ACTIVE" in html
     assert "INACTIVE" in html
     assert "Failed" in html
+    assert "2026-08-07 14:33" in html
     assert "Add company" in html
     assert html.count(f'href="{reverse("companies:create")}"') == 1
     assert f'href="{reverse("companies:detail", args=(alpha.pk,))}"' in html
@@ -138,23 +144,24 @@ def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     assert '<table class="company-table">' in html
     assert html.count('<th scope="col">') == 6
 
-    list_start = html.index('<table class="company-table">')
-    list_end = html.index("</table>", list_start)
-    list_html = html[list_start:list_end]
-    assert "fixture" not in list_html
-    assert "Source" not in list_html
-    assert "ACTIVE" in list_html
-    assert "INACTIVE" in list_html
-    assert "Failed" in list_html
-    assert "Customer" in list_html
-    assert "Supplier" in list_html
-    assert "Other" in list_html
-    assert "Last status" in list_html
-    assert "Last checked" in list_html
-    assert f'href="{reverse("companies:detail", args=(alpha.pk,))}"' in list_html
-    assert f'href="{reverse("companies:edit", args=(alpha.pk,))}"' in list_html
-    assert f'action="{reverse("companies:toggle_active", args=(alpha.pk,))}"' in list_html
-    assert 'method="post"' in list_html
+    table_start = html.index('<table class="company-table">')
+    table_end = html.index("</table>", table_start)
+    table_html = html[table_start:table_end]
+    assert "fixture" not in table_html
+    assert "Source" not in table_html
+    assert "ACTIVE" in table_html
+    assert "INACTIVE" in table_html
+    assert "Failed" in table_html
+    assert "Customer" in table_html
+    assert "Supplier" in table_html
+    assert "Other" in table_html
+    assert table_html.count('<span class="responsive-field-label">Last status</span>') == 3
+    assert table_html.count('<span class="responsive-field-label">Last checked</span>') == 3
+    assert f'href="{reverse("companies:detail", args=(alpha.pk,))}"' in table_html
+    assert f'href="{reverse("companies:edit", args=(alpha.pk,))}"' in table_html
+    assert f'action="{reverse("companies:toggle_active", args=(alpha.pk,))}"' in table_html
+    assert 'method="post"' in table_html
+    assert table_html.count("company-toggle-button") == 3
 
 
 def test_company_list_responsive_layout_contract() -> None:
@@ -162,30 +169,82 @@ def test_company_list_responsive_layout_contract() -> None:
         encoding="utf-8"
     )
     tablet_start = css.index("@media (max-width: 70rem)")
-    mobile_start = css.index("@media (max-width: 40rem)")
+    mobile_start = css.index("@media (max-width: 48rem)")
     desktop_css = css[:tablet_start]
     tablet_css = css[tablet_start:mobile_start]
     mobile_css = css[mobile_start:]
 
     assert ".company-table" in desktop_css
     assert "border-collapse: collapse" in desktop_css
+    assert "table-layout: auto" in desktop_css
     assert ".company-table thead th" in desktop_css
-    assert ".company-type-compact" in desktop_css
+    assert ".company-toggle-button" in desktop_css
+    toggle_button_start = desktop_css.index(".company-toggle-button")
+    toggle_button_end = desktop_css.index("}", toggle_button_start)
+    assert "min-width: 7.75rem" in desktop_css[toggle_button_start:toggle_button_end]
+    assert ".visually-hidden" in desktop_css
+    visually_hidden_start = desktop_css.index(".visually-hidden")
+    visually_hidden_end = desktop_css.index("}", visually_hidden_start)
+    visually_hidden_css = desktop_css[visually_hidden_start:visually_hidden_end]
+    assert "position: absolute" in visually_hidden_css
+    assert "clip: rect(0, 0, 0, 0)" in visually_hidden_css
+    assert ".company-meta-compact," in desktop_css
+    assert ".responsive-field-label" in desktop_css
+    labels_start = desktop_css.index(".company-meta-compact,")
+    labels_end = desktop_css.index("}", labels_start)
+    assert "display: none" in desktop_css[labels_start:labels_end]
+    assert "grid-template-areas" not in desktop_css[desktop_css.index(".company-table") :]
     assert ".company-table-container" in desktop_css
     container_start = desktop_css.index(".company-table-container")
     container_end = desktop_css.index("}", container_start)
     assert "min-width" not in desktop_css[container_start:container_end]
     assert ".company-table thead" in tablet_css
+    assert ".company-type-cell" in tablet_css
+    assert ".company-monitoring-cell" in tablet_css
     assert ".company-table tbody tr" in tablet_css
-    assert '"company monitoring status actions"' in tablet_css
-    assert '"company monitoring checked actions"' in tablet_css
-    assert ".company-type-compact" in tablet_css
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in tablet_css
+    assert '"company status actions"' in tablet_css
+    assert '"company checked actions"' in tablet_css
+    assert ".company-meta-compact" in tablet_css
     assert ".responsive-field-label" in tablet_css
+    assert "white-space: nowrap" in tablet_css
+    assert "@media (min-width: 48.01rem) and (max-width: 70rem)" in tablet_css
+    tablet_alignment_start = tablet_css.index(
+        "@media (min-width: 48.01rem) and (max-width: 70rem)"
+    )
+    tablet_alignment_css = tablet_css[tablet_alignment_start:]
+    assert "grid-template-rows: 1fr 1fr" in tablet_alignment_css
+    assert "row-gap: 0.35rem" in tablet_alignment_css
+    assert "margin-top: 0" in tablet_alignment_css
+    assert "width: 8.5rem" in tablet_alignment_css
+    assert "justify-self: end" in tablet_alignment_css
     assert ".company-table tbody tr" in mobile_css
     assert '"company monitoring"' in mobile_css
     assert '"status status"' in mobile_css
     assert '"checked checked"' in mobile_css
     assert '"actions actions"' in mobile_css
+    assert ".company-actions-cell .row-actions" in mobile_css
+    assert "justify-content: space-between" in mobile_css
+
+
+def test_jobs_table_responsive_layout_contract() -> None:
+    css = (Path(__file__).resolve().parents[1] / "static" / "css" / "app.css").read_text(
+        encoding="utf-8"
+    )
+    mobile_start = css.index("@media (max-width: 40rem)")
+    desktop_tablet_css = css[:mobile_start]
+    mobile_css = css[mobile_start:]
+
+    jobs_table_start = desktop_tablet_css.index(".jobs-table {")
+    jobs_table_end = desktop_tablet_css.index("}", jobs_table_start)
+    assert "min-width: 0" in desktop_tablet_css[jobs_table_start:jobs_table_end]
+    assert ".jobs-table-container" in mobile_css
+    assert "overflow: visible" in mobile_css
+    assert ".jobs-table thead" in mobile_css
+    assert "display: none" in mobile_css
+    assert '"position status"' in mobile_css
+    assert '"location location"' in mobile_css
+    assert '"country published"' in mobile_css
 
 
 def test_company_detail_renders_information_navigation_and_empty_states() -> None:
@@ -322,7 +381,24 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
     assert older.content_hash not in html
     assert older.dedupe_key not in html
     assert "None" not in html
-    assert 'class="table-scroll"' in html
+    assert 'class="table-scroll jobs-table-container"' in html
+    jobs_table_start = html.index('<table class="data-table jobs-table">')
+    jobs_table_end = html.index("</table>", jobs_table_start)
+    jobs_html = html[jobs_table_start:jobs_table_end]
+    assert jobs_html.count('<th scope="col">') == 5
+    assert "Original job link" not in jobs_html
+    assert ">Open</a>" not in jobs_html
+    assert (
+        '<a href="https://jobs.example.test/jobs/active" target="_blank" '
+        'rel="noopener noreferrer">Current Analyst</a>'
+    ) in jobs_html
+    assert ">Former Engineer</a>" not in jobs_html
+    assert "Former Engineer" in jobs_html
+    assert 'class="status-badge status-active">ACTIVE</span>' in jobs_html
+    assert 'class="status-badge">NOT_FOUND</span>' in jobs_html
+    assert 'class="status-badge">CLOSED</span>' in jobs_html
+    assert 'class="status-badge status-active">NOT_FOUND</span>' not in jobs_html
+    assert 'class="status-badge status-active">CLOSED</span>' not in jobs_html
 
 
 def test_company_detail_get_is_read_only_and_starts_no_execution() -> None:

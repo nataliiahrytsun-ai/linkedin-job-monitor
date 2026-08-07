@@ -98,7 +98,7 @@
     <p class="section-note">Saved vacancies for this company.</p>
 
     {% if jobs %}
-      <div class="table-scroll">
+      <div class="table-scroll jobs-table-container">
         <table class="data-table jobs-table">
           <thead>
             <tr>
@@ -107,29 +107,29 @@
               <th scope="col">Country</th>
               <th scope="col">Published</th>
               <th scope="col">Status</th>
-              <th scope="col">Original job link</th>
             </tr>
           </thead>
           <tbody>
             {% for job in jobs %}
               <tr>
-                <th scope="row">{{ job.title|default:"—" }}</th>
-                <td>{{ job.location|default:"—" }}</td>
-                <td>{{ job.country|default:"—" }}</td>
-                <td>
+                <th class="job-position-cell" scope="row">
+                  {% if job.source_job_url %}
+                    <a href="{{ job.source_job_url }}" target="_blank" rel="noopener noreferrer">{{ job.title|default:"—" }}</a>
+                  {% else %}
+                    {{ job.title|default:"—" }}
+                  {% endif %}
+                </th>
+                <td class="job-location-cell">{{ job.location|default:"—" }}</td>
+                <td class="job-country-cell">{{ job.country|default:"—" }}</td>
+                <td class="job-published-cell">
                   {% if job.published_at %}
                     {{ job.published_at|date:"Y-m-d" }}
                   {% else %}
                     —
                   {% endif %}
                 </td>
-                <td><span class="status-badge">{{ job.status|upper }}</span></td>
-                <td>
-                  {% if job.source_job_url %}
-                    <a href="{{ job.source_job_url }}" target="_blank" rel="noopener noreferrer">Open</a>
-                  {% else %}
-                    —
-                  {% endif %}
+                <td class="job-status-cell">
+                  <span class="status-badge{% if job.status == 'active' %} status-active{% endif %}">{{ job.status|upper }}</span>
                 </td>
               </tr>
             {% endfor %}

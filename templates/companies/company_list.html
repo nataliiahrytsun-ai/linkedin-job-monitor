@@ -30,13 +30,20 @@
             <tr>
               <th class="company-cell" scope="row">
                 <a href="{% url 'companies:detail' company.pk %}">{{ company.name }}</a>
-                <span class="company-type-compact">
-                  {% if company.company_type == "client" %}
-                    Customer
-                  {% elif company.company_type == "supplier" %}
-                    Supplier
+                <span class="company-meta-compact">
+                  <span>
+                    {% if company.company_type == "client" %}
+                      Customer
+                    {% elif company.company_type == "supplier" %}
+                      Supplier
+                    {% else %}
+                      Other
+                    {% endif %}
+                  </span>
+                  {% if company.is_active %}
+                    <span class="status-badge status-active company-state-compact">ACTIVE</span>
                   {% else %}
-                    Other
+                    <span class="status-badge status-inactive company-state-compact">INACTIVE</span>
                   {% endif %}
                 </span>
               </th>
@@ -77,7 +84,7 @@
                   <a class="button button-secondary" href="{% url 'companies:edit' company.pk %}">Edit</a>
                   <form method="post" action="{% url 'companies:toggle_active' company.pk %}">
                     {% csrf_token %}
-                    <button class="button button-secondary" type="submit">
+                    <button class="button button-secondary company-toggle-button" type="submit">
                       {% if company.is_active %}Deactivate{% else %}Activate{% endif %}
                     </button>
                   </form>

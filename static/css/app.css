@@ -348,6 +348,7 @@ h3 {
   font-size: 0.78rem;
   font-weight: 650;
   letter-spacing: 0.01em;
+  text-transform: uppercase;
 }
 
 .company-table tbody tr:last-child > * {
@@ -355,11 +356,12 @@ h3 {
 }
 
 .company-cell {
+  width: 24%;
   max-width: 20rem;
   overflow-wrap: anywhere;
 }
 
-.company-type-compact,
+.company-meta-compact,
 .responsive-field-label {
   display: none;
 }
@@ -369,14 +371,22 @@ h3 {
   font-weight: 700;
 }
 
+.company-last-checked-cell {
+  white-space: nowrap;
+}
+
 .company-actions-cell {
   width: 1%;
   white-space: nowrap;
 }
 
 .company-actions-cell .row-actions {
-  justify-content: flex-end;
   flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.company-toggle-button {
+  min-width: 7.75rem;
 }
 
 .row-actions,
@@ -519,7 +529,12 @@ h3 {
 }
 
 .jobs-table {
-  min-width: 50rem;
+  min-width: 0;
+}
+
+.job-position-cell {
+  max-width: 22rem;
+  overflow-wrap: anywhere;
 }
 
 .form-container {
@@ -609,19 +624,19 @@ h3 {
   }
 
   .company-table thead,
-  .company-type-cell {
+  .company-type-cell,
+  .company-monitoring-cell {
     display: none;
   }
 
   .company-table tbody tr {
     display: grid;
-    grid-template-columns:
-      minmax(0, 1.35fr) minmax(6.5rem, 0.65fr) minmax(10rem, 1fr) auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     grid-template-areas:
-      "company monitoring status actions"
-      "company monitoring checked actions";
+      "company status actions"
+      "company checked actions";
     align-items: center;
-    gap: 0.25rem 0.75rem;
+    gap: 0.35rem 0.75rem;
     padding: 0.75rem 0.9rem;
   }
 
@@ -638,18 +653,22 @@ h3 {
 
   .company-cell {
     grid-area: company;
+    width: auto;
+    max-width: none;
   }
 
-  .company-type-compact {
-    display: block;
+  .company-meta-compact {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
     margin-top: 0.15rem;
     color: var(--muted);
     font-size: 0.9rem;
     font-weight: 600;
   }
 
-  .company-monitoring-cell {
-    grid-area: monitoring;
+  .company-state-compact {
+    display: inline-block;
   }
 
   .company-last-status-cell {
@@ -660,9 +679,16 @@ h3 {
     grid-area: checked;
   }
 
+  .company-last-status-cell,
+  .company-last-checked-cell {
+    display: grid;
+    grid-template-columns: 6.75rem minmax(0, 1fr);
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
   .responsive-field-label {
     display: inline;
-    margin-right: 0.25rem;
     color: var(--muted);
     font-size: 0.8rem;
     font-weight: 700;
@@ -672,10 +698,118 @@ h3 {
     content: ":";
   }
 
+  .company-last-checked-cell .responsive-field-value {
+    white-space: nowrap;
+  }
+
   .company-actions-cell {
     grid-area: actions;
     width: auto;
     white-space: normal;
+    align-self: stretch;
+  }
+
+  .company-actions-cell .row-actions {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .company-actions-cell .button,
+  .company-actions-cell form {
+    width: 100%;
+  }
+
+  .company-actions-cell .button {
+    text-align: center;
+  }
+}
+
+@media (min-width: 48.01rem) and (max-width: 70rem) {
+  .company-cell {
+    display: grid;
+    grid-template-rows: 1fr 1fr;
+    align-self: stretch;
+    align-items: center;
+    row-gap: 0.35rem;
+  }
+
+  .company-meta-compact {
+    margin-top: 0;
+  }
+
+  .company-actions-cell {
+    width: 8.5rem;
+    justify-self: end;
+  }
+}
+
+@media (max-width: 48rem) {
+  .company-table-container {
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .company-table tbody {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .company-table tbody tr {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "company monitoring"
+      "status status"
+      "checked checked"
+      "actions actions";
+    align-items: start;
+    gap: 0.5rem 1rem;
+    padding: 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+  }
+
+  .company-meta-compact {
+    display: block;
+  }
+
+  .company-state-compact {
+    display: none;
+  }
+
+  .company-monitoring-cell {
+    display: block;
+    grid-area: monitoring;
+    justify-self: end;
+  }
+
+  .company-last-status-cell,
+  .company-last-checked-cell {
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+  }
+
+  .company-actions-cell {
+    align-self: auto;
+  }
+
+  .company-actions-cell .row-actions {
+    width: 100%;
+    height: auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .company-actions-cell .button,
+  .company-actions-cell form {
+    width: auto;
   }
 }
 
@@ -708,50 +842,6 @@ h3 {
     align-self: flex-start;
   }
 
-  .company-table-container {
-    overflow: visible;
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-  }
-
-  .company-table tbody {
-    display: grid;
-    gap: 0.75rem;
-  }
-
-  .company-table tbody tr {
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      "company monitoring"
-      "status status"
-      "checked checked"
-      "actions actions";
-    align-items: start;
-    gap: 0.75rem 1rem;
-    padding: 1rem;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 0.75rem;
-  }
-
-  .company-actions-cell .row-actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .company-last-status-cell,
-  .company-last-checked-cell {
-    display: grid;
-    grid-template-columns: 6.5rem minmax(0, 1fr);
-    align-items: baseline;
-    gap: 0.5rem;
-  }
-
-  .responsive-field-label {
-    margin-right: 0;
-  }
-
   .detail-header {
     align-items: stretch;
   }
@@ -767,5 +857,83 @@ h3 {
   .detail-source-row,
   .detail-monitoring-row {
     grid-template-columns: 1fr;
+  }
+
+  .jobs-table-container {
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .jobs-table,
+  .jobs-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .jobs-table thead {
+    display: none;
+  }
+
+  .jobs-table tbody {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .jobs-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "position status"
+      "location location"
+      "country published";
+    align-items: start;
+    gap: 0.25rem 0.75rem;
+    padding: 0.85rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+  }
+
+  .jobs-table tbody th,
+  .jobs-table tbody td {
+    min-width: 0;
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .job-position-cell {
+    grid-area: position;
+  }
+
+  .job-status-cell {
+    grid-area: status;
+    justify-self: end;
+  }
+
+  .job-location-cell {
+    grid-area: location;
+  }
+
+  .job-country-cell {
+    grid-area: country;
+  }
+
+  .job-published-cell {
+    grid-area: published;
+    white-space: nowrap;
+  }
+
+  .job-published-cell::before {
+    margin-right: 0.5rem;
+    content: "·";
+  }
+
+  .job-location-cell,
+  .job-country-cell,
+  .job-published-cell {
+    color: var(--muted);
+    font-size: 0.9rem;
   }
 }
