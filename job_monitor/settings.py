@@ -62,6 +62,13 @@ database_override = os.environ.get("JOB_MONITOR_SQLITE_PATH")
 if database_override:
     DATABASES["default"]["NAME"] = Path(database_override)
 
+fixture_path_override = os.environ.get("JOB_MONITOR_FIXTURE_PATH")
+JOB_MONITOR_FIXTURE_PATH = (
+    Path(fixture_path_override)
+    if fixture_path_override
+    else BASE_DIR / "data" / "fixtures" / "demo_jobs.json"
+)
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},

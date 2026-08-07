@@ -215,7 +215,7 @@ def test_company_detail_renders_information_navigation_and_empty_states() -> Non
     assert "Update jobs" in html
     assert "Jobs aktualisieren" not in html
     assert "Available in the next step" not in html
-    assert 'type="button" disabled' in html
+    assert 'type="submit">Update jobs</button>' in html
     assert 'class="page-heading detail-header"' in html
     assert 'class="company-meta"' in html
     assert "Company type" not in html
@@ -350,6 +350,162 @@ def test_company_detail_get_is_read_only_and_starts_no_execution() -> None:
     assert model("scrape_runs.ScrapeRun").objects.count() == 0
     pipeline.assert_not_called()
     background_submit.assert_not_called()
+
+
+def test_company_detail_update_jobs_action_is_csrf_protected_post_form() -> None:
+    company = create_company()
+    update_url = reverse("companies:update_jobs", args=(company.pk,))
+
+    html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
+
+    assert f'action="{update_url}"' in html
+    action_index = html.index(f'action="{update_url}"')
+    update_form = html[html.rfind("<form", 0, action_index) :]
+    update_form = update_form[: update_form.index("</form>")]
+    assert 'method="post"' in update_form
+    assert 'name="csrfmiddlewaretoken"' in update_form
+    assert "Update jobs" in update_form
+    assert "disabled" not in update_form
+
+
+def test_runtime_fixture_setting_uses_tracked_demo_data_not_test_fixtures() -> None:
+    settings = importlib.import_module("django.conf").settings
+    expected = Path(settings.BASE_DIR) / "data" / "fixtures" / "demo_jobs.json"
+    test_fixture = Path(__file__).parent / "fixtures" / "backend" / "run_1.json"
+    view_source = (
+        Path(__file__).resolve().parents[1] / "companies" / "views.py"
+    ).read_text(encoding="utf-8")
+
+    assert isinstance(settings.JOB_MONITOR_FIXTURE_PATH, Path)
+    assert expected == settings.JOB_MONITOR_FIXTURE_PATH
+    assert expected.is_file()
+    assert expected.read_text(encoding="utf-8") == test_fixture.read_text(
+        encoding="utf-8"
+    )
+    assert '"tests" / "fixtures"' not in view_source
+
+
+def test_update_jobs_requires_post_and_get_starts_nothing() -> None:
+    company = create_company()
+    update_url = reverse("companies:update_jobs", args=(company.pk,))
+
+    with patch("companies.views.background_executor.submit_fixture_pipeline") as submit:
+        response = client().get(update_url)
+
+    assert response.status_code == 405
+    submit.assert_not_called()
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
+
+
+def test_update_jobs_submits_configured_fixture_background_task_and_redirects(
+    tmp_path: Path,
+) -> None:
+    company = create_company()
+    browser = client()
+    update_url = reverse("companies:update_jobs", args=(company.pk,))
+    configured_fixture = tmp_path / "configured-demo.json"
+    configured_fixture.write_text("[]", encoding="utf-8")
+    override_settings = importlib.import_module("django.test").override_settings
+
+    with (
+        override_settings(JOB_MONITOR_FIXTURE_PATH=configured_fixture),
+        patch("companies.views.background_executor.submit_fixture_pipeline") as submit,
+    ):
+        response = browser.post(update_url)
+
+    assert response.status_code == 302
+    assert response.url == reverse("companies:detail", args=(company.pk,))
+    submit.assert_called_once()
+    assert submit.call_args.kwargs["company"].pk == company.pk
+    assert submit.call_args.kwargs["fixture_path"] == configured_fixture
+    assert b"Job update started." in browser.get(response.url).content
+
+
+def test_update_jobs_missing_configured_fixture_redirects_without_submission(
+    tmp_path: Path,
+) -> None:
+    company = create_company()
+    browser = client()
+    missing_fixture = tmp_path / "missing-demo.json"
+    override_settings = importlib.import_module("django.test").override_settings
+
+    with (
+        override_settings(JOB_MONITOR_FIXTURE_PATH=missing_fixture),
+        patch("companies.views.background_executor.submit_fixture_pipeline") as submit,
+    ):
+        response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
+
+    assert response.status_code == 302
+    assert response.url == reverse("companies:detail", args=(company.pk,))
+    submit.assert_not_called()
+    assert b"Job update data is unavailable." in browser.get(response.url).content
+
+
+def test_update_jobs_rejects_inactive_company_without_submission() -> None:
+    company = create_company(is_active=False)
+    browser = client()
+
+    with patch("companies.views.background_executor.submit_fixture_pipeline") as submit:
+        response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
+
+    assert response.status_code == 302
+    submit.assert_not_called()
+    company.refresh_from_db()
+    assert company.is_active is False
+    assert b"Activate this company before updating jobs." in browser.get(
+        response.url
+    ).content
+
+
+def test_update_jobs_rejects_unsupported_source_without_submission() -> None:
+    company = create_company(source="not-permitted")
+    browser = client()
+
+    with patch("companies.views.background_executor.submit_fixture_pipeline") as submit:
+        response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
+
+    assert response.status_code == 302
+    submit.assert_not_called()
+    assert b"Job updates are not available for this vacancy source." in browser.get(
+        response.url
+    ).content
+
+
+def test_update_jobs_reports_existing_running_run_without_submission() -> None:
+    company = create_company()
+    model("scrape_runs.ScrapeRun").objects.create(company=company)
+    browser = client()
+
+    with patch("companies.views.background_executor.submit_fixture_pipeline") as submit:
+        response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
+
+    assert response.status_code == 302
+    submit.assert_not_called()
+    assert model("scrape_runs.ScrapeRun").objects.filter(company=company).count() == 1
+    assert b"A job update is already running for this company." in browser.get(
+        response.url
+    ).content
+
+
+def test_update_jobs_reports_executor_duplicate_without_second_run() -> None:
+    company = create_company()
+    browser = client()
+    duplicate_error = importlib.import_module(
+        "scraping.background"
+    ).BackgroundRunAlreadyScheduledError
+
+    with patch(
+        "companies.views.background_executor.submit_fixture_pipeline",
+        side_effect=duplicate_error("already scheduled"),
+    ) as submit:
+        response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
+
+    assert response.status_code == 302
+    submit.assert_called_once()
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
+    assert b"A job update is already running for this company." in browser.get(
+        response.url
+    ).content
 
 
 def test_unknown_company_detail_returns_not_found() -> None:

@@ -1,5 +1,6 @@
 """Server-rendered company management views."""
 
+from django.conf import settings
 from django.contrib import messages
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -8,6 +9,14 @@ from django.views.decorators.http import require_POST
 from companies.forms import CompanyForm
 from companies.models import Company
 from jobs.models import JobPosting
+from scrape_runs.models import ScrapeRun
+from scraping.background import (
+    BackgroundExecutionError,
+    BackgroundRunAlreadyScheduledError,
+    ControlledBackgroundExecutor,
+)
+
+background_executor = ControlledBackgroundExecutor()
 
 
 def company_list(request: HttpRequest) -> HttpResponse:
@@ -72,3 +81,45 @@ def company_toggle_active(request: HttpRequest, pk: int) -> HttpResponse:
     state = "activated" if company.is_active else "deactivated"
     messages.success(request, f"Company “{company.name}” was {state}.")
     return redirect("companies:list")
+
+
+@require_POST
+def company_update_jobs(request: HttpRequest, pk: int) -> HttpResponse:
+    """Queue the existing fixture pipeline for one eligible company."""
+    company = get_object_or_404(Company, pk=pk)
+
+    if not company.is_active:
+        messages.error(request, "Activate this company before updating jobs.")
+        return redirect("companies:detail", pk=company.pk)
+    if company.source != "fixture":
+        messages.error(
+            request,
+            "Job updates are not available for this vacancy source.",
+        )
+        return redirect("companies:detail", pk=company.pk)
+    fixture_path = settings.JOB_MONITOR_FIXTURE_PATH
+    if not fixture_path.is_file():
+        messages.error(request, "Job update data is unavailable.")
+        return redirect("companies:detail", pk=company.pk)
+    if ScrapeRun.objects.filter(company=company, status=ScrapeRun.Status.RUNNING).exists():
+        messages.warning(
+            request,
+            "A job update is already running for this company.",
+        )
+        return redirect("companies:detail", pk=company.pk)
+
+    try:
+        background_executor.submit_fixture_pipeline(
+            company=company,
+            fixture_path=fixture_path,
+        )
+    except BackgroundRunAlreadyScheduledError:
+        messages.warning(
+            request,
+            "A job update is already running for this company.",
+        )
+    except BackgroundExecutionError:
+        messages.error(request, "Job update could not be started.")
+    else:
+        messages.success(request, "Job update started.")
+    return redirect("companies:detail", pk=company.pk)

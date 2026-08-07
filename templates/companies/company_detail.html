@@ -37,7 +37,10 @@
         </form>
       </div>
       <div class="update-jobs-action">
-        <button class="button button-primary" type="button" disabled>Update jobs</button>
+        <form method="post" action="{% url 'companies:update_jobs' company.pk %}">
+          {% csrf_token %}
+          <button class="button button-primary" type="submit">Update jobs</button>
+        </form>
       </div>
     </div>
   </div>
