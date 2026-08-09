@@ -1,4 +1,4 @@
-"""Source-neutral orchestration for the local fixture backend pipeline."""
+"""Source-neutral orchestration for vacancy source batches."""
 
 from __future__ import annotations
 
@@ -32,7 +32,8 @@ from scraping.run_lifecycle import (
     finish_scrape_run,
     start_scrape_run,
 )
-from scraping.sources.fixture import FixtureRecord, load_fixture_records
+from scraping.sources.base import SourceAdapter, SourceError, SourceRecord
+from scraping.sources.fixture import FixtureSourceAdapter
 
 _NORMALIZATION_FIELDS = frozenset(
     {
@@ -59,14 +60,15 @@ class CompanyRecord(Protocol):
 
     pk: int | None
     source: str
+    source_jobs_url: str | None
     is_active: bool
     last_scraped_at: datetime | None
     last_scrape_status: str
 
 
 @dataclass(frozen=True, slots=True)
-class FixturePipelineResult:
-    """Committed outcome of one complete fixture pipeline run."""
+class PipelineResult:
+    """Committed outcome of one complete source pipeline run."""
 
     scrape_run: ScrapeRunRecord
     jobs_found: int
@@ -80,7 +82,7 @@ class FixturePipelineResult:
 
 @dataclass(frozen=True, slots=True)
 class JobProcessingError:
-    """Safe diagnostic for one recoverable fixture record error."""
+    """Safe diagnostic for one recoverable source record error."""
 
     record_index: int
     stage: Literal["normalization", "persistence"]
@@ -88,12 +90,18 @@ class JobProcessingError:
     safe_message: str
 
 
-class FixturePipelineError(Exception):
-    """A fixture batch failed atomically and its run was finalized FAILED."""
+FixturePipelineResult = PipelineResult
+
+
+class PipelineError(Exception):
+    """A source batch failed atomically and its run was finalized FAILED."""
 
     def __init__(self, message: str, *, scrape_run: ScrapeRunRecord) -> None:
         super().__init__(message)
         self.scrape_run = scrape_run
+
+
+FixturePipelineError = PipelineError
 
 
 class InvalidPipelineTimestampError(ValueError):
@@ -117,7 +125,7 @@ class _RecoverableJobProcessingError(Exception):
 
 
 class AllJobRecordsFailedError(Exception):
-    """Every fixture record failed expected per-job processing."""
+    """Every source record failed expected per-job processing."""
 
 
 def _validate_timestamps(*, started_at: datetime, finished_at: datetime) -> None:
@@ -142,42 +150,42 @@ def _clock_timestamp(
     return value
 
 
-def _optional_string(record: FixtureRecord, field: str, *, index: int) -> str | None:
+def _optional_string(record: SourceRecord, field: str, *, index: int) -> str | None:
     value = record.get(field)
     if value is None or isinstance(value, str):
         return value
-    raise ValueError(f"fixture record {index} field {field} must be a string or null")
+    raise ValueError(f"source record {index} field {field} must be a string or null")
 
 
-def _published_at(record: FixtureRecord, *, index: int) -> datetime | None:
+def _published_at(record: SourceRecord, *, index: int) -> datetime | None:
     value = record.get("published_at")
     if value is None:
         return None
     if not isinstance(value, str):
         raise ValueError(
-            f"fixture record {index} field published_at must be an ISO datetime or null"
+            f"source record {index} field published_at must be an ISO datetime or null"
         )
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
         raise ValueError(
-            f"fixture record {index} field published_at must be an ISO datetime or null"
+            f"source record {index} field published_at must be an ISO datetime or null"
         ) from error
 
 
-def _normalize_fixture_record(
-    record: FixtureRecord, *, index: int
+def _normalize_source_record(
+    record: SourceRecord, *, index: int
 ) -> NormalizedJobPosting:
     unexpected_fields = set(record) - _NORMALIZATION_FIELDS
     if unexpected_fields:
         raise ValueError(
-            f"fixture record {index} contains unsupported fields: "
+            f"source record {index} contains unsupported fields: "
             + ", ".join(sorted(unexpected_fields))
         )
 
     source = _optional_string(record, "source", index=index)
     if source is None:
-        raise ValueError(f"fixture record {index} requires source")
+        raise ValueError(f"source record {index} requires source")
     return normalize_job_posting(
         source=source,
         source_job_id=_optional_string(record, "source_job_id", index=index),
@@ -197,18 +205,18 @@ def _normalize_fixture_record(
 
 
 def _safe_failure_message(error: Exception) -> str:
-    return f"Fixture pipeline failed: {type(error).__name__}"
+    return f"Source pipeline failed: {type(error).__name__}"
 
 
 def _process_record(
     *,
     company: CompanyRecord,
-    record: FixtureRecord,
+    record: SourceRecord,
     record_index: int,
     seen_at: datetime,
 ) -> PersistenceResult:
     try:
-        normalized = _normalize_fixture_record(record, index=record_index)
+        normalized = _normalize_source_record(record, index=record_index)
     except ValueError as error:
         raise _RecoverableJobProcessingError(
             stage="normalization",
@@ -239,17 +247,17 @@ def _safe_job_error(
     )
 
 
-def run_fixture_pipeline(
+def run_source_pipeline(
     *,
     company: CompanyRecord,
-    fixture_path: Path,
+    adapter: SourceAdapter,
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
     miss_threshold: int = DEFAULT_SUCCESSFUL_MISS_THRESHOLD,
     recover_job_errors: bool = False,
     clock: Callable[[], datetime] = timezone.now,
-) -> FixturePipelineResult:
-    """Run one local fixture batch through the source-neutral backend.
+) -> PipelineResult:
+    """Run one adapter batch through the common backend pipeline.
 
     Strict mode remains the default and fails the whole batch on a per-job
     validation or persistence error. With ``recover_job_errors=True``, expected
@@ -279,8 +287,11 @@ def run_fixture_pipeline(
 
     scrape_run = start_scrape_run(company=company, started_at=resolved_started_at)
 
+    requests_made = 0
     try:
-        records = load_fixture_records(fixture_path)
+        batch = adapter.fetch(company=company)
+        requests_made = batch.requests_made
+        records = batch.records
         with transaction.atomic():
             seen_job_ids: list[int] = []
             jobs_created = 0
@@ -321,7 +332,7 @@ def run_fixture_pipeline(
             jobs_succeeded = jobs_created + jobs_updated + jobs_unchanged
             if jobs_failed and jobs_succeeded == 0:
                 raise AllJobRecordsFailedError(
-                    "all fixture job records failed processing"
+                    "all source job records failed processing"
                 )
 
             if jobs_failed:
@@ -337,7 +348,7 @@ def run_fixture_pipeline(
                     jobs_found=jobs_found,
                     jobs_created=jobs_created,
                     jobs_updated=jobs_updated,
-                    requests_made=0,
+                    requests_made=batch.requests_made,
                     error_message=(
                         f"{jobs_failed} of {jobs_found} job records failed processing"
                     ),
@@ -356,7 +367,7 @@ def run_fixture_pipeline(
                     jobs_found=jobs_found,
                     jobs_created=jobs_created,
                     jobs_updated=jobs_updated,
-                    requests_made=0,
+                    requests_made=batch.requests_made,
                 )
                 reconciliation = reconcile_jobs_after_successful_run(
                     scrape_run=cast(ReconciliationScrapeRunRecord, completed_run),
@@ -364,7 +375,7 @@ def run_fixture_pipeline(
                     miss_threshold=miss_threshold,
                 )
 
-        return FixturePipelineResult(
+        return PipelineResult(
             scrape_run=completed_run,
             jobs_found=jobs_found,
             jobs_created=jobs_created,
@@ -375,6 +386,8 @@ def run_fixture_pipeline(
             reconciliation=reconciliation,
         )
     except Exception as error:
+        if isinstance(error, SourceError):
+            requests_made = error.requests_made
         failure_finished_at = finished_at or _clock_timestamp(
             clock=clock,
             name="finished_at",
@@ -387,10 +400,32 @@ def run_fixture_pipeline(
             jobs_found=0,
             jobs_created=0,
             jobs_updated=0,
-            requests_made=0,
+            requests_made=requests_made,
             error_message=_safe_failure_message(error),
         )
-        raise FixturePipelineError(
-            "fixture pipeline failed; batch changes were rolled back",
+        raise PipelineError(
+            "source pipeline failed; batch changes were rolled back",
             scrape_run=failed_run,
         ) from error
+
+
+def run_fixture_pipeline(
+    *,
+    company: CompanyRecord,
+    fixture_path: Path,
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    miss_threshold: int = DEFAULT_SUCCESSFUL_MISS_THRESHOLD,
+    recover_job_errors: bool = False,
+    clock: Callable[[], datetime] = timezone.now,
+) -> PipelineResult:
+    """Backward-compatible wrapper for explicit local fixture runs."""
+    return run_source_pipeline(
+        company=company,
+        adapter=FixtureSourceAdapter(fixture_path),
+        started_at=started_at,
+        finished_at=finished_at,
+        miss_threshold=miss_threshold,
+        recover_job_errors=recover_job_errors,
+        clock=clock,
+    )

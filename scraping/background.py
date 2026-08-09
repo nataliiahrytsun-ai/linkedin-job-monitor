@@ -1,4 +1,4 @@
-"""Controlled in-process background execution for the local fixture pipeline."""
+"""Controlled in-process background execution for source-neutral pipelines."""
 
 from __future__ import annotations
 
@@ -19,9 +19,13 @@ from django.utils import timezone  # type: ignore[import-untyped]
 from scraping.pipeline import (
     CompanyRecord,
     FixturePipelineResult,
+    PipelineResult,
     run_fixture_pipeline,
+    run_source_pipeline,
 )
 from scraping.reconciliation import DEFAULT_SUCCESSFUL_MISS_THRESHOLD
+from scraping.sources.base import SourceError
+from scraping.sources.registry import get_source_adapter
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,8 +65,12 @@ class InvalidBackgroundClockError(BackgroundExecutionError, ValueError):
     """The injected execution clock is not callable."""
 
 
+class BackgroundSourceError(BackgroundExecutionError):
+    """A company source cannot be submitted through the adapter registry."""
+
+
 class ControlledBackgroundExecutor:
-    """A bounded, explicitly managed thread pool for fixture pipeline tasks.
+    """A bounded, explicitly managed thread pool for company update tasks.
 
     The active-company registry protects only this executor instance in this
     Python process. The database constraint on RUNNING ScrapeRun rows remains
@@ -129,6 +137,31 @@ class ControlledBackgroundExecutor:
         finally:
             close_old_connections()
 
+    def _run_source_pipeline(
+        self,
+        *,
+        company_id: int,
+        recover_job_errors: bool,
+        miss_threshold: int,
+    ) -> PipelineResult:
+        close_old_connections()
+        try:
+            company_model = apps.get_model("companies", "Company")
+            worker_company = company_model.objects.get(pk=company_id)
+            try:
+                adapter = get_source_adapter(worker_company)
+            except SourceError as error:
+                raise BackgroundSourceError(str(error)) from error
+            return run_source_pipeline(
+                company=worker_company,
+                adapter=adapter,
+                miss_threshold=miss_threshold,
+                recover_job_errors=recover_job_errors,
+                clock=self._clock,
+            )
+        finally:
+            close_old_connections()
+
     def _release_company(
         self, company_id: int, future: Future[FixturePipelineResult]
     ) -> None:
@@ -168,6 +201,58 @@ class ControlledBackgroundExecutor:
                 self._run_fixture_pipeline,
                 company_id=company_id,
                 fixture_path=fixture_path,
+                recover_job_errors=recover_job_errors,
+                miss_threshold=miss_threshold,
+            )
+        except Exception:
+            with self._lock:
+                if self._active.get(company_id) is None:
+                    self._active.pop(company_id, None)
+            raise
+
+        with self._lock:
+            self._active[company_id] = future
+        future.add_done_callback(partial(self._release_company, company_id))
+        return BackgroundRunHandle(
+            task_id=task_id,
+            company_id=company_id,
+            future=future,
+        )
+
+    def submit_pipeline(
+        self,
+        *,
+        company: CompanyRecord,
+        recover_job_errors: bool = True,
+        miss_threshold: int = DEFAULT_SUCCESSFUL_MISS_THRESHOLD,
+    ) -> BackgroundRunHandle:
+        """Queue a source-neutral company update and return without waiting."""
+        company_id = self._validated_company_id(company)
+        try:
+            get_source_adapter(company)
+        except SourceError as error:
+            raise BackgroundSourceError(str(error)) from error
+        task_id = uuid4().hex
+
+        with self._lock:
+            if self._shutdown:
+                raise BackgroundExecutorShutdownError(
+                    "background executor has been shut down"
+                )
+            existing = self._active.get(company_id)
+            if company_id in self._active:
+                if existing is not None and existing.done():
+                    self._active.pop(company_id, None)
+                else:
+                    raise BackgroundRunAlreadyScheduledError(
+                        "company already has a queued or running background task"
+                    )
+            self._active[company_id] = None
+
+        try:
+            future = self._executor.submit(
+                self._run_source_pipeline,
+                company_id=company_id,
                 recover_job_errors=recover_job_errors,
                 miss_threshold=miss_threshold,
             )

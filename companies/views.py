@@ -1,6 +1,5 @@
 """Server-rendered company management views."""
 
-from django.conf import settings
 from django.contrib import messages
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -91,16 +90,6 @@ def company_update_jobs(request: HttpRequest, pk: int) -> HttpResponse:
     if not company.is_active:
         messages.error(request, "Activate this company before updating jobs.")
         return redirect("companies:detail", pk=company.pk)
-    if company.source != "fixture":
-        messages.error(
-            request,
-            "Job updates are not available for this vacancy source.",
-        )
-        return redirect("companies:detail", pk=company.pk)
-    fixture_path = settings.JOB_MONITOR_FIXTURE_PATH
-    if not fixture_path.is_file():
-        messages.error(request, "Job update data is unavailable.")
-        return redirect("companies:detail", pk=company.pk)
     if ScrapeRun.objects.filter(company=company, status=ScrapeRun.Status.RUNNING).exists():
         messages.warning(
             request,
@@ -109,10 +98,7 @@ def company_update_jobs(request: HttpRequest, pk: int) -> HttpResponse:
         return redirect("companies:detail", pk=company.pk)
 
     try:
-        background_executor.submit_fixture_pipeline(
-            company=company,
-            fixture_path=fixture_path,
-        )
+        background_executor.submit_pipeline(company=company)
     except BackgroundRunAlreadyScheduledError:
         messages.warning(
             request,

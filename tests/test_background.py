@@ -15,12 +15,14 @@ from scraping.background import (
     BackgroundCompanyNotSavedError,
     BackgroundExecutorShutdownError,
     BackgroundRunAlreadyScheduledError,
+    BackgroundSourceError,
     ControlledBackgroundExecutor,
     InvalidBackgroundClockError,
     InvalidMaxWorkersError,
     InvalidShutdownWaitError,
 )
 from scraping.pipeline import FixturePipelineError, FixturePipelineResult
+from scraping.sources.base import SourceAdapter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "backend"
@@ -179,15 +181,60 @@ def test_worker_reloads_company_and_closes_thread_local_connections(
     assert worker_companies[0] is not submitted_company
 
 
+def test_source_neutral_submission_selects_adapter_from_reloaded_company(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitted_company = company()
+    selected_companies: list[Any] = []
+    pipeline_calls: list[dict[str, object]] = []
+    adapter = cast(SourceAdapter, object())
+    sentinel = cast(FixturePipelineResult, object())
+
+    def select_adapter(company_record: Any) -> SourceAdapter:
+        selected_companies.append(company_record)
+        return adapter
+
+    def inspect_pipeline(**kwargs: object) -> FixturePipelineResult:
+        pipeline_calls.append(kwargs)
+        return sentinel
+
+    monkeypatch.setattr("scraping.background.get_source_adapter", select_adapter)
+    monkeypatch.setattr("scraping.background.run_source_pipeline", inspect_pipeline)
+
+    with ControlledBackgroundExecutor() as executor:
+        result = executor.submit_pipeline(company=submitted_company).future.result(
+            timeout=5
+        )
+
+    assert result is sentinel
+    assert len(selected_companies) == 2
+    assert selected_companies[0] is submitted_company
+    assert selected_companies[1].pk == submitted_company.pk
+    assert selected_companies[1] is not submitted_company
+    assert pipeline_calls[0]["company"] is selected_companies[1]
+    assert pipeline_calls[0]["adapter"] is adapter
+
+
+def test_source_neutral_submission_rejects_unknown_source() -> None:
+    company_record = company()
+    company_record.source = "unknown"
+    company_record.save(update_fields=("source",))
+
+    with (
+        ControlledBackgroundExecutor() as executor,
+        pytest.raises(BackgroundSourceError, match="unknown"),
+    ):
+        executor.submit_pipeline(company=company_record)
+
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
+
+
 def test_real_success_pipeline_uses_runtime_clock_and_returns_result() -> None:
     company_record = company()
     clock = IncrementingClock()
 
     with ControlledBackgroundExecutor(clock=clock) as executor:
-        result = executor.submit_fixture_pipeline(
-            company=company_record,
-            fixture_path=FIXTURES / "run_1.json",
-        ).future.result(timeout=10)
+        result = executor.submit_pipeline(company=company_record).future.result(timeout=10)
 
     result.scrape_run.refresh_from_db()
     stored_jobs = list(

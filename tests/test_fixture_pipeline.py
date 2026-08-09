@@ -16,12 +16,14 @@ from scraping.pipeline import (
     FixturePipelineResult,
     InvalidPipelineTimestampError,
     run_fixture_pipeline,
+    run_source_pipeline,
 )
 from scraping.run_lifecycle import (
     DuplicateRunningRunError,
     InactiveCompanyError,
     start_scrape_run,
 )
+from scraping.sources.base import SourceBatch, SourceCompany, SourceError
 from scraping.sources.fixture import (
     FixtureFileNotFoundError,
     FixtureFormatError,
@@ -271,7 +273,7 @@ def test_invalid_fixture_rolls_back_batch_and_finishes_failed_safely() -> None:
     company_record.refresh_from_db()
     existing.refresh_from_db()
     assert failed_run.status == "failed"
-    assert failed_run.error_message == "Fixture pipeline failed: ValueError"
+    assert failed_run.error_message == "Source pipeline failed: ValueError"
     assert failed_run.jobs_found == 0
     assert failed_run.jobs_created == 0
     assert failed_run.jobs_updated == 0
@@ -442,3 +444,48 @@ def test_pipeline_result_is_immutable() -> None:
 
     with pytest.raises(FrozenInstanceError):
         result.jobs_found = 99  # type: ignore[misc]
+
+
+def test_source_batch_requests_made_is_saved_on_scrape_run() -> None:
+    class CountingAdapter:
+        def fetch(self, *, company: SourceCompany) -> SourceBatch:
+            del company
+            return SourceBatch(
+                records=load_fixture_records(FIXTURES / "run_1.json"),
+                requests_made=3,
+            )
+
+    company_record = company()
+    started_at, finished_at = run_times(1)
+
+    result = run_source_pipeline(
+        company=company_record,
+        adapter=CountingAdapter(),
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+
+    result.scrape_run.refresh_from_db()
+    assert result.scrape_run.requests_made == 3
+
+
+def test_source_error_requests_made_is_saved_on_failed_scrape_run() -> None:
+    class FailingAdapter:
+        def fetch(self, *, company: SourceCompany) -> SourceBatch:
+            del company
+            raise SourceError("safe source failure", requests_made=2)
+
+    company_record = company()
+    started_at, finished_at = run_times(1)
+
+    with pytest.raises(FixturePipelineError) as caught:
+        run_source_pipeline(
+            company=company_record,
+            adapter=FailingAdapter(),
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+
+    caught.value.scrape_run.refresh_from_db()
+    assert caught.value.scrape_run.status == "failed"
+    assert caught.value.scrape_run.requests_made == 2

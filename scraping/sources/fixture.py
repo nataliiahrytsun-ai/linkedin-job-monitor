@@ -6,10 +6,14 @@ import json
 from pathlib import Path
 from typing import cast
 
-type FixtureRecord = dict[str, object]
+from django.conf import settings  # type: ignore[import-untyped]
+
+from scraping.sources.base import SourceBatch, SourceCompany, SourceError, SourceRecord
+
+type FixtureRecord = SourceRecord
 
 
-class FixtureSourceError(Exception):
+class FixtureSourceError(SourceError):
     """Base error for local fixture loading failures."""
 
 
@@ -48,3 +52,20 @@ def load_fixture_records(fixture_path: Path) -> tuple[FixtureRecord, ...]:
             )
         records.append(dict(cast(dict[str, object], value)))
     return tuple(records)
+
+
+class FixtureSourceAdapter:
+    """Read the configured local fixture without making network requests."""
+
+    def __init__(self, fixture_path: Path | None = None) -> None:
+        self._fixture_path = fixture_path
+
+    def fetch(self, *, company: SourceCompany) -> SourceBatch:
+        del company
+        fixture_path = self._fixture_path
+        if fixture_path is None:
+            fixture_path = cast(Path, settings.JOB_MONITOR_FIXTURE_PATH)
+        return SourceBatch(
+            records=load_fixture_records(fixture_path),
+            requests_made=0,
+        )

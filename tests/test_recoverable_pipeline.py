@@ -194,7 +194,7 @@ def test_all_invalid_fixture_finishes_failed_without_jobs_or_reconciliation(
     failed_run.refresh_from_db()
     company_record.refresh_from_db()
     assert failed_run.status == "failed"
-    assert failed_run.error_message == "Fixture pipeline failed: AllJobRecordsFailedError"
+    assert failed_run.error_message == "Source pipeline failed: AllJobRecordsFailedError"
     assert failed_run.jobs_found == 0
     assert failed_run.jobs_created == 0
     assert failed_run.jobs_updated == 0
@@ -260,7 +260,7 @@ def test_unexpected_job_error_rolls_back_outer_batch_and_finishes_failed(
 
     assert isinstance(caught.value.__cause__, RuntimeError)
     assert caught.value.scrape_run.status == "failed"
-    assert caught.value.scrape_run.error_message == "Fixture pipeline failed: RuntimeError"
+    assert caught.value.scrape_run.error_message == "Source pipeline failed: RuntimeError"
     assert jobs_for(company_record).count() == 0
     assert model("scrape_runs.ScrapeRun").objects.filter(status="partial").count() == 0
 
@@ -282,7 +282,7 @@ def test_invalid_json_remains_full_failure_in_recoverable_mode(tmp_path: Path) -
 
     assert isinstance(caught.value.__cause__, FixtureFormatError)
     assert caught.value.scrape_run.status == "failed"
-    assert caught.value.scrape_run.error_message == "Fixture pipeline failed: FixtureFormatError"
+    assert caught.value.scrape_run.error_message == "Source pipeline failed: FixtureFormatError"
     assert str(invalid_json.resolve()) not in caught.value.scrape_run.error_message
     assert jobs_for(company_record).count() == 0
 

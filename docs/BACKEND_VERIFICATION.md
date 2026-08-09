@@ -2,7 +2,8 @@
 
 Проверка проходит через весь source-neutral backend:
 
-`local JSON fixture` → `normalization` → `persistence` → `ScrapeRun` →
+`Company` → `adapter registry` → `FixtureSourceAdapter` → `SourceBatch` →
+`normalization` → `persistence` → `ScrapeRun` →
 `SUCCESS / PARTIAL / FAILED` → `reconciliation` → `SQLite`.
 
 То есть тестовые вакансии читаются из локального файла, нормализуются,

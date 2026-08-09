@@ -413,7 +413,7 @@ def test_company_detail_get_is_read_only_and_starts_no_execution() -> None:
     with (
         patch("scraping.pipeline.run_fixture_pipeline") as pipeline,
         patch(
-            "scraping.background.ControlledBackgroundExecutor.submit_fixture_pipeline"
+            "scraping.background.ControlledBackgroundExecutor.submit_pipeline"
         ) as background_submit,
     ):
         response = client().get(reverse("companies:detail", args=(company.pk,)))
@@ -465,7 +465,7 @@ def test_update_jobs_requires_post_and_get_starts_nothing() -> None:
     company = create_company()
     update_url = reverse("companies:update_jobs", args=(company.pk,))
 
-    with patch("companies.views.background_executor.submit_fixture_pipeline") as submit:
+    with patch("companies.views.background_executor.submit_pipeline") as submit:
         response = client().get(update_url)
 
     assert response.status_code == 405
@@ -473,31 +473,22 @@ def test_update_jobs_requires_post_and_get_starts_nothing() -> None:
     assert model("scrape_runs.ScrapeRun").objects.count() == 0
 
 
-def test_update_jobs_submits_configured_fixture_background_task_and_redirects(
-    tmp_path: Path,
-) -> None:
+def test_update_jobs_submits_source_neutral_background_task_and_redirects() -> None:
     company = create_company()
     browser = client()
     update_url = reverse("companies:update_jobs", args=(company.pk,))
-    configured_fixture = tmp_path / "configured-demo.json"
-    configured_fixture.write_text("[]", encoding="utf-8")
-    override_settings = importlib.import_module("django.test").override_settings
-
-    with (
-        override_settings(JOB_MONITOR_FIXTURE_PATH=configured_fixture),
-        patch("companies.views.background_executor.submit_fixture_pipeline") as submit,
-    ):
+    with patch("companies.views.background_executor.submit_pipeline") as submit:
         response = browser.post(update_url)
 
     assert response.status_code == 302
     assert response.url == reverse("companies:detail", args=(company.pk,))
     submit.assert_called_once()
     assert submit.call_args.kwargs["company"].pk == company.pk
-    assert submit.call_args.kwargs["fixture_path"] == configured_fixture
+    assert set(submit.call_args.kwargs) == {"company"}
     assert b"Job update started." in browser.get(response.url).content
 
 
-def test_update_jobs_missing_configured_fixture_redirects_without_submission(
+def test_update_jobs_view_does_not_inspect_configured_fixture_path(
     tmp_path: Path,
 ) -> None:
     company = create_company()
@@ -507,21 +498,21 @@ def test_update_jobs_missing_configured_fixture_redirects_without_submission(
 
     with (
         override_settings(JOB_MONITOR_FIXTURE_PATH=missing_fixture),
-        patch("companies.views.background_executor.submit_fixture_pipeline") as submit,
+        patch("companies.views.background_executor.submit_pipeline") as submit,
     ):
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
     assert response.url == reverse("companies:detail", args=(company.pk,))
-    submit.assert_not_called()
-    assert b"Job update data is unavailable." in browser.get(response.url).content
+    submit.assert_called_once_with(company=company)
+    assert b"Job update started." in browser.get(response.url).content
 
 
 def test_update_jobs_rejects_inactive_company_without_submission() -> None:
     company = create_company(is_active=False)
     browser = client()
 
-    with patch("companies.views.background_executor.submit_fixture_pipeline") as submit:
+    with patch("companies.views.background_executor.submit_pipeline") as submit:
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
@@ -533,18 +524,20 @@ def test_update_jobs_rejects_inactive_company_without_submission() -> None:
     ).content
 
 
-def test_update_jobs_rejects_unsupported_source_without_submission() -> None:
+def test_update_jobs_reports_controlled_unknown_source_submission_error() -> None:
     company = create_company(source="not-permitted")
     browser = client()
 
-    with patch("companies.views.background_executor.submit_fixture_pipeline") as submit:
+    source_error = importlib.import_module("scraping.background").BackgroundSourceError
+    with patch(
+        "companies.views.background_executor.submit_pipeline",
+        side_effect=source_error("unknown source"),
+    ) as submit:
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
-    submit.assert_not_called()
-    assert b"Job updates are not available for this vacancy source." in browser.get(
-        response.url
-    ).content
+    submit.assert_called_once_with(company=company)
+    assert b"Job update could not be started." in browser.get(response.url).content
 
 
 def test_update_jobs_reports_existing_running_run_without_submission() -> None:
@@ -552,7 +545,7 @@ def test_update_jobs_reports_existing_running_run_without_submission() -> None:
     model("scrape_runs.ScrapeRun").objects.create(company=company)
     browser = client()
 
-    with patch("companies.views.background_executor.submit_fixture_pipeline") as submit:
+    with patch("companies.views.background_executor.submit_pipeline") as submit:
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
@@ -571,7 +564,7 @@ def test_update_jobs_reports_executor_duplicate_without_second_run() -> None:
     ).BackgroundRunAlreadyScheduledError
 
     with patch(
-        "companies.views.background_executor.submit_fixture_pipeline",
+        "companies.views.background_executor.submit_pipeline",
         side_effect=duplicate_error("already scheduled"),
     ) as submit:
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
@@ -780,7 +773,7 @@ def test_create_and_edit_do_not_start_pipeline_or_background_executor() -> None:
     with (
         patch("scraping.pipeline.run_fixture_pipeline") as pipeline,
         patch(
-            "scraping.background.ControlledBackgroundExecutor.submit_fixture_pipeline"
+            "scraping.background.ControlledBackgroundExecutor.submit_pipeline"
         ) as background_submit,
     ):
         created = client().post(reverse("companies:create"), valid_company_data())
