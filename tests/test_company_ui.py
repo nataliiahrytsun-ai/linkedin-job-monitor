@@ -70,6 +70,41 @@ def create_job(company: Any, **overrides: object) -> Any:
     return model("jobs.JobPosting").objects.create(**values)
 
 
+def create_filterable_jobs(company: Any) -> dict[str, Any]:
+    return {
+        "remote": create_job(
+            company,
+            source_job_id="remote-analyst",
+            title="Remote Analyst",
+            location="Vienna",
+            country="Austria",
+            workplace_type="remote",
+            published_at=datetime(2026, 8, 10, 9, tzinfo=UTC),
+            status="active",
+        ),
+        "onsite": create_job(
+            company,
+            source_job_id="onsite-engineer",
+            title="Onsite Engineer",
+            location="Berlin",
+            country="Germany",
+            workplace_type="onsite",
+            published_at=datetime(2026, 8, 1, 9, tzinfo=UTC),
+            status="not_found",
+        ),
+        "hybrid": create_job(
+            company,
+            source_job_id="hybrid-analyst",
+            title="Hybrid Analyst",
+            location="Graz",
+            country="Austria",
+            workplace_type="hybrid",
+            published_at=datetime(2026, 8, 5, 9, tzinfo=UTC),
+            status="closed",
+        ),
+    }
+
+
 def valid_company_data(**overrides: str) -> dict[str, str]:
     values = {
         "name": "New Company",
@@ -240,8 +275,12 @@ def test_jobs_table_responsive_layout_contract() -> None:
     assert "min-width: 0" in desktop_tablet_css[jobs_table_start:jobs_table_end]
     assert ".jobs-table-container" in mobile_css
     assert "overflow: visible" in mobile_css
-    assert ".jobs-table thead" in mobile_css
-    assert "display: none" in mobile_css
+    company_header_start = mobile_css.index(".jobs-table thead {")
+    company_header_end = mobile_css.index("}", company_header_start)
+    company_header_css = mobile_css[company_header_start:company_header_end]
+    assert "display: block" in company_header_css
+    assert ".jobs-table thead tr" in mobile_css
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in mobile_css
     assert '"position status"' in mobile_css
     assert '"location location"' in mobile_css
     assert '"country published"' in mobile_css
@@ -356,7 +395,9 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
         source_job_url=None,
         status="not_found",
     )
-    create_job(company, source_job_id="closed-job", title="Closed Role", status="closed")
+    closed = create_job(
+        company, source_job_id="closed-job", title="Closed Role", status="closed"
+    )
     create_job(other_company, source_job_id="hidden-job", title="Hidden Other Job")
 
     response = client().get(reverse("companies:detail", args=(company.pk,)))
@@ -373,9 +414,7 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
     assert "ACTIVE" in html
     assert "NOT_FOUND" in html
     assert "CLOSED" in html
-    assert 'href="https://jobs.example.test/jobs/active"' in html
-    assert 'target="_blank"' in html
-    assert 'rel="noopener noreferrer"' in html
+    assert older.source_job_url not in html
     assert "Hidden Other Job" not in html
     assert older.source_job_id not in html
     assert older.content_hash not in html
@@ -388,17 +427,170 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
     assert jobs_html.count('<th scope="col">') == 5
     assert "Original job link" not in jobs_html
     assert ">Open</a>" not in jobs_html
-    assert (
-        '<a href="https://jobs.example.test/jobs/active" target="_blank" '
-        'rel="noopener noreferrer">Current Analyst</a>'
-    ) in jobs_html
-    assert ">Former Engineer</a>" not in jobs_html
-    assert "Former Engineer" in jobs_html
+    for posting in (newer, older, closed):
+        assert (
+            f'<a href="{reverse("jobs:detail", args=(posting.pk,))}">'
+            f"{posting.title}</a>"
+        ) in jobs_html
     assert 'class="status-badge status-active">ACTIVE</span>' in jobs_html
     assert 'class="status-badge">NOT_FOUND</span>' in jobs_html
     assert 'class="status-badge">CLOSED</span>' in jobs_html
     assert 'class="status-badge status-active">NOT_FOUND</span>' not in jobs_html
     assert 'class="status-badge status-active">CLOSED</span>' not in jobs_html
+
+
+@pytest.mark.parametrize(
+    ("params", "expected_key"),
+    [
+        ({"q": "Remote"}, "remote"),
+        ({"location": "Berlin"}, "onsite"),
+        ({"workplace_type": "hybrid"}, "hybrid"),
+        ({"country": "Germany"}, "onsite"),
+        ({"published_from": "2026-08-06"}, "remote"),
+        ({"published_to": "2026-08-02"}, "onsite"),
+        ({"status": "closed"}, "hybrid"),
+    ],
+)
+def test_company_detail_filters_jobs_by_supported_fields(
+    params: dict[str, str], expected_key: str
+) -> None:
+    company = create_company(name="Filtered Company")
+    postings = create_filterable_jobs(company)
+
+    response = client().get(reverse("companies:detail", args=(company.pk,)), params)
+
+    assert response.status_code == 200
+    assert list(response.context["jobs"]) == [postings[expected_key]]
+
+
+def test_company_detail_combines_filters_without_leaking_other_company_jobs() -> None:
+    company = create_company(name="Scoped Filters")
+    postings = create_filterable_jobs(company)
+    other_company = create_company(
+        name="Other Filter Scope",
+        source_jobs_url="https://jobs.example.test/other-filter-scope/openings",
+    )
+    other = create_job(
+        other_company,
+        source_job_id="other-hybrid-analyst",
+        title="Hybrid Analyst",
+        location="Graz",
+        country="Austria",
+        workplace_type="hybrid",
+        published_at=datetime(2026, 8, 5, 9, tzinfo=UTC),
+        status="closed",
+    )
+
+    response = client().get(
+        reverse("companies:detail", args=(company.pk,)),
+        {
+            "q": "Analyst",
+            "location": "Graz",
+            "workplace_type": "hybrid",
+            "country": "Austria",
+            "published_from": "2026-08-04",
+            "published_to": "2026-08-06",
+            "status": "closed",
+            "company": str(other_company.pk),
+            "company_type": other_company.company_type,
+            "first_seen_from": "2099-01-01",
+        },
+    )
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert list(response.context["jobs"]) == [postings["hybrid"]]
+    assert f'href="{reverse("jobs:detail", args=(postings["hybrid"].pk,))}"' in html
+    assert f'href="{reverse("jobs:detail", args=(other.pk,))}"' not in html
+
+
+def test_company_detail_filter_ui_reuses_column_popovers_and_clean_company_url() -> None:
+    company = create_company(name="Filter UI")
+    create_job(
+        company,
+        title="Vienna Role",
+        country="Austria",
+        location="Vienna",
+    )
+    other_company = create_company(
+        name="Other Countries",
+        source_jobs_url="https://jobs.example.test/other-countries/openings",
+    )
+    create_job(other_company, title="Paris Role", country="France", location="Paris")
+
+    response = client().get(
+        reverse("companies:detail", args=(company.pk,)),
+        {"q": "Vienna", "country": "Austria"},
+    )
+    html = response.content.decode()
+    form_start = html.index('<form class="jobs-table-filter-form"')
+    filter_form = html[form_start : html.index("</form>", form_start)]
+
+    assert (
+        f'action="{reverse("companies:detail", args=(company.pk,))}"' in filter_form
+    )
+    assert (
+        f'href="{reverse("companies:detail", args=(company.pk,))}">Clear filters</a>'
+        in filter_form
+    )
+    assert filter_form.count('<details class="column-filter') == 5
+    for label in (
+        "Filter position",
+        "Filter location",
+        "Filter country",
+        "Filter published date",
+        "Filter status",
+    ):
+        assert f'aria-label="{label}"' in filter_form
+    for field_name in (
+        "q",
+        "location",
+        "workplace_type",
+        "country",
+        "published_from",
+        "published_to",
+        "status",
+    ):
+        assert filter_form.count(f'name="{field_name}"') == 1
+    for excluded_name in (
+        "company",
+        "company_type",
+        "first_seen_from",
+        "first_seen_to",
+    ):
+        assert f'name="{excluded_name}"' not in filter_form
+    assert filter_form.count("column-filter-active") == 2
+    assert '<option value="Austria" selected>Austria</option>' in filter_form
+    assert '<option value="France">France</option>' not in filter_form
+    assert '<script src="/static/js/job_filters.js" defer></script>' in html
+
+
+def test_company_detail_invalid_empty_and_no_match_filters_are_safe() -> None:
+    company = create_company(name="Safe Company Filters")
+    postings = create_filterable_jobs(company)
+    clean_url = reverse("companies:detail", args=(company.pk,))
+
+    invalid = client().get(
+        clean_url,
+        {"status": "bogus", "published_from": "not-a-date"},
+    )
+    empty = client().get(
+        clean_url,
+        {"q": "", "location": "", "country": "", "status": ""},
+    )
+    no_match = client().get(clean_url, {"q": "No such vacancy"})
+    invalid_html = invalid.content.decode()
+    no_match_html = no_match.content.decode()
+
+    assert invalid.status_code == 200
+    assert set(invalid.context["jobs"]) == set(postings.values())
+    assert "Some invalid filter values were ignored." in invalid_html
+    assert empty.status_code == 200
+    assert set(empty.context["jobs"]) == set(postings.values())
+    assert no_match.status_code == 200
+    assert not list(no_match.context["jobs"])
+    assert "No jobs match the selected filters." in no_match_html
+    assert "No jobs found yet" not in no_match_html
 
 
 def test_company_detail_get_is_read_only_and_starts_no_execution() -> None:

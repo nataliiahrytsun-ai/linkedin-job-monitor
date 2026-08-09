@@ -7,7 +7,9 @@ from django.views.decorators.http import require_POST
 
 from companies.forms import CompanyForm
 from companies.models import Company
+from jobs.forms import CompanyJobFilterForm
 from jobs.models import JobPosting
+from jobs.views import _apply_filters
 from scrape_runs.models import ScrapeRun
 from scraping.background import (
     BackgroundExecutionError,
@@ -27,7 +29,29 @@ def company_list(request: HttpRequest) -> HttpResponse:
 def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
     """Show one company and its saved vacancies without starting a run."""
     company = get_object_or_404(Company, pk=pk)
-    jobs = company.job_postings.order_by("-last_seen_at", "-pk")
+    company_jobs = company.job_postings.all()
+    stored_countries = (
+        company_jobs.exclude(country__isnull=True)
+        .exclude(country="")
+        .values_list("country", flat=True)
+        .distinct()
+    )
+    countries = tuple(
+        sorted(
+            {
+                country
+                for country in stored_countries
+                if country is not None and country.strip()
+            },
+            key=str.casefold,
+        )
+    )
+    filter_form = CompanyJobFilterForm(request.GET or None, countries=countries)
+    jobs = company_jobs
+    if filter_form.is_bound:
+        filter_form.is_valid()
+        jobs = _apply_filters(jobs, filter_form.cleaned_data)
+    jobs = jobs.order_by("-last_seen_at", "-pk")
     active_job_count = company.job_postings.filter(
         status=JobPosting.Status.ACTIVE
     ).count()
@@ -36,6 +60,8 @@ def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "companies/company_detail.html",
         {
             "company": company,
+            "filter_form": filter_form,
+            "has_any_jobs": company_jobs.exists(),
             "jobs": jobs,
             "active_job_count": active_job_count,
         },

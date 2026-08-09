@@ -95,3 +95,22 @@ class JobFilterForm(forms.Form):
             ("", "All countries"),
             *((country, country) for country in countries),
         )
+
+
+class CompanyJobFilterForm(JobFilterForm):
+    """Expose only filters represented by the Company Detail jobs table."""
+
+    def __init__(
+        self,
+        *args: Any,
+        countries: Iterable[str] = (),
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, countries=countries, **kwargs)
+        for field_name in (
+            "company",
+            "company_type",
+            "first_seen_from",
+            "first_seen_to",
+        ):
+            self.fields.pop(field_name)

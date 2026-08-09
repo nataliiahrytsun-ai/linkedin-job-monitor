@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block title %}{{ company.name }} · Job Monitor{% endblock %}
 
@@ -94,53 +95,136 @@
   </section>
 
   <section class="detail-section" aria-labelledby="jobs-heading">
-    <h2 id="jobs-heading">Jobs</h2>
-    <p class="section-note">Saved vacancies for this company.</p>
+    <form class="jobs-table-filter-form" method="get" action="{% url 'companies:detail' company.pk %}">
+      <div class="jobs-overview-toolbar">
+        <h2 id="jobs-heading">Jobs</h2>
+        <a class="jobs-clear-filters" href="{% url 'companies:detail' company.pk %}">Clear filters</a>
+      </div>
+      <p class="section-note">Saved vacancies for this company.</p>
 
-    {% if jobs %}
-      <div class="table-scroll jobs-table-container">
-        <table class="data-table jobs-table">
-          <thead>
-            <tr>
-              <th scope="col">Position</th>
-              <th scope="col">Location</th>
-              <th scope="col">Country</th>
-              <th scope="col">Published</th>
-              <th scope="col">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for job in jobs %}
+      {% if filter_form.errors %}
+        <p class="filter-errors-summary" role="status">Some invalid filter values were ignored.</p>
+      {% endif %}
+
+      {% if jobs or has_any_jobs %}
+        <div class="table-scroll jobs-table-container">
+          <table class="data-table jobs-table">
+            <thead>
               <tr>
-                <th class="job-position-cell" scope="row">
-                  {% if job.source_job_url %}
-                    <a href="{{ job.source_job_url }}" target="_blank" rel="noopener noreferrer">{{ job.title|default:"—" }}</a>
-                  {% else %}
-                    {{ job.title|default:"—" }}
-                  {% endif %}
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Position</span>
+                    <details class="column-filter{% if filter_form.q.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter position">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.q.id_for_label }}">{{ filter_form.q.label }}</label>
+                        {{ filter_form.q }}
+                        {% if filter_form.q.errors %}<div class="field-errors">{{ filter_form.q.errors }}</div>{% endif %}
+                        <div class="column-filter-actions">
+                          <button class="button button-primary column-filter-apply" type="submit">Apply</button>
+                        </div>
+                      </div>
+                    </details>
+                  </div>
                 </th>
-                <td class="job-location-cell">{{ job.location|default:"—" }}</td>
-                <td class="job-country-cell">{{ job.country|default:"—" }}</td>
-                <td class="job-published-cell">
-                  {% if job.published_at %}
-                    {{ job.published_at|date:"Y-m-d" }}
-                  {% else %}
-                    —
-                  {% endif %}
-                </td>
-                <td class="job-status-cell">
-                  <span class="status-badge{% if job.status == 'active' %} status-active{% endif %}">{{ job.status|upper }}</span>
-                </td>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Location</span>
+                    <details class="column-filter{% if filter_form.location.value or filter_form.workplace_type.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter location">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.location.id_for_label }}">{{ filter_form.location.label }}</label>
+                        {{ filter_form.location }}
+                        <label for="{{ filter_form.workplace_type.id_for_label }}">{{ filter_form.workplace_type.label }}</label>
+                        {{ filter_form.workplace_type }}
+                        <div class="column-filter-actions">
+                          <button class="button button-primary column-filter-apply" type="submit">Apply</button>
+                        </div>
+                      </div>
+                    </details>
+                  </div>
+                </th>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Country</span>
+                    <details class="column-filter{% if filter_form.country.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter country">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.country.id_for_label }}">{{ filter_form.country.label }}</label>
+                        {{ filter_form.country }}
+                      </div>
+                    </details>
+                  </div>
+                </th>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Published</span>
+                    <details class="column-filter{% if filter_form.published_from.value or filter_form.published_to.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter published date">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.published_from.id_for_label }}">{{ filter_form.published_from.label }}</label>
+                        {{ filter_form.published_from }}
+                        {% if filter_form.published_from.errors %}<div class="field-errors">{{ filter_form.published_from.errors }}</div>{% endif %}
+                        <label for="{{ filter_form.published_to.id_for_label }}">{{ filter_form.published_to.label }}</label>
+                        {{ filter_form.published_to }}
+                        {% if filter_form.published_to.errors %}<div class="field-errors">{{ filter_form.published_to.errors }}</div>{% endif %}
+                      </div>
+                    </details>
+                  </div>
+                </th>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Status</span>
+                    <details class="column-filter{% if filter_form.status.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter status">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.status.id_for_label }}">{{ filter_form.status.label }}</label>
+                        {{ filter_form.status }}
+                      </div>
+                    </details>
+                  </div>
+                </th>
               </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="empty-jobs-state">
-        <p><strong>No jobs found yet</strong></p>
-        <p>Saved vacancies will appear here after a successful check.</p>
-      </div>
-    {% endif %}
+            </thead>
+            <tbody>
+              {% for job in jobs %}
+                <tr>
+                  <th class="job-position-cell" scope="row">
+                    <a href="{% url 'jobs:detail' job.pk %}">{{ job.title|default:"—" }}</a>
+                  </th>
+                  <td class="job-location-cell">{{ job.location|default:"—" }}</td>
+                  <td class="job-country-cell">{{ job.country|default:"—" }}</td>
+                  <td class="job-published-cell">
+                    {% if job.published_at %}
+                      {{ job.published_at|date:"Y-m-d" }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td class="job-status-cell">
+                    <span class="status-badge{% if job.status == 'active' %} status-active{% endif %}">{{ job.status|upper }}</span>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+
+      {% if not jobs %}
+        {% if has_any_jobs %}
+          <div class="empty-jobs-state">
+            <p><strong>No jobs match the selected filters.</strong></p>
+            <p>Try adjusting or clearing the current filters.</p>
+          </div>
+        {% else %}
+          <div class="empty-jobs-state">
+            <p><strong>No jobs found yet</strong></p>
+            <p>Saved vacancies will appear here after a successful check.</p>
+          </div>
+        {% endif %}
+      {% endif %}
+    </form>
   </section>
+  <script src="{% static 'js/job_filters.js' %}" defer></script>
 {% endblock %}

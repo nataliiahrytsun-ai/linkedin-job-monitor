@@ -1355,7 +1355,24 @@ h3 {
   }
 
   .jobs-table thead {
-    display: none;
+    width: 100%;
+    margin-bottom: 0.75rem;
+    display: block;
+  }
+
+  .jobs-table thead tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+  }
+
+  .jobs-table thead th {
+    min-width: 0;
+    padding: 0.4rem 0.55rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 0.45rem;
+    font-size: 0.72rem;
   }
 
   .jobs-table tbody {
