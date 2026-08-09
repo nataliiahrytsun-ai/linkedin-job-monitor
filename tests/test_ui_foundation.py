@@ -55,10 +55,10 @@ class HomePageTests(SimpleTestCase):  # type: ignore[misc]
         html = self.client.get("/").content.decode()
 
         assert 'href="/companies/"' in html
-        assert 'href="/jobs/' not in html
+        assert 'href="/jobs/"' in html
         assert 'href="/scrape-runs/' not in html
-        assert html.count("Coming next") == 3
-        assert html.count('aria-disabled="true"') == 2
+        assert html.count("Coming next") == 2
+        assert html.count('aria-disabled="true"') == 1
 
     def test_unknown_url_still_returns_not_found(self) -> None:
         response = self.client.get("/not-a-real-page/")

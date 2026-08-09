@@ -20,7 +20,9 @@
           <li>
             <a href="{% url 'companies:list' %}"{% if request.resolver_match.namespace == 'companies' %} aria-current="page"{% endif %}>Companies</a>
           </li>
-          <li><span class="nav-placeholder" aria-disabled="true">Jobs</span></li>
+          <li>
+            <a href="{% url 'jobs:list' %}"{% if request.resolver_match.namespace == 'jobs' %} aria-current="page"{% endif %}>Jobs</a>
+          </li>
           <li><span class="nav-placeholder" aria-disabled="true">Scrape runs</span></li>
         </ul>
       </nav>

@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Jobs · Job Monitor{% endblock %}
+
+{% block content %}
+  <div class="page-heading jobs-page-heading">
+    <div>
+      <p class="eyebrow">Vacancies</p>
+      <h1>Jobs</h1>
+      <p class="lead">Browse saved vacancies across all monitored companies.</p>
+    </div>
+  </div>
+
+  <section class="jobs-overview" aria-labelledby="jobs-results-heading">
+    <form class="jobs-table-filter-form" method="get" action="{% url 'jobs:list' %}">
+      <div class="jobs-overview-toolbar">
+        <h2 id="jobs-results-heading">Saved jobs</h2>
+        <a class="jobs-clear-filters" href="{% url 'jobs:list' %}">Clear filters</a>
+      </div>
+
+      {% if filter_form.errors %}
+        <p class="filter-errors-summary" role="status">Some invalid filter values were ignored.</p>
+      {% endif %}
+
+      {% if jobs or has_any_jobs %}
+        <div class="table-scroll global-jobs-table-container">
+          <table class="data-table global-jobs-table">
+            <thead>
+              <tr>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Position</span>
+                    <details class="column-filter{% if filter_form.q.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter position">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.q.id_for_label }}">{{ filter_form.q.label }}</label>
+                        {{ filter_form.q }}
+                        {% if filter_form.q.errors %}<div class="field-errors">{{ filter_form.q.errors }}</div>{% endif %}
+                        <div class="column-filter-actions">
+                          <button class="button button-primary column-filter-apply" type="submit">Apply</button>
+                        </div>
+                      </div>
+                    </details>
+                  </div>
+                </th>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Company</span>
+                    <details class="column-filter{% if filter_form.company.value or filter_form.company_type.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter company">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.company.id_for_label }}">{{ filter_form.company.label }}</label>
+                        {{ filter_form.company }}
+                        <label for="{{ filter_form.company_type.id_for_label }}">{{ filter_form.company_type.label }}</label>
+                        {{ filter_form.company_type }}
+                      </div>
+                    </details>
+                  </div>
+                </th>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Location</span>
+                    <details class="column-filter{% if filter_form.location.value or filter_form.workplace_type.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter location">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.location.id_for_label }}">{{ filter_form.location.label }}</label>
+                        {{ filter_form.location }}
+                        <label for="{{ filter_form.workplace_type.id_for_label }}">{{ filter_form.workplace_type.label }}</label>
+                        {{ filter_form.workplace_type }}
+                        <div class="column-filter-actions">
+                          <button class="button button-primary column-filter-apply" type="submit">Apply</button>
+                        </div>
+                      </div>
+                    </details>
+                  </div>
+                </th>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Country</span>
+                    <details class="column-filter{% if filter_form.country.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter country">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.country.id_for_label }}">{{ filter_form.country.label }}</label>
+                        {{ filter_form.country }}
+                      </div>
+                    </details>
+                  </div>
+                </th>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Published</span>
+                    <details class="column-filter{% if filter_form.published_from.value or filter_form.published_to.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter published date">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.published_from.id_for_label }}">{{ filter_form.published_from.label }}</label>
+                        {{ filter_form.published_from }}
+                        {% if filter_form.published_from.errors %}<div class="field-errors">{{ filter_form.published_from.errors }}</div>{% endif %}
+                        <label for="{{ filter_form.published_to.id_for_label }}">{{ filter_form.published_to.label }}</label>
+                        {{ filter_form.published_to }}
+                        {% if filter_form.published_to.errors %}<div class="field-errors">{{ filter_form.published_to.errors }}</div>{% endif %}
+                      </div>
+                    </details>
+                  </div>
+                </th>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>First seen</span>
+                    <details class="column-filter{% if filter_form.first_seen_from.value or filter_form.first_seen_to.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter first seen date">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.first_seen_from.id_for_label }}">{{ filter_form.first_seen_from.label }}</label>
+                        {{ filter_form.first_seen_from }}
+                        {% if filter_form.first_seen_from.errors %}<div class="field-errors">{{ filter_form.first_seen_from.errors }}</div>{% endif %}
+                        <label for="{{ filter_form.first_seen_to.id_for_label }}">{{ filter_form.first_seen_to.label }}</label>
+                        {{ filter_form.first_seen_to }}
+                        {% if filter_form.first_seen_to.errors %}<div class="field-errors">{{ filter_form.first_seen_to.errors }}</div>{% endif %}
+                      </div>
+                    </details>
+                  </div>
+                </th>
+                <th scope="col">
+                  <div class="column-header">
+                    <span>Status</span>
+                    <details class="column-filter{% if filter_form.status.value %} column-filter-active{% endif %}">
+                      <summary aria-label="Filter status">▾</summary>
+                      <div class="column-filter-popover">
+                        <label for="{{ filter_form.status.id_for_label }}">{{ filter_form.status.label }}</label>
+                        {{ filter_form.status }}
+                      </div>
+                    </details>
+                  </div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for job in jobs %}
+                <tr>
+                  <th class="global-job-position" scope="row">
+                    {% if job.source_job_url %}
+                      <a class="global-job-title" href="{{ job.source_job_url }}" target="_blank" rel="noopener noreferrer" title="{{ job.title|default:'—' }}">{{ job.title|default:"—" }}</a>
+                    {% else %}
+                      <span class="global-job-title" title="{{ job.title|default:'—' }}">{{ job.title|default:"—" }}</span>
+                    {% endif %}
+                  </th>
+                  <td class="global-job-company">{{ job.company.name }}</td>
+                  <td class="global-job-location">{{ job.location|default:"—" }}</td>
+                  <td class="global-job-country">{{ job.country|default:"—" }}</td>
+                  <td class="global-job-published">
+                    {% if job.published_at %}{{ job.published_at|date:"Y-m-d" }}{% else %}—{% endif %}
+                  </td>
+                  <td class="global-job-first-seen">{{ job.first_seen_at|date:"Y-m-d" }}</td>
+                  <td class="global-job-status">
+                    <span class="status-badge{% if job.status == 'active' %} status-active{% endif %}">{{ job.status|upper }}</span>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </form>
+
+    {% if not jobs %}
+      {% if has_any_jobs %}
+        <div class="empty-state jobs-empty-state">
+          <h3>No jobs match the selected filters.</h3>
+          <p>Try adjusting or clearing the current filters.</p>
+        </div>
+      {% else %}
+        <div class="empty-state jobs-empty-state">
+          <h3>No jobs available yet.</h3>
+          <p>Saved vacancies will appear here after a successful company update.</p>
+        </div>
+      {% endif %}
+    {% endif %}
+  </section>
+  <script src="{% static 'js/job_filters.js' %}" defer></script>
+{% endblock %}

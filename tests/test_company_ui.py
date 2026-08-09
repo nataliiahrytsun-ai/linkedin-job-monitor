@@ -95,7 +95,7 @@ def test_company_list_empty_state_navigation_and_template_contract() -> None:
     assert html.count(f'href="{reverse("companies:create")}"') == 1
     assert "Add first company" not in html
     assert f'href="{reverse("companies:list")}"' in html
-    assert 'href="/jobs/' not in html
+    assert 'href="/jobs/"' in html
     assert 'href="/scrape-runs/' not in html
     assert '<meta name="viewport"' in html
     assert '<link rel="stylesheet" href="/static/css/app.css">' in html

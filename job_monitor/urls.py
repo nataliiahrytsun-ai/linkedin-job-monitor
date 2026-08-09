@@ -8,5 +8,6 @@ from job_monitor.views import home
 urlpatterns = [
     path("", home, name="home"),
     path("companies/", include("companies.urls")),
+    path("jobs/", include("jobs.urls")),
     path("admin/", admin.site.urls),
 ]
