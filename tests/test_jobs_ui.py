@@ -41,8 +41,8 @@ def client() -> Any:
     return importlib.import_module("django.test").Client()
 
 
-def reverse(name: str) -> str:
-    return str(importlib.import_module("django.urls").reverse(name))
+def reverse(name: str, *, kwargs: dict[str, object] | None = None) -> str:
+    return str(importlib.import_module("django.urls").reverse(name, kwargs=kwargs))
 
 
 def company(
@@ -394,7 +394,7 @@ def test_empty_database_and_no_match_are_distinct() -> None:
     assert "No jobs available yet." not in no_match_html
 
 
-def test_missing_optional_values_and_source_link_behavior() -> None:
+def test_list_position_always_links_to_internal_detail() -> None:
     employer = company(name="Optional Values", sequence=1)
     linked = job(
         employer,
@@ -416,13 +416,183 @@ def test_missing_optional_values_and_source_link_behavior() -> None:
 
     assert "Original" not in html
     assert ">Open</a>" not in html
-    assert html.count(f'href="{linked.source_job_url}"') == 1
+    assert linked.source_job_url not in html
+    assert f'href="{reverse("jobs:detail", kwargs={"pk": linked.pk})}"' in html
+    assert f'href="{reverse("jobs:detail", kwargs={"pk": missing.pk})}"' in html
     assert f'title="{linked.title}"' in html
     assert f'>{linked.title}</a>' in html
-    assert ">—</a>" not in html
+    assert ">—</a>" in html
     assert missing.source_job_id not in html
     assert "None" not in html
     assert "—" in html
+
+
+def test_job_detail_displays_stored_fields_and_related_links() -> None:
+    employer = company(name="Detail Customer", company_type="client", sequence=1)
+    posting = job(
+        employer,
+        sequence=4,
+        title="Senior Platform Engineer",
+        source="fixture",
+        source_job_id="external-456",
+        source_job_url="https://jobs.example.test/jobs/external-456",
+        location="Vienna, Austria",
+        country="Austria",
+        city="Vienna",
+        workplace_type="hybrid",
+        employment_type="full-time",
+        seniority_level="manager",
+        job_function="sales",
+        industry="software",
+        description="Build reliable systems.\nWork with the platform team.",
+        first_seen_at=datetime(2026, 8, 4, 10, tzinfo=UTC),
+        last_seen_at=datetime(2026, 8, 5, 11, tzinfo=UTC),
+    )
+
+    response = client().get(reverse("jobs:detail", kwargs={"pk": posting.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert response.context["job"].pk == posting.pk
+    assert "Senior Platform Engineer" in html
+    assert f'href="{reverse("companies:detail", kwargs={"pk": employer.pk})}"' in html
+    assert "Detail Customer" in html
+    assert 'class="job-detail-company-type"' in html
+    assert "Customer" in html
+    assert 'id="job-overview-heading">Job overview</h2>' in html
+    assert 'class="job-overview-grid"' in html
+    overview_start = html.index('<dl class="job-overview-grid">')
+    overview = html[overview_start : html.index("</dl>", overview_start)]
+    assert overview.count("<dt>") == 6
+    for label in (
+        "Location",
+        "Workplace",
+        "Employment type",
+        "Seniority",
+        "Job function",
+        "Industry",
+    ):
+        assert f"<dt>{label}</dt>" in overview
+    dates_start = html.index('<dl class="job-overview-dates">')
+    dates = html[dates_start : html.index("</dl>", dates_start)]
+    assert dates.count('class="job-overview-date"') == 3
+    for label in ("Published", "First seen", "Last seen"):
+        assert f"<dt>{label}</dt>" in dates
+    for hidden_label in (
+        "City",
+        "Country",
+        "Source",
+        "External job ID",
+        "Saved",
+        "Updated",
+    ):
+        assert f"<dt>{hidden_label}</dt>" not in html
+    assert "Vienna, Austria" in overview
+    assert "Hybrid" in html
+    assert "Full-time" in html
+    assert "Manager" in html
+    assert "Sales" in html
+    assert "Software" in html
+    assert "4 Aug 2026" in dates
+    assert "5 Aug 2026" in dates
+    assert ":00" not in dates
+    assert "Build reliable systems." in html
+    assert "Work with the platform team." in html
+    assert f'href="{posting.source_job_url}"' in html
+    assert ">View original job</a>" in html
+    assert '<span class="status-badge status-active">ACTIVE</span>' in html
+    assert f'href="{reverse("jobs:list")}">← Back to jobs</a>' in html
+
+
+def test_job_detail_handles_null_values_and_empty_description() -> None:
+    employer = company(name="Optional Detail", sequence=1)
+    posting = job(
+        employer,
+        sequence=1,
+        title=None,
+        source_job_url=None,
+        location=None,
+        country=None,
+        city=None,
+        workplace_type=None,
+        employment_type=None,
+        seniority_level=None,
+        job_function=None,
+        industry=None,
+        published_at=None,
+        description="",
+    )
+
+    response = client().get(reverse("jobs:detail", kwargs={"pk": posting.pk}))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "—" in html
+    assert "No description available." in html
+    assert "Original job link unavailable" not in html
+    assert "View original job" not in html
+    assert "None" not in html
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_class"),
+    [
+        ("active", "status-active"),
+        ("not_found", "status-inactive"),
+        ("closed", "status-inactive"),
+    ],
+)
+def test_job_detail_uses_positive_and_neutral_status_badges(
+    status: str, expected_class: str
+) -> None:
+    employer = company(name="Status Detail", sequence=1)
+    posting = job(employer, sequence=1, status=status)
+
+    html = client().get(
+        reverse("jobs:detail", kwargs={"pk": posting.pk})
+    ).content.decode()
+
+    assert f'<span class="status-badge {expected_class}">{status.upper()}</span>' in html
+    assert "status-error" not in html
+
+
+def test_job_detail_escapes_plain_text_description() -> None:
+    employer = company(name="Safe Description", sequence=1)
+    posting = job(
+        employer,
+        sequence=1,
+        description='<script>alert("unsafe")</script>\nSecond line',
+    )
+
+    html = client().get(
+        reverse("jobs:detail", kwargs={"pk": posting.pk})
+    ).content.decode()
+
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "Second line" in html
+    assert 'class="job-description"' in html
+
+
+def test_job_detail_returns_404_for_unknown_pk() -> None:
+    response = client().get(reverse("jobs:detail", kwargs={"pk": 999_999}))
+
+    assert response.status_code == 404
+
+
+def test_job_detail_fetches_job_and_company_in_one_query() -> None:
+    employer = company(name="Query Detail", sequence=1)
+    posting = job(employer, sequence=1)
+    connection = importlib.import_module("django.db").connection
+    capture_queries = importlib.import_module(
+        "django.test.utils"
+    ).CaptureQueriesContext
+
+    with capture_queries(connection) as queries:
+        response = client().get(reverse("jobs:detail", kwargs={"pk": posting.pk}))
+
+    assert response.status_code == 200
+    assert len(queries) == 1
 
 
 def test_desktop_jobs_table_gives_position_space_from_status_column() -> None:

@@ -6,7 +6,7 @@ from typing import Any
 
 from django.db.models import QuerySet  # type: ignore[import-untyped]
 from django.http import HttpRequest, HttpResponse  # type: ignore[import-untyped]
-from django.shortcuts import render  # type: ignore[import-untyped]
+from django.shortcuts import get_object_or_404, render  # type: ignore[import-untyped]
 
 from companies.models import Company
 from jobs.forms import JobFilterForm
@@ -80,3 +80,12 @@ def job_list(request: HttpRequest) -> HttpResponse:
             "jobs": jobs,
         },
     )
+
+
+def job_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    """Show all user-relevant stored information for one vacancy."""
+    job = get_object_or_404(
+        JobPosting.objects.select_related("company"),
+        pk=pk,
+    )
+    return render(request, "jobs/job_detail.html", {"job": job})

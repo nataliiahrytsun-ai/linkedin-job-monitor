@@ -514,6 +514,114 @@ h3 {
   margin-top: 2rem;
 }
 
+.job-detail-header {
+  align-items: flex-start;
+}
+
+.job-detail-header h1 {
+  overflow-wrap: anywhere;
+}
+
+.job-detail-company {
+  max-width: 100%;
+  font-weight: 700;
+  overflow-wrap: break-word;
+}
+
+.job-detail-classification {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  white-space: nowrap;
+}
+
+.job-detail-company-type {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.job-detail-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.job-description-empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+.job-overview-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 2rem;
+}
+
+.job-overview-item {
+  min-width: 0;
+  padding-block: 0.7rem;
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.75fr) minmax(0, 1.25fr);
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.job-overview-item dt,
+.job-overview-date dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.job-overview-item dd,
+.job-overview-date dd {
+  min-width: 0;
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.job-overview-dates {
+  margin: 1rem 0 0;
+  padding-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: baseline;
+  gap: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.job-overview-date {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  justify-self: start;
+  text-align: left;
+}
+
+.job-overview-date:nth-child(2) {
+  justify-self: center;
+}
+
+.job-overview-date:last-child {
+  justify-self: end;
+}
+
+.job-overview-date dt {
+  margin: 0;
+}
+
+.job-description-panel {
+  margin-top: 2rem;
+}
+
+.job-description {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .section-note {
   margin-top: -0.75rem;
   color: var(--muted);
@@ -1065,6 +1173,27 @@ h3 {
 }
 
 @media (max-width: 40rem) {
+  .job-detail-action {
+    justify-content: flex-start;
+  }
+
+  .job-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .job-overview-dates {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .job-overview-date,
+  .job-overview-date:nth-child(2),
+  .job-overview-date:last-child {
+    display: grid;
+    grid-template-columns: minmax(6rem, 0.75fr) minmax(0, 1.25fr);
+    justify-self: stretch;
+  }
+
   .header-layout {
     padding-block: 0.9rem;
     align-items: flex-start;

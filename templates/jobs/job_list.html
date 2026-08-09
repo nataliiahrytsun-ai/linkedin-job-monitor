@@ -137,11 +137,7 @@
               {% for job in jobs %}
                 <tr>
                   <th class="global-job-position" scope="row">
-                    {% if job.source_job_url %}
-                      <a class="global-job-title" href="{{ job.source_job_url }}" target="_blank" rel="noopener noreferrer" title="{{ job.title|default:'—' }}">{{ job.title|default:"—" }}</a>
-                    {% else %}
-                      <span class="global-job-title" title="{{ job.title|default:'—' }}">{{ job.title|default:"—" }}</span>
-                    {% endif %}
+                    <a class="global-job-title" href="{% url 'jobs:detail' job.pk %}" title="{{ job.title|default:'—' }}">{{ job.title|default:"—" }}</a>
                   </th>
                   <td class="global-job-company">{{ job.company.name }}</td>
                   <td class="global-job-location">{{ job.location|default:"—" }}</td>

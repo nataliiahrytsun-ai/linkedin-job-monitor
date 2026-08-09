@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}{{ job.title|default:"Job" }} · Job Monitor{% endblock %}
+
+{% block content %}
+  <p class="back-link"><a href="{% url 'jobs:list' %}">← Back to jobs</a></p>
+
+  <div class="page-heading detail-header job-detail-header">
+    <div>
+      <p class="eyebrow">Vacancy</p>
+      <h1>{{ job.title|default:"—" }}</h1>
+      <p class="company-meta">
+        <a class="job-detail-company" href="{% url 'companies:detail' job.company.pk %}">{{ job.company.name }}</a>
+        <span class="job-detail-classification">
+          <span class="job-detail-company-type">
+            {% if job.company.company_type == "client" %}Customer{% elif job.company.company_type == "supplier" %}Supplier{% else %}Other{% endif %}
+          </span>
+          <span class="status-badge{% if job.status == 'active' %} status-active{% else %} status-inactive{% endif %}">{{ job.status|upper }}</span>
+        </span>
+      </p>
+    </div>
+    {% if job.source_job_url %}
+      <div class="job-detail-action">
+        <a class="button button-secondary" href="{{ job.source_job_url }}" target="_blank" rel="noopener noreferrer">View original job</a>
+      </div>
+    {% endif %}
+  </div>
+
+  <section class="card detail-panel" aria-labelledby="job-overview-heading">
+    <h2 id="job-overview-heading">Job overview</h2>
+    <dl class="job-overview-grid">
+      <div class="job-overview-item">
+        <dt>Location</dt>
+        <dd>{{ job.location|default:"—" }}</dd>
+      </div>
+      <div class="job-overview-item">
+        <dt>Workplace</dt>
+        <dd>{% if job.workplace_type %}{{ job.get_workplace_type_display }}{% else %}—{% endif %}</dd>
+      </div>
+      <div class="job-overview-item">
+        <dt>Employment type</dt>
+        <dd>{% if job.employment_type %}{{ job.employment_type|capfirst }}{% else %}—{% endif %}</dd>
+      </div>
+      <div class="job-overview-item">
+        <dt>Seniority</dt>
+        <dd>{% if job.seniority_level %}{{ job.seniority_level|capfirst }}{% else %}—{% endif %}</dd>
+      </div>
+      <div class="job-overview-item">
+        <dt>Job function</dt>
+        <dd>{% if job.job_function %}{{ job.job_function|capfirst }}{% else %}—{% endif %}</dd>
+      </div>
+      <div class="job-overview-item">
+        <dt>Industry</dt>
+        <dd>{% if job.industry %}{{ job.industry|capfirst }}{% else %}—{% endif %}</dd>
+      </div>
+    </dl>
+    <dl class="job-overview-dates">
+      <div class="job-overview-date">
+        <dt>Published</dt>
+        <dd>{% if job.published_at %}{{ job.published_at|date:"j M Y" }}{% else %}—{% endif %}</dd>
+      </div>
+      <div class="job-overview-date">
+        <dt>First seen</dt>
+        <dd>{{ job.first_seen_at|date:"j M Y" }}</dd>
+      </div>
+      <div class="job-overview-date">
+        <dt>Last seen</dt>
+        <dd>{{ job.last_seen_at|date:"j M Y" }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  <section class="card job-description-panel" aria-labelledby="job-description-heading">
+    <h2 id="job-description-heading">Description</h2>
+    {% if job.description %}
+      <div class="job-description">{{ job.description }}</div>
+    {% else %}
+      <p class="job-description-empty">No description available.</p>
+    {% endif %}
+  </section>
+{% endblock %}
