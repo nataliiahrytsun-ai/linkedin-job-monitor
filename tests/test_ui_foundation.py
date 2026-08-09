@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+import importlib
 import os
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import django  # type: ignore[import-untyped]
 import pytest
-from django.test import SimpleTestCase, override_settings  # type: ignore[import-untyped]
+from django.test import TestCase, override_settings  # type: ignore[import-untyped]
 from django.test.utils import (  # type: ignore[import-untyped]
     setup_test_environment,
     teardown_test_environment,
 )
+from django.urls import reverse  # type: ignore[import-untyped]
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "job_monitor.settings")
 
@@ -21,59 +26,359 @@ def django_template_test_environment(tmp_path_factory: pytest.TempPathFactory) -
     database_path = Path(tmp_path_factory.mktemp("ui-database")) / "ui.sqlite3"
     os.environ["JOB_MONITOR_SQLITE_PATH"] = str(database_path)
     django.setup()
+    management = importlib.import_module("django.core.management")
+    management.call_command("migrate", interactive=False, verbosity=0)
+    management.call_command("flush", interactive=False, verbosity=0)
     setup_test_environment()
     yield
     teardown_test_environment()
 
 
+def model(name: str) -> Any:
+    return importlib.import_module("django.apps").apps.get_model(name)
+
+
+def company(*, name: str, is_active: bool = True) -> Any:
+    slug = name.casefold().replace(" ", "-")
+    return model("companies.Company").objects.create(
+        name=name,
+        source="fixture",
+        source_jobs_url=f"https://jobs.example.test/{slug}/openings",
+        is_active=is_active,
+    )
+
+
+def job(company_record: Any, *, sequence: int, status: str) -> Any:
+    return model("jobs.JobPosting").objects.create(
+        company=company_record,
+        source="fixture",
+        source_job_id=f"dashboard-job-{sequence}",
+        title=f"Dashboard job {sequence}",
+        content_hash=f"{sequence:064x}",
+        dedupe_key=f"{sequence + 100:064x}",
+        status=status,
+    )
+
+
+def scrape_run(
+    company_record: Any,
+    *,
+    status: str,
+    started_at: datetime,
+    jobs_created: int = 0,
+    finished_at: datetime | None = None,
+) -> Any:
+    terminal = status != "running"
+    resolved_finished_at = finished_at or (
+        started_at + timedelta(minutes=1) if terminal else None
+    )
+    return model("scrape_runs.ScrapeRun").objects.create(
+        company=company_record,
+        status=status,
+        started_at=started_at,
+        finished_at=resolved_finished_at,
+        duration_seconds=Decimal("60.000") if terminal else None,
+        jobs_found=jobs_created,
+        jobs_created=jobs_created,
+        error_message="" if status == "success" or status == "running" else "Run issue",
+    )
+
+
 @override_settings(ALLOWED_HOSTS=["testserver"])
-class HomePageTests(SimpleTestCase):  # type: ignore[misc]
-    def test_home_renders_expected_templates_and_foundation_content(self) -> None:
+class HomePageTests(TestCase):  # type: ignore[misc]
+    def test_dashboard_renders_expected_template_metrics_and_foundation(self) -> None:
         response = self.client.get("/")
         html = response.content.decode()
 
         assert response.status_code == 200
         self.assertTemplateUsed(response, "home.html")
         self.assertTemplateUsed(response, "base.html")
-        assert "Job Monitor" in html
         assert html.count("<h1") == 1
-        assert all(
-            section in html for section in ("Companies", "Jobs", "Scrape runs", "Dashboard")
-        )
+        assert ">Dashboard</h1>" in html
+        for label in (
+            "Monitored companies",
+            "Active jobs",
+            "New jobs",
+            "Latest successful run",
+            "Running",
+            "Failed runs",
+        ):
+            assert label in html
+        assert "Coming next" not in html
 
-    def test_home_has_responsive_semantic_navigation_and_local_css(self) -> None:
-        response = self.client.get("/")
-        html = response.content.decode()
+    def test_home_preserves_navigation_responsive_foundation_and_real_links(self) -> None:
+        html = self.client.get("/").content.decode()
 
         assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in html
         assert '<nav aria-label="Primary">' in html
         assert '<main id="main-content"' in html
         assert '<link rel="stylesheet" href="/static/css/app.css">' in html
         assert 'class="skip-link" href="#main-content"' in html
-
-    def test_only_available_sections_link_to_real_routes(self) -> None:
-        html = self.client.get("/").content.decode()
-
-        assert 'href="/companies/"' in html
-        assert 'href="/jobs/"' in html
+        assert 'href="/" aria-current="page">Dashboard</a>' in html
+        assert 'href="/companies/">Companies</a>' in html
+        assert 'href="/jobs/">Jobs</a>' in html
+        assert (
+            'class="card dashboard-primary-metric dashboard-metric-link" '
+            'href="/companies/"' in html
+        )
+        assert (
+            'class="card dashboard-primary-metric dashboard-metric-link" '
+            'href="/jobs/"' in html
+        )
+        assert "Companies →" not in html
+        assert "Jobs →" not in html
+        assert html.count("dashboard-metric-link") == 2
+        assert html.count("dashboard-metric-arrow") == 2
+        assert html.count(">\u203a</span>") == 2
+        assert ">→</span>" not in html
+        assert html.count('class="card dashboard-run-metric') == 3
+        assert 'class="card dashboard-run-card"' not in html
+        assert (
+            '<article class="card dashboard-primary-metric">\n'
+            '        <h2 class="dashboard-metric-label">New jobs</h2>' in html
+        )
+        assert f'action="{reverse("update_all")}" method="post"' in html
+        assert 'type="submit">Update all</button>' in html
         assert 'href="/scrape-runs/' not in html
-        assert html.count("Coming next") == 2
-        assert html.count('aria-disabled="true"') == 1
+        assert '<span class="nav-placeholder" aria-disabled="true">Scrape runs</span>' in html
+
+    def test_dashboard_messages_use_dashboard_content_width(self) -> None:
+        company(name="Message Company")
+        with patch("job_monitor.views.background_executor.submit_pipeline"):
+            response = self.client.post(reverse("update_all"))
+
+        html = self.client.get(response.url).content.decode()
+
+        assert 'class="messages dashboard-shell"' in html
+        assert "Monitoring started for 1 company." in html
 
     def test_unknown_url_still_returns_not_found(self) -> None:
         response = self.client.get("/not-a-real-page/")
 
         assert response.status_code == 404
 
-    def test_home_does_not_query_database_or_start_pipeline(self) -> None:
+    def test_empty_dashboard_uses_six_queries_zero_counts_and_never(self) -> None:
         with (
+            self.assertNumQueries(6),
             patch("scraping.pipeline.run_fixture_pipeline") as pipeline,
             patch(
                 "scraping.background.ControlledBackgroundExecutor.submit_fixture_pipeline"
             ) as background_submit,
         ):
             response = self.client.get("/")
+        html = response.content.decode()
 
         assert response.status_code == 200
+        assert response.context["monitored_companies"] == 0
+        assert response.context["active_jobs"] == 0
+        assert response.context["new_jobs"] == 0
+        assert response.context["latest_successful_run"] is None
+        assert response.context["running_runs"] == 0
+        assert response.context["failed_runs"] == 0
+        assert "Never" in html
         pipeline.assert_not_called()
         background_submit.assert_not_called()
+
+    def test_dashboard_counts_only_matching_company_job_and_run_statuses(self) -> None:
+        active_company = company(name="Active Company")
+        company(name="Inactive Company", is_active=False)
+        running_company = company(name="Running Company")
+        job(active_company, sequence=1, status="active")
+        job(active_company, sequence=2, status="not_found")
+        job(active_company, sequence=3, status="closed")
+        started_at = datetime(2026, 8, 9, 10, tzinfo=UTC)
+        scrape_run(active_company, status="running", started_at=started_at)
+        scrape_run(running_company, status="running", started_at=started_at)
+        scrape_run(active_company, status="failed", started_at=started_at - timedelta(days=1))
+        scrape_run(active_company, status="failed", started_at=started_at - timedelta(days=2))
+        scrape_run(active_company, status="partial", started_at=started_at - timedelta(days=3))
+
+        response = self.client.get("/")
+
+        assert response.context["monitored_companies"] == 2
+        assert response.context["active_jobs"] == 1
+        assert response.context["running_runs"] == 2
+        assert response.context["failed_runs"] == 2
+
+    def test_new_jobs_uses_latest_completed_partial_then_failed_not_running(self) -> None:
+        employer = company(name="Latest Completed")
+        base_time = datetime(2026, 8, 9, 8, tzinfo=UTC)
+        scrape_run(
+            employer,
+            status="success",
+            started_at=base_time,
+            jobs_created=2,
+        )
+        scrape_run(
+            employer,
+            status="partial",
+            started_at=base_time + timedelta(hours=1),
+            jobs_created=4,
+        )
+        scrape_run(
+            employer,
+            status="running",
+            started_at=base_time + timedelta(hours=3),
+        )
+
+        partial_latest = self.client.get("/")
+
+        assert partial_latest.context["new_jobs"] == 4
+
+        scrape_run(
+            employer,
+            status="failed",
+            started_at=base_time + timedelta(hours=2),
+            jobs_created=1,
+        )
+
+        failed_latest = self.client.get("/")
+
+        assert failed_latest.context["new_jobs"] == 1
+
+    def test_latest_success_ignores_newer_partial_failed_and_running_runs(self) -> None:
+        successful_company = company(name="Successful Company")
+        running_company = company(name="Newer Running Company")
+        base_time = datetime(2026, 8, 9, 20, 14, tzinfo=UTC)
+        success = scrape_run(
+            successful_company,
+            status="success",
+            started_at=base_time,
+            finished_at=base_time + timedelta(minutes=1),
+        )
+        scrape_run(
+            successful_company,
+            status="partial",
+            started_at=base_time + timedelta(hours=1),
+        )
+        scrape_run(
+            successful_company,
+            status="failed",
+            started_at=base_time + timedelta(hours=2),
+        )
+        scrape_run(
+            running_company,
+            status="running",
+            started_at=base_time + timedelta(hours=3),
+        )
+
+        response = self.client.get("/")
+        html = response.content.decode()
+
+        assert response.context["latest_successful_run"] == success.finished_at
+        assert ">9 Aug 2026, 20:15</time>" in html
+        assert ">9 Aug 2026, 20:15:00</time>" not in html
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
+    def test_update_all_requires_post_and_get_submits_nothing(self) -> None:
+        company(name="GET Company")
+
+        with patch("job_monitor.views.background_executor.submit_pipeline") as submit:
+            response = self.client.get(reverse("update_all"))
+
+        assert response.status_code == 405
+        submit.assert_not_called()
+
+    def test_update_all_submits_each_active_company_and_skips_inactive(self) -> None:
+        first = company(name="First Active")
+        inactive = company(name="Inactive", is_active=False)
+        second = company(name="Second Active")
+
+        with patch("job_monitor.views.background_executor.submit_pipeline") as submit:
+            response = self.client.post(reverse("update_all"))
+
+        assert response.status_code == 302
+        assert response.url == reverse("home")
+        assert [call.kwargs["company"].pk for call in submit.call_args_list] == [
+            first.pk,
+            second.pk,
+        ]
+        assert inactive.pk not in {
+            call.kwargs["company"].pk for call in submit.call_args_list
+        }
+        assert b"Monitoring started for 2 companies." in self.client.get(
+            response.url
+        ).content
+
+    def test_running_company_is_skipped_without_blocking_other_companies(self) -> None:
+        running_company = company(name="Already Running")
+        eligible_company = company(name="Eligible")
+        scrape_run(
+            running_company,
+            status="running",
+            started_at=datetime(2026, 8, 9, 10, tzinfo=UTC),
+        )
+
+        with patch("job_monitor.views.background_executor.submit_pipeline") as submit:
+            response = self.client.post(reverse("update_all"))
+
+        submit.assert_called_once_with(company=eligible_company)
+        html = self.client.get(response.url).content
+        assert b"Monitoring started for 1 company. 1 already running." in html
+        assert model("scrape_runs.ScrapeRun").objects.filter(
+            company=running_company,
+            status="running",
+        ).count() == 1
+
+    def test_executor_duplicate_is_skipped_and_next_company_is_submitted(self) -> None:
+        duplicate_company = company(name="Executor Duplicate")
+        eligible_company = company(name="Executor Eligible")
+        duplicate_error = importlib.import_module(
+            "scraping.background"
+        ).BackgroundRunAlreadyScheduledError
+
+        def submit_company(*, company: Any) -> None:
+            if company.pk == duplicate_company.pk:
+                raise duplicate_error("already scheduled")
+
+        with patch(
+            "job_monitor.views.background_executor.submit_pipeline",
+            side_effect=submit_company,
+        ) as submit:
+            response = self.client.post(reverse("update_all"))
+
+        assert [call.kwargs["company"].pk for call in submit.call_args_list] == [
+            duplicate_company.pk,
+            eligible_company.pk,
+        ]
+        assert b"Monitoring started for 1 company. 1 already running." in self.client.get(
+            response.url
+        ).content
+
+    def test_controlled_source_error_does_not_block_next_company(self) -> None:
+        unsupported_company = company(name="Unsupported")
+        eligible_company = company(name="Supported")
+        source_error = importlib.import_module("scraping.background").BackgroundSourceError
+
+        def submit_company(*, company: Any) -> None:
+            if company.pk == unsupported_company.pk:
+                raise source_error("unknown source")
+
+        with patch(
+            "job_monitor.views.background_executor.submit_pipeline",
+            side_effect=submit_company,
+        ) as submit:
+            response = self.client.post(reverse("update_all"))
+
+        assert response.status_code == 302
+        assert response.url == reverse("home")
+        assert [call.kwargs["company"].pk for call in submit.call_args_list] == [
+            unsupported_company.pk,
+            eligible_company.pk,
+        ]
+        assert b"Monitoring started for 1 company. 1 could not be started." in (
+            self.client.get(response.url).content
+        )
+
+    def test_update_all_handles_no_active_companies(self) -> None:
+        company(name="Inactive Only", is_active=False)
+
+        with patch("job_monitor.views.background_executor.submit_pipeline") as submit:
+            response = self.client.post(reverse("update_all"))
+
+        assert response.status_code == 302
+        assert response.url == reverse("home")
+        submit.assert_not_called()
+        assert b"No active companies to update." in self.client.get(response.url).content

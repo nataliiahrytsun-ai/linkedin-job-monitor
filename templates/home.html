@@ -1,52 +1,62 @@
 {% extends "base.html" %}
 
-{% block title %}Home · Job Monitor{% endblock %}
+{% block title %}Dashboard · Job Monitor{% endblock %}
 
 {% block content %}
-  <section class="intro" aria-labelledby="page-title">
-    <p class="eyebrow">Internal workspace</p>
-    <h1 id="page-title">Job Monitor</h1>
-    <p class="lead">
-      Keep company vacancies organized, follow job changes, and review the
-      outcome of each monitoring run in one place.
-    </p>
-    <p class="project-state">
-      The backend foundation is ready. User-facing tools will be added in the
-      next steps.
-    </p>
-  </section>
-
-  <section aria-labelledby="workspace-title">
-    <h2 id="workspace-title">Workspace</h2>
-    <div class="card-grid">
-      <article class="card">
-        <div class="card-heading">
-          <h3>Companies</h3>
-        </div>
-        <p>Add and maintain the organizations whose vacancies are monitored.</p>
-        <a class="card-action" href="{% url 'companies:list' %}">Manage companies</a>
-      </article>
-      <article class="card">
-        <div class="card-heading">
-          <h3>Jobs</h3>
-        </div>
-        <p>Browse saved vacancies and narrow the list with useful filters.</p>
-        <a class="card-action" href="{% url 'jobs:list' %}">Browse jobs</a>
-      </article>
-      <article class="card">
-        <div class="card-heading">
-          <h3>Scrape runs</h3>
-          <span class="status-badge">Coming next</span>
-        </div>
-        <p>Review completed checks, their status, and any recoverable errors.</p>
-      </article>
-      <article class="card">
-        <div class="card-heading">
-          <h3>Dashboard</h3>
-          <span class="status-badge">Coming next</span>
-        </div>
-        <p>See a concise overview of monitored companies, jobs, and recent runs.</p>
-      </article>
+  <div class="dashboard-shell">
+    <div class="page-heading dashboard-heading">
+      <div>
+        <p class="eyebrow">Internal workspace</p>
+        <h1>Dashboard</h1>
+        <p class="lead">Overview of monitoring activity.</p>
+      </div>
+      <form action="{% url 'update_all' %}" method="post">
+        {% csrf_token %}
+        <button class="button button-primary" type="submit">Update all</button>
+      </form>
     </div>
-  </section>
+
+    <section class="dashboard-primary-grid" aria-label="Primary monitoring metrics">
+      <a class="card dashboard-primary-metric dashboard-metric-link" href="{% url 'companies:list' %}">
+        <h2 class="dashboard-metric-label">Monitored companies</h2>
+        <p class="dashboard-primary-value">
+          {{ monitored_companies }}<span class="dashboard-metric-arrow" aria-hidden="true">›</span>
+        </p>
+      </a>
+      <a class="card dashboard-primary-metric dashboard-metric-link" href="{% url 'jobs:list' %}">
+        <h2 class="dashboard-metric-label">Active jobs</h2>
+        <p class="dashboard-primary-value">
+          {{ active_jobs }}<span class="dashboard-metric-arrow" aria-hidden="true">›</span>
+        </p>
+      </a>
+      <article class="card dashboard-primary-metric">
+        <h2 class="dashboard-metric-label">New jobs</h2>
+        <p class="dashboard-primary-value">{{ new_jobs }}</p>
+      </article>
+    </section>
+
+    <section class="dashboard-run-section" aria-labelledby="run-status-heading">
+      <h2 class="dashboard-section-label" id="run-status-heading">Run status</h2>
+      <div class="dashboard-run-card">
+        <article class="card dashboard-run-metric dashboard-run-latest">
+          <h3 class="dashboard-metric-label">Latest successful run</h3>
+          {% if latest_successful_run %}
+            <p class="dashboard-run-value">
+              <time datetime="{{ latest_successful_run|date:'c' }}">{{ latest_successful_run|date:"j M Y, H:i" }}</time>
+            </p>
+          {% else %}
+            <p class="dashboard-run-value">Never</p>
+          {% endif %}
+        </article>
+        <article class="card dashboard-run-metric">
+          <h3 class="dashboard-metric-label">Running</h3>
+          <p class="dashboard-run-value">{{ running_runs }}</p>
+        </article>
+        <article class="card dashboard-run-metric">
+          <h3 class="dashboard-metric-label">Failed runs</h3>
+          <p class="dashboard-run-value">{{ failed_runs }}</p>
+        </article>
+      </div>
+    </section>
+  </div>
 {% endblock %}

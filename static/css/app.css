@@ -201,6 +201,136 @@ h3 {
   font-weight: 700;
 }
 
+.dashboard-shell {
+  width: min(100%, 68rem);
+  margin-inline: auto;
+}
+
+.dashboard-heading {
+  margin-bottom: 1.1rem;
+}
+
+.dashboard-primary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 0.65rem;
+}
+
+.dashboard-primary-metric {
+  min-width: 0;
+  padding: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.dashboard-metric-label {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.dashboard-primary-metric .dashboard-primary-value {
+  flex: none;
+  margin: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  color: var(--text);
+  font-size: clamp(1.65rem, 3vw, 2rem);
+  font-weight: 750;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.dashboard-primary-metric .dashboard-metric-label {
+  min-width: 0;
+  font-size: 1.05rem;
+  line-height: 1.3;
+}
+
+.dashboard-metric-link {
+  border-color: #b2ccff;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.dashboard-metric-link:hover {
+  background: #f9fbff;
+  border-color: var(--accent);
+  color: inherit;
+  box-shadow: 0 0.35rem 0.9rem rgb(24 34 48 / 10%);
+}
+
+.dashboard-metric-link:focus-visible {
+  border-color: var(--focus);
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+  text-decoration: none;
+}
+
+.dashboard-metric-arrow {
+  color: var(--accent);
+  font-size: 0.72em;
+  font-weight: 400;
+}
+
+.dashboard-run-section {
+  margin-top: 1.4rem;
+}
+
+.dashboard-section-label {
+  margin-bottom: 0.5rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dashboard-run-card {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 0.65rem;
+}
+
+.dashboard-run-metric {
+  min-width: 0;
+  padding: 1.15rem 0.9rem;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.dashboard-run-metric .dashboard-metric-label {
+  font-size: 1.05rem;
+  white-space: nowrap;
+}
+
+.dashboard-run-metric .dashboard-run-value {
+  flex: none;
+  margin: 0;
+  color: var(--text);
+  font-size: 1.15rem;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.dashboard-run-latest .dashboard-run-value {
+  font-size: 1rem;
+}
+
 .status-badge {
   flex: none;
   padding: 0.15rem 0.5rem;
@@ -855,6 +985,23 @@ h3 {
 }
 
 @media (min-width: 40.01rem) and (max-width: 60rem) {
+  .dashboard-run-metric {
+    padding-inline: 0.4rem;
+    gap: 0.35rem;
+  }
+
+  .dashboard-run-metric .dashboard-metric-label {
+    font-size: clamp(0.72rem, 1.4vw, 0.84rem);
+  }
+
+  .dashboard-run-metric .dashboard-run-value {
+    font-size: 0.95rem;
+  }
+
+  .dashboard-run-latest .dashboard-run-value {
+    font-size: clamp(0.72rem, 1.4vw, 0.84rem);
+  }
+
   .global-jobs-table thead th {
     padding-inline: 0.25rem;
     font-size: 0.72rem;
@@ -1173,6 +1320,11 @@ h3 {
 }
 
 @media (max-width: 40rem) {
+  .dashboard-heading h1 {
+    margin-bottom: 0.45rem;
+    font-size: clamp(2rem, 4vw, 2.75rem);
+  }
+
   .job-detail-action {
     justify-content: flex-start;
   }
@@ -1211,6 +1363,58 @@ h3 {
 
   .card-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-primary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-primary-metric .dashboard-primary-value {
+    width: 3rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 0.65rem;
+    column-gap: 0.15rem;
+  }
+
+  .dashboard-primary-metric {
+    padding: 0.75rem 0.9rem;
+    gap: 0.75rem;
+  }
+
+  .dashboard-primary-metric .dashboard-metric-label {
+    font-size: 0.98rem;
+  }
+
+  .dashboard-run-card {
+    grid-template-columns: 1fr;
+    padding: 0;
+  }
+
+  .dashboard-run-metric,
+  .dashboard-run-metric:first-child,
+  .dashboard-run-metric:last-child {
+    padding: 0.65rem 1.25rem;
+    justify-content: space-between;
+    gap: 0.25rem;
+  }
+
+  .dashboard-run-metric .dashboard-metric-label {
+    font-size: 0.9rem;
+  }
+
+  .dashboard-run-metric .dashboard-run-value {
+    margin-left: auto;
+    font-size: 1.05rem;
+    text-align: right;
+  }
+
+  .dashboard-run-latest .dashboard-run-value {
+    font-size: 0.95rem;
+  }
+
+  .dashboard-run-latest {
+    flex-wrap: wrap;
+    row-gap: 0.15rem;
   }
 
   .global-jobs-table-container {
