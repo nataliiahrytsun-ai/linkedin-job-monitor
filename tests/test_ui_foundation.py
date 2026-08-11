@@ -18,8 +18,6 @@ from django.test.utils import (  # type: ignore[import-untyped]
 )
 from django.urls import reverse  # type: ignore[import-untyped]
 
-from scraping.background import ControlledBackgroundExecutor
-
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "job_monitor.settings")
 
 
@@ -392,7 +390,7 @@ class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
         submit.assert_called_once_with(company=company_record)
         assert b"Monitoring started for 2 sources." in self.client.get(response.url).content
 
-    def test_update_all_does_not_submit_unavailable_darwinbox_source(self) -> None:
+    def test_update_all_submits_active_darwinbox_source_without_network(self) -> None:
         company_record = company(name="Darwinbox Update All")
         company_record.sources.all().delete()
         darwinbox_source = model("companies.CompanySource").objects.create(
@@ -403,14 +401,24 @@ class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
             is_active=True,
         )
 
-        with (
-            ControlledBackgroundExecutor() as executor,
-            patch("job_monitor.views.background_executor", executor),
-        ):
+        submission = type(
+            "Submission",
+            (),
+            {
+                "submitted_source_ids": (darwinbox_source.pk,),
+                "already_running_source_ids": (),
+                "failed_source_ids": (),
+            },
+        )()
+        with patch(
+            "job_monitor.views.background_executor.submit_company",
+            return_value=submission,
+        ) as submit:
             response = self.client.post(reverse("update_all"))
 
         assert response.status_code == 302
-        assert b"1 could not be started." in self.client.get(response.url).content
+        assert b"Monitoring started for 1 source." in self.client.get(response.url).content
+        submit.assert_called_once_with(company=company_record)
         assert model("scrape_runs.ScrapeRun").objects.count() == 0
         darwinbox_source.refresh_from_db()
         assert darwinbox_source.is_active is True

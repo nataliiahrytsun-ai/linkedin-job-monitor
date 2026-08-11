@@ -7,32 +7,24 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol, cast
+from typing import Literal, cast
 from urllib.parse import quote, unquote, urlencode, urlsplit
 
 from scraping.sources.base import SourceBatch, SourceCompany, SourceError, SourceRecord
+from scraping.sources.darwinbox_browser import (
+    DarwinboxBrowserTransport,
+    DarwinboxBrowserTransportError,
+)
 
 DEFAULT_PAGE_SIZE = 10
 DEFAULT_TIMEOUT_SECONDS = 20.0
 DEFAULT_MAX_PAGES = 100
 DARWINBOX_HOST_SUFFIX = ".darwinbox.com"
-USER_AGENT = "linkedin-job-monitor/1.0 (public Darwinbox jobs adapter)"
 
 type DarwinboxMethod = Literal["GET", "POST"]
 type DarwinboxRequest = Callable[
     [DarwinboxMethod, str, Mapping[str, object] | None, float], str | bytes
 ]
-
-
-class _ScraplingResponse(Protocol):
-    status: int
-    body: bytes | bytearray | memoryview
-
-
-class _ScraplingSession(Protocol):
-    def get(self, url: str) -> _ScraplingResponse: ...
-
-    def post(self, url: str, *, json: dict[str, object]) -> _ScraplingResponse: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,54 +72,6 @@ def darwinbox_source_from_url(source_jobs_url: str | None) -> DarwinboxSourceLoc
     if not company_id or "/" in company_id or any(char.isspace() for char in company_id):
         raise SourceError("Darwinbox jobs URL contains an invalid company identifier")
     return DarwinboxSourceLocation(parsed.scheme, host, company_id)
-
-
-def _default_request(
-    method: DarwinboxMethod,
-    url: str,
-    json_body: Mapping[str, object] | None,
-    timeout_seconds: float,
-) -> bytes:
-    """Make one conservative public request with Scrapling and no browser state."""
-    parsed = urlsplit(url)
-    host = parsed.hostname or ""
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not host.endswith(DARWINBOX_HOST_SUFFIX)
-        or not parsed.path.startswith("/ms/candidateapi/job/")
-    ):
-        raise RuntimeError("Darwinbox requests must target a public candidate API")
-
-    from scrapling.fetchers import FetcherSession
-
-    with FetcherSession(
-        http3=False,
-        timeout=timeout_seconds,
-        retries=1,
-        retry_delay=0,
-        follow_redirects=False,
-        max_redirects=0,
-        stealthy_headers=False,
-        impersonate=None,
-        proxies=None,
-        proxy=None,
-        proxy_auth=None,
-        proxy_rotator=None,
-        headers={"Accept": "application/json", "User-Agent": USER_AGENT},
-    ) as session:
-        typed_session = cast(_ScraplingSession, session)
-        if method == "POST":
-            if json_body is None:
-                raise RuntimeError("Darwinbox POST requests require a JSON body")
-            response = typed_session.post(url, json=dict(json_body))
-        else:
-            if json_body is not None:
-                raise RuntimeError("Darwinbox GET requests cannot contain a JSON body")
-            response = typed_session.get(url)
-
-    if response.status < 200 or response.status >= 300:
-        raise RuntimeError(f"Darwinbox API returned HTTP {response.status}")
-    return bytes(response.body)
 
 
 def _json_object(body: str | bytes, *, context: str, requests_made: int) -> dict[str, object]:
@@ -298,7 +242,8 @@ class DarwinboxSourceAdapter:
     def __init__(
         self,
         *,
-        request: DarwinboxRequest = _default_request,
+        request: DarwinboxRequest | None = None,
+        browser_transport: DarwinboxBrowserTransport | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         max_pages: int = DEFAULT_MAX_PAGES,
@@ -313,7 +258,12 @@ class DarwinboxSourceAdapter:
             raise ValueError("timeout_seconds must be positive, excluding bool")
         if type(max_pages) is not int or max_pages < 1:
             raise ValueError("max_pages must be a positive int, excluding bool")
+        if request is not None and browser_transport is not None:
+            raise ValueError("request and browser_transport cannot both be provided")
         self._request = request
+        if request is None and browser_transport is None:
+            browser_transport = DarwinboxBrowserTransport()
+        self._browser_transport = browser_transport
         self._page_size = page_size
         self._timeout_seconds = float(timeout_seconds)
         self._max_pages = max_pages
@@ -326,6 +276,8 @@ class DarwinboxSourceAdapter:
         *,
         requests_made: int,
     ) -> str | bytes:
+        if self._request is None:
+            raise RuntimeError("Direct Darwinbox API transport is not configured")
         try:
             return self._request(method, url, json_body, self._timeout_seconds)
         except Exception as error:
@@ -340,14 +292,27 @@ class DarwinboxSourceAdapter:
         source_job_id: str,
         requests_made: int,
     ) -> dict[str, object]:
-        query = urlencode({"companyId": source_url.company_id})
-        url = (
-            f"{source_url.scheme}://{source_url.host}/ms/candidateapi/job/"
-            f"{quote(source_job_id, safe='')}?{query}"
-        )
-        body = self._request_body(
-            "GET", url, None, requests_made=requests_made
-        )
+        if self._request is not None:
+            query = urlencode({"companyId": source_url.company_id})
+            url = (
+                f"{source_url.scheme}://{source_url.host}/ms/candidateapi/job/"
+                f"{quote(source_job_id, safe='')}?{query}"
+            )
+            body = self._request_body("GET", url, None, requests_made=requests_made)
+        else:
+            transport = self._browser_transport
+            assert transport is not None
+            try:
+                body = transport.detail(
+                    source_url,
+                    source_job_id,
+                    timeout_seconds=self._timeout_seconds,
+                )
+            except DarwinboxBrowserTransportError as error:
+                raise SourceError(
+                    str(error),
+                    requests_made=requests_made - 1 + error.requests_made,
+                ) from error
         payload = _json_object(body, context="detail", requests_made=requests_made)
         message = payload.get("message")
         if not isinstance(message, dict):
@@ -381,6 +346,22 @@ class DarwinboxSourceAdapter:
         expected_total: int | None = None
         requests_made = 0
 
+        browser_pages: tuple[bytes, ...] | None = None
+        if self._request is None:
+            transport = self._browser_transport
+            assert transport is not None
+            try:
+                browser_pages = transport.listing_pages(
+                    source_url,
+                    max_pages=self._max_pages,
+                    timeout_seconds=self._timeout_seconds,
+                )
+            except DarwinboxBrowserTransportError as error:
+                raise SourceError(
+                    str(error), requests_made=error.requests_made
+                ) from error
+            requests_made = len(browser_pages)
+
         for page_number in range(1, self._max_pages + 1):
             request_payload: dict[str, object] = {
                 "companyId": source_url.company_id,
@@ -388,10 +369,18 @@ class DarwinboxSourceAdapter:
                 "sort_option": "new",
                 "limit": self._page_size,
             }
-            requests_made += 1
-            body = self._request_body(
-                "POST", listing_url, request_payload, requests_made=requests_made
-            )
+            if browser_pages is None:
+                requests_made += 1
+                body = self._request_body(
+                    "POST", listing_url, request_payload, requests_made=requests_made
+                )
+            elif page_number <= len(browser_pages):
+                body = browser_pages[page_number - 1]
+            else:
+                raise SourceError(
+                    "Darwinbox browser pagination ended before completion",
+                    requests_made=requests_made,
+                )
             payload = _json_object(
                 body, context="listing", requests_made=requests_made
             )

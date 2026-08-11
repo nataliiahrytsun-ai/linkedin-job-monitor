@@ -17,9 +17,9 @@ Company
 
 The schema, source ownership, source-scoped persistence/reconciliation, Company
 multi-source orchestration, and source-management UI are implemented. Lever is
-the production-approved/user-selectable adapter. Darwinbox is implemented and
-offline-tested, and the UI exposes its **Live access unavailable** status, but
-it is not selectable or included in Company-level execution. Additional ATS
+the production-approved/user-selectable adapter. Darwinbox is implemented,
+user-selectable, and executable through its verified normal headful-browser
+transport. Additional ATS
 adapters and automatic Source Discovery are not implemented.
 
 ## CompanySource is not an adapter
@@ -157,14 +157,12 @@ configuration workflow. The dialog lists multiple sources independently and is
 responsive on narrow viewports.
 
 Manual **Add source** obtains its platform choices from the registry's
-user-selectable API. Lever is currently the only production/user-selectable
-adapter. A valid public jobs URL is required and checked server-side. A manually
+user-selectable API. Lever and Darwinbox are the current user-selectable
+adapters. A valid public jobs URL is required and checked server-side. A manually
 created source starts as `approval_status=approved` and `is_active=True`.
 Fixture remains registered and executable for internal tests but is not offered
-or accepted as a normal user-managed source. Darwinbox remains registered and
-visible in source management as **Live access unavailable**, but is neither a
-normal Add Source choice nor eligible for Company-level Update jobs/Update all
-orchestration. JazzHR is not selectable because its adapter does not exist.
+or accepted as a normal user-managed source. JazzHR is not selectable because
+its adapter does not exist.
 
 The source platform is immutable after creation because CompanySource is both a
 provenance and execution boundary. **Edit source** can update the supported
@@ -197,13 +195,17 @@ source. It does not fall back to legacy Company source fields.
 ## Darwinbox adapter boundary
 
 `DarwinboxSourceAdapter` implements the public transport contract observed on
-the Acuity Darwinbox tenant. A listing request uses:
+the Acuity Darwinbox tenant. Its production transport opens:
 
 ```text
-POST /ms/candidateapi/job/alljobs?companyId=<companyId>
+/ms/candidatev2/<companyId>/careers/allJobs
 ```
 
-One `adapter.fetch()` automatically advances the page-based API until the
+in a temporary normal headful system-Chrome session through Scrapling
+`DynamicFetcher`. The SPA automatically issues the initial
+`/ms/candidateapi/job/alljobs` request. The transport captures that response
+passively and uses the visible **Load More** control for subsequent pages; it
+does not replay the API directly. One `adapter.fetch()` advances until the
 accumulated unique Darwinbox `id` values satisfy the response `job_counts`.
 That `id` is the stable source-local job ID. A `SourceBatch` is returned only
 for a complete snapshot. Empty, repeated, inconsistent, or page-limited
@@ -211,20 +213,22 @@ pagination before completion raises `SourceError`; the pipeline records a
 FAILED source-owned ScrapeRun and does not reconcile jobs from a partial
 snapshot.
 
-Listing `jd` is used when present. The public detail GET is requested only as a
-fallback when listing `jd` is empty. `requests_made` includes every listing and
-detail request. The adapter uses the existing source-neutral persistence and
+Listing `jd` is used when present. A public candidate-v2 detail page is opened
+only as a fallback when listing `jd` is empty, and its normal data response is
+captured. `requests_made` counts listing and detail data operations, not browser
+assets or document navigation. The adapter uses the existing source-neutral persistence and
 reconciliation path and does not change Lever behavior.
 
-This is offline technical compatibility with the observed public Acuity
-Darwinbox contract, not a claim that all Darwinbox installations are compatible.
-Current automated live access is unavailable: direct listing HTTP receives a
-Cloudflare 403, while a clean plain-browser context receives an approximately
-939-byte HTML document with no SPA bootstrap assets or listing request. The UI
-therefore exposes Darwinbox only as **Live access unavailable**; normal source
-creation and Company-level orchestration exclude it. Further transport
-investigation is deferred. The adapter is not described as broken or
-permanently impossible, and Acuity production monitoring is not complete.
+The transport uses `headless=False`, system Chrome, `google_search=False`, no
+resource blocking, one attempt, and no imported profile, cookies, login,
+proxies, custom headers/user agent, fingerprint overrides, stealth, or CAPTCHA
+interaction. Headless Chrome was observed to receive a minimal non-bootstrapping
+document, while a fresh ordinary headful Chrome session rendered the public SPA
+and received the initial listing successfully. System Chrome and an interactive
+desktop are therefore deployment prerequisites. Failure to launch, render, or
+capture raises `SourceError` and cannot reconcile a partial snapshot. This
+verifies the observed Acuity contract, not every Darwinbox installation or
+vacancy completeness.
 
 ## Transitional legacy fields
 
@@ -255,9 +259,8 @@ been completed.
 
 The architecture can represent and orchestrate two independent sources for
 Acuity. Darwinbox transport compatibility is implemented against the observed
-public Acuity contract, but the adapter is not production-approved or exposed
-through normal source creation. JazzHR is not implemented, Acuity production
-monitoring is not complete or enabled, and Source Discovery remains
+public Acuity contract and is exposed through normal source creation. JazzHR is
+not implemented, Acuity multi-source monitoring is not complete, and Source Discovery remains
 manual/outside the application. No vacancy-completeness claim is made.
 
 ## Conceptual onboarding
@@ -278,9 +281,8 @@ without a separately approved and implemented adapter/access path.
 
 ## Next work
 
-Slices 1-4 and the bounded Darwinbox adapter implementation are complete.
-Darwinbox capability is visible to users with an unavailable status, but live
-transport investigation is deferred and the source is not enabled for normal
-creation or Acuity execution.
+Slices 1-4 and the bounded Darwinbox headful-browser transport are complete.
+Darwinbox is enabled for normal source creation and Company execution, subject
+to its explicit interactive system-Chrome deployment requirement.
 JazzHR, Source Discovery, and other ATS integrations remain separate future
 work.

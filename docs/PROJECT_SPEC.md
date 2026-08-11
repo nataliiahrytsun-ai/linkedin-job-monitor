@@ -29,14 +29,12 @@ Source:
   CompanySource auswählbar;
 - `fixture` bleibt als interner Offline-/Test-Adapter registriert, ist aber
   keine auswählbare Production Source;
-- `darwinbox` ist implementiert und gegen den auf dem öffentlichen
-  Acuity-Tenant beobachteten Contract offline verifiziert. Die Source-
-  Management-UI zeigt **Live access unavailable**; normale Add-Source- und
-  Company-Level-Execution-Flows schließen Darwinbox aus. Direkter automatisierter
-  Listing-Zugriff erhält aktuell Cloudflare 403, während ein sauberer
-  Browser-Kontext minimales HTML ohne SPA-Bootstrap-Assets erhält. Weitere
-  Transport-Untersuchung ist aufgeschoben. Dies bedeutet weder, dass der
-  Adapter defekt ist, noch dass Darwinbox dauerhaft unmöglich ist;
+- `darwinbox` ist implementiert, auswählbar und ausführbar. Der Transport öffnet
+  die öffentliche candidate-v2 UI in einem temporären normalen Headful-System-
+  Chrome über Scrapling `DynamicFetcher`, erfasst die von der SPA erzeugten
+  Listing-/Detail-Responses und paginiert über sichtbares Load More. Es werden
+  weder Login/private Cookies noch Stealth, Proxies, Fingerprint-Anpassungen
+  oder direkte API-Replays verwendet;
 - Normalisierung, Persistenz, Reconciliation, `ScrapeRun`, Background
   Execution und UI sind source-neutral;
 - Company Management, Jobs UI, Dashboard, ScrapeRun History und read-only
@@ -64,12 +62,12 @@ unabhängig ausführen. CompanySource-Konfiguration wird getrennt von Company
 create/edit über die Source-Management-UI verwaltet; mehrere Sources können
 angezeigt, hinzugefügt, bearbeitet und unabhängig aktiviert/deaktiviert werden.
 Source Discovery und zusätzliche ATS-Adapter wie JazzHR sind weiterhin nicht
-implementiert. Der Darwinbox Adapter verarbeitet Listings über
-`POST /ms/candidateapi/job/alljobs?companyId=<companyId>`, paginiert innerhalb
-eines `fetch()` bis zum vollständigen Snapshot und verwendet Darwinbox `id` als
-stabile Source-ID. Unvollständige Pagination führt zu `SourceError` ohne
-Reconciliation; Detail-GETs erfolgen nur bei leerem Listing-`jd`, und
-`requests_made` zählt Listing- und Detail-Requests. Lever bleibt unverändert.
+implementiert. Der Darwinbox Adapter öffnet
+`/ms/candidatev2/<companyId>/careers/allJobs`, paginiert innerhalb eines
+`fetch()` über die UI bis zum vollständigen Snapshot und verwendet Darwinbox
+`id` als stabile Source-ID. Unvollständige Pagination führt zu `SourceError`
+ohne Reconciliation; Detail-Navigation erfolgt nur bei leerem Listing-`jd`, und
+`requests_made` zählt Listing- und Detail-Datenoperationen. Lever bleibt unverändert.
 Aktueller Contract und Grenzen stehen
 in [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 

@@ -114,20 +114,19 @@ slices:
   changes are enforced. Its quality gate passed with 487 tests and the existing
   150 third-party `lxml` warnings; all other checks passed.
 
-The bounded **Darwinbox adapter implementation is now completed**. It implements
-the observed public Acuity listing/detail contract, automatic page-based
-pagination, complete-snapshot enforcement, request accounting, and offline
-source-scoped pipeline/reconciliation verification. Darwinbox is registered and
-visible in source management as **Live access unavailable**, but is not an Add
-Source choice and is excluded from Update jobs/Update all. Direct automated
-HTTP listing access currently receives Cloudflare 403; a clean browser context
-receives minimal non-bootstrapping HTML. Further transport investigation is
-deferred. This does not complete Acuity monitoring or claim support for every
-Darwinbox installation.
+The bounded **Darwinbox adapter and headful-browser transport are now
+implemented**. A fresh plain headful system-Chrome run rendered the public
+Acuity SPA and received its initial listing without private state or interaction.
+Production transport now opens the candidate-v2 UI through Scrapling
+`DynamicFetcher`, captures SPA data responses, and paginates via visible Load
+More. Darwinbox is a selectable approved/active source and participates in
+Update jobs/Update all. Complete-snapshot enforcement, request accounting, and
+source-scoped pipeline/reconciliation remain unchanged. This does not complete
+Acuity multi-source monitoring or claim support for every Darwinbox installation.
 
 Source Discovery, JazzHR and LinkedIn adapters, cross-source vacancy
 deduplication, hard source deletion, run cancellation, and final legacy cleanup
-are not implemented. Lever remains the production-approved selectable source.
+are not implemented. Lever remains unchanged and selectable.
 The current architecture and boundaries are documented in
 [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 

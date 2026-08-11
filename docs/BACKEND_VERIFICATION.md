@@ -25,29 +25,26 @@ The shared pipeline supports two deliberately different source roles:
   `https://jobs.lever.co/olo`.
 - `fixture`: registered internal/test adapter. It reads local synthetic data,
   reports `requests_made=0`, and is excluded from user-managed source creation.
-- `darwinbox`: registered adapter implementing the observed public Acuity
-  Darwinbox transport contract. It is visible as **Live access unavailable**,
-  but excluded from user-managed source creation and Company-level
-  orchestration while the current automated transport remains unavailable.
+- `darwinbox`: registered, user-selectable, executable adapter implementing the
+  observed public Acuity Darwinbox contract through a normal headful system-
+  Chrome session.
 
 LinkedIn has no production adapter or registry key and remains blocked pending
 a separate feasibility/access/approval decision. JazzHR is not implemented.
-Darwinbox implementation is technical evidence, not production approval or a
-claim that every Darwinbox installation is supported. Direct automated HTTP
-listing access currently receives Cloudflare 403, while a clean plain-browser
-context receives a minimal HTML document with no application scripts, styles,
-root container, XHR/fetch, or listing request. Further transport investigation
-is deferred; no bypass was attempted.
+Direct automated HTTP listing access received Cloudflare 403, and headless
+Chrome received a minimal non-bootstrapping document. A fresh plain headful
+system-Chrome run rendered the public SPA and received the initial listing with
+no login, cookies, challenge, or interaction. The implemented transport uses
+that bounded public navigation model without stealth or API replay. This does
+not claim that every Darwinbox installation is supported.
 
 ## Source-level orchestration proof
 
 `submit_source(company_source)` owns one explicit source execution. Active
 tasks are keyed by `company_source_id`. `submit_company(company)` evaluates all
 CompanySource rows in deterministic order and independently reports submitted,
-already-running, skipped, and failed source IDs. Registry execution availability
-excludes Darwinbox from this Company-level path, so Update jobs and Update all
-cannot submit it even if a historical local row still has approved/active
-database flags. It does not use legacy
+already-running, skipped, and failed source IDs. Both approved active Lever and
+Darwinbox sources are eligible for Update jobs and Update all. It does not use legacy
 Company fields to select one source.
 
 The regression suite proves:
@@ -96,18 +93,21 @@ proves that the single Lever CompanySource is submitted through
 
 ## Darwinbox complete-snapshot integration proof
 
-`DarwinboxSourceAdapter` uses the observed public listing contract:
+`DarwinboxSourceAdapter` opens the observed public UI route:
 
 ```text
-POST /ms/candidateapi/job/alljobs?companyId=<companyId>
+/ms/candidatev2/<companyId>/careers/allJobs
 ```
 
-One `fetch()` walks page 1, page 2, and subsequent pages automatically. It
+The normal headful SPA emits the initial listing request; pagination clicks its
+visible Load More control and passively captures each resulting response. One
+`fetch()` walks page 1, page 2, and subsequent pages automatically. It
 deduplicates on Darwinbox `id` and returns `SourceBatch` only after the unique
 count reaches `job_counts`. Incomplete pagination raises `SourceError`; the
 pipeline stores a FAILED ScrapeRun and performs no reconciliation. Listing
 `jd` avoids detail work, while an empty `jd` triggers one matching public
-detail GET. `requests_made` includes listing and detail calls.
+candidate-v2 detail navigation. `requests_made` includes listing and detail data
+operations but excludes browser assets/navigation.
 
 Offline adapter tests cover one-, two-, and three-page completion, empty
 complete snapshots, within/across-page duplicates, malformed or inconsistent
@@ -134,10 +134,10 @@ Bootstrap and migration tests use unique temporary SQLite paths. The working
 repository `db.sqlite3` is not opened, migrated, replaced, or removed for the
 verification gate.
 
-## Current verified Darwinbox adapter and unavailable-UI baseline
+## Current verified Darwinbox headful transport baseline
 
-- targeted source/UI/background tests: **140 passed**;
-- full pytest: **530 passed**, with 150 existing third-party `lxml` deprecation
+- targeted source/UI/background tests: **184 passed**;
+- full pytest: **540 passed**, with 150 existing third-party `lxml` deprecation
   warnings;
 - Ruff: **All checks passed**;
 - MyPy: **Success — 29 source files**;
@@ -159,7 +159,9 @@ automated browser/device certification.
 
 This evidence verifies the Darwinbox adapter against offline representations of
 the observed Acuity contract together with the existing source-neutral pipeline.
-It does not grant Darwinbox production approval, prove all Darwinbox tenants,
-or complete Acuity monitoring. It does not verify or claim Source Discovery,
+The headful transport implementation is offline-tested; no live request is part
+of the automated gate. It does not prove all Darwinbox tenants, guarantee a
+headless/server-only deployment, or complete Acuity multi-source monitoring. It
+does not verify or claim Source Discovery,
 JazzHR/LinkedIn adapters, cross-source vacancy deduplication, hard source delete,
 run cancellation, or final legacy-schema cleanup. Lever remains unchanged.

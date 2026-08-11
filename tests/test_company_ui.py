@@ -1125,11 +1125,9 @@ def test_create_source_options_come_from_user_selectable_registry_api() -> None:
 
     assert rendered_values == selectable_values
     assert ("lever", "Lever") in tuple(source_field.choices)
-    assert all(value != "darwinbox" for value, _label in source_field.choices)
+    assert ("darwinbox", "Darwinbox") in tuple(source_field.choices)
     assert all(value != "fixture" for value, _label in source_field.choices)
-    assert response.context["form"].unavailable_source_choices == (
-        ("Darwinbox", "Live access unavailable"),
-    )
+    assert response.context["form"].unavailable_source_choices == ()
     assert "is_active" not in response.context["form"].fields
 
 
@@ -1339,8 +1337,8 @@ def test_company_detail_add_source_dialog_is_compact_and_registry_driven() -> No
 
     assert "Add source" in add_dialog
     assert "Darwinbox" in add_dialog
-    assert "Live access unavailable" in add_dialog
-    assert '<option value="darwinbox">' not in add_dialog
+    assert "Live access unavailable" not in add_dialog
+    assert '<option value="darwinbox">Darwinbox</option>' in add_dialog
     assert '<option value="lever">Lever</option>' in add_dialog
     assert "Fixture" not in add_dialog
     assert "Jazzhr" not in add_dialog
@@ -1393,9 +1391,9 @@ def test_add_source_uses_registry_choices_and_creates_approved_active_lever() ->
     html = get_response.content.decode()
 
     assert '<option value="lever">Lever</option>' in html
-    assert '<option value="darwinbox">' not in html
+    assert '<option value="darwinbox">Darwinbox</option>' in html
     assert "Darwinbox" in html
-    assert "Live access unavailable" in html
+    assert "Live access unavailable" not in html
     assert "Fixture" not in html
     assert "Jazzhr" not in html
     response = client().post(add_url, valid_source_data())
@@ -1417,7 +1415,7 @@ def test_add_source_uses_registry_choices_and_creates_approved_active_lever() ->
     assert "ACTIVE" in detail
 
 
-def test_add_source_rejects_forged_darwinbox_and_displays_unavailable_status() -> None:
+def test_add_source_creates_approved_active_darwinbox() -> None:
     company = model("companies.Company").objects.create(name="Darwinbox Company")
     add_url = reverse("companies:source_create", args=(company.pk,))
 
@@ -1429,14 +1427,15 @@ def test_add_source_rejects_forged_darwinbox_and_displays_unavailable_status() -
         ),
     )
 
-    assert response.status_code == 200
-    assert company.sources.count() == 0
-    assert response.context["form"].errors
-    assert "Darwinbox" in response.content.decode()
-    assert "Live access unavailable" in response.content.decode()
+    assert response.status_code == 302
+    source = company.sources.get()
+    assert source.source == "darwinbox"
+    assert source.approval_status == "approved"
+    assert source.is_active is True
+    assert "Darwinbox" in client().get(response.url).content.decode()
 
 
-def test_existing_darwinbox_source_is_visible_but_not_presented_as_active() -> None:
+def test_existing_darwinbox_source_is_visible_and_presented_as_active() -> None:
     company = model("companies.Company").objects.create(name="Darwinbox Existing")
     source = company.sources.create(
         source="darwinbox",
@@ -1449,17 +1448,17 @@ def test_existing_darwinbox_source_is_visible_but_not_presented_as_active() -> N
     summary_html, dialog_html = html.split('<dialog class="source-dialog"', 1)
 
     assert response.status_code == 200
-    assert "0 active" in summary_html
+    assert "1 active" in summary_html
     assert "1 configured" in summary_html
     assert "Darwinbox" in dialog_html
-    assert "Live access unavailable" in dialog_html
-    assert f'id="edit-source-dialog-{source.pk}"' not in html
+    assert "Live access unavailable" not in dialog_html
+    assert f'id="edit-source-dialog-{source.pk}"' in html
     source.refresh_from_db()
     assert source.approval_status == "approved"
     assert source.is_active is True
 
 
-def test_update_jobs_does_not_submit_unavailable_darwinbox_source() -> None:
+def test_update_jobs_submits_active_darwinbox_source_without_network() -> None:
     company = model("companies.Company").objects.create(name="Darwinbox Update")
     source = company.sources.create(
         source="darwinbox",
@@ -1467,21 +1466,18 @@ def test_update_jobs_does_not_submit_unavailable_darwinbox_source() -> None:
         approval_status="approved",
         is_active=True,
     )
-    background = importlib.import_module("scraping.background")
     browser = client()
 
-    with (
-        background.ControlledBackgroundExecutor() as executor,
-        patch("companies.views.background_executor", executor),
-    ):
+    with patch(
+        "companies.views.background_executor.submit_company",
+        return_value=company_submission(company, submitted=(source.pk,)),
+    ) as submit:
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
-    assert "watch_sources" not in response.url
-    assert b"Job update could not be started." in browser.get(response.url).content
-    assert not model("scrape_runs.ScrapeRun").objects.filter(
-        company_source=source
-    ).exists()
+    assert response.url.endswith(f"watch_sources={source.pk}")
+    submit.assert_called_once_with(company=company)
+    assert b"Job update started." in browser.get(response.url).content
 
 
 @pytest.mark.parametrize(

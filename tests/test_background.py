@@ -912,7 +912,9 @@ def test_company_submission_skips_inactive_approved_source() -> None:
     assert result.skipped_source_ids == (inactive_source.pk,)
 
 
-def test_company_submission_skips_registered_but_unavailable_darwinbox() -> None:
+def test_company_submission_executes_registered_darwinbox_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     company_record = company()
     darwinbox_source = add_company_source(
         company_record,
@@ -920,16 +922,29 @@ def test_company_submission_skips_registered_but_unavailable_darwinbox() -> None
         source_jobs_url="https://tenant.darwinbox.com/ms/candidate/careers",
     )
 
-    with ControlledBackgroundExecutor() as executor:
+    class OfflineDarwinboxAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            assert company.pk == darwinbox_source.pk
+            return SourceBatch(records=(), requests_made=1)
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(
+        registry._ADAPTER_FACTORIES, "darwinbox", OfflineDarwinboxAdapter
+    )
+
+    with ControlledBackgroundExecutor(clock=IncrementingClock()) as executor:
         result = executor.submit_company(company=company_record)
         for handle in result.submitted:
             handle.future.result(timeout=10)
 
-    assert result.submitted_source_ids == (company_record.sources.get(source="fixture").pk,)
-    assert result.skipped_source_ids == (darwinbox_source.pk,)
-    assert not model("scrape_runs.ScrapeRun").objects.filter(
+    assert result.submitted_source_ids == (
+        company_record.sources.get(source="fixture").pk,
+        darwinbox_source.pk,
+    )
+    assert result.skipped_source_ids == ()
+    assert model("scrape_runs.ScrapeRun").objects.get(
         company_source=darwinbox_source
-    ).exists()
+    ).status == "success"
 
 
 def test_inactive_company_and_zero_executable_sources_fail_closed() -> None:

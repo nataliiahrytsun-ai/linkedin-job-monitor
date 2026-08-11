@@ -25,11 +25,9 @@ _ADAPTER_FACTORIES: dict[str, Callable[[], SourceAdapter]] = {
     "lever": LeverSourceAdapter,
 }
 _USER_VISIBLE_SOURCE_KEYS = frozenset({"darwinbox", "lever"})
-_USER_SELECTABLE_SOURCE_KEYS = frozenset({"lever"})
-_EXECUTION_BLOCKED_SOURCE_KEYS = frozenset({"darwinbox"})
-_SOURCE_UNAVAILABILITY_MESSAGES = {
-    "darwinbox": "Live access unavailable",
-}
+_USER_SELECTABLE_SOURCE_KEYS = frozenset({"darwinbox", "lever"})
+_EXECUTION_BLOCKED_SOURCE_KEYS: frozenset[str] = frozenset()
+_SOURCE_UNAVAILABILITY_MESSAGES: dict[str, str] = {}
 
 
 def registered_source_keys() -> tuple[str, ...]:

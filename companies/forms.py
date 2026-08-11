@@ -6,6 +6,7 @@ from django import forms
 
 from companies.models import Company, CompanySource
 from scraping.sources.base import SourceError
+from scraping.sources.darwinbox import darwinbox_source_from_url
 from scraping.sources.lever import lever_site_from_url
 from scraping.sources.registry import (
     normalize_source_key,
@@ -51,6 +52,11 @@ def validate_source_configuration(*, source: str, source_jobs_url: str | None) -
     if normalized_source == "lever":
         try:
             lever_site_from_url(source_jobs_url)
+        except SourceError as error:
+            raise forms.ValidationError(str(error)) from error
+    elif normalized_source == "darwinbox":
+        try:
+            darwinbox_source_from_url(source_jobs_url)
         except SourceError as error:
             raise forms.ValidationError(str(error)) from error
 

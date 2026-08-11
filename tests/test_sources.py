@@ -56,7 +56,7 @@ def test_registry_normalizes_source_and_selects_lever_adapter() -> None:
     assert isinstance(adapter, LeverSourceAdapter)
 
 
-def test_registry_keeps_darwinbox_registered_and_visible_but_unavailable() -> None:
+def test_registry_keeps_darwinbox_registered_visible_selectable_and_executable() -> None:
     adapter = get_source_adapter(
         CompanyStub(
             source="  DaRwInBoX  ",
@@ -67,9 +67,9 @@ def test_registry_keeps_darwinbox_registered_and_visible_but_unavailable() -> No
     assert isinstance(adapter, DarwinboxSourceAdapter)
     assert "darwinbox" in registered_source_keys()
     assert "darwinbox" in user_visible_source_keys()
-    assert "darwinbox" not in user_selectable_source_keys()
-    assert "darwinbox" not in executable_source_keys()
-    assert source_unavailability_message(" DaRwInBoX ") == "Live access unavailable"
+    assert "darwinbox" in user_selectable_source_keys()
+    assert "darwinbox" in executable_source_keys()
+    assert source_unavailability_message(" DaRwInBoX ") is None
 
 
 def test_registry_distinguishes_registered_and_user_selectable_sources() -> None:
@@ -88,8 +88,8 @@ def test_registry_distinguishes_registered_and_user_selectable_sources() -> None
     assert "fixture" not in selectable_keys
     assert "darwinbox" in registered_keys
     assert "darwinbox" in visible_keys
-    assert "darwinbox" not in selectable_keys
-    assert "darwinbox" not in executable_keys
+    assert "darwinbox" in selectable_keys
+    assert "darwinbox" in executable_keys
     assert "lever" in registered_keys
     assert "lever" in visible_keys
     assert "lever" in selectable_keys

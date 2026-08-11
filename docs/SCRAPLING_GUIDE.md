@@ -27,7 +27,11 @@ obtained.
 uses `LeverSourceAdapter` as its first production adapter. It uses Scrapling
 0.4.8 `FetcherSession` for bounded plain-HTTP requests to Lever's public
 postings API. The registered fixture adapter is internal/test-only and makes no
-network requests. There is no production LinkedIn adapter; the LinkedIn
+network requests. The Darwinbox adapter uses `DynamicFetcher` with a temporary
+normal headful system-Chrome session because its public SPA did not bootstrap
+in the verified headless flow. It disables Scrapling's Google referrer and uses
+no stealth, profile/cookies, proxy, custom headers/user agent, or fingerprint
+override. There is no production LinkedIn adapter; the LinkedIn
 sections below document the completed historical spike and its safety boundary.
 
 **Verified:** the original milestone used `FetcherSession` for a single public
@@ -42,7 +46,8 @@ The following are not used in this project at Milestone 1:
 
 - `StealthyFetcher`, CAPTCHA solving, fingerprint hiding, proxies, or browser
   impersonation. These conflict with the project's no-circumvention boundary.
-- `DynamicFetcher`. JavaScript need could not be assessed after the robots gate.
+- `DynamicFetcher` for LinkedIn. It is used only by the Darwinbox adapter's
+  explicitly headful public-SPA transport.
 - adaptive selectors. They persist element fingerprints and can conceal a
   structural change; explicit, reviewed fallbacks are safer for job data.
 - async fetching and Spider execution. A one-request preflight gains nothing
@@ -75,6 +80,11 @@ If a permitted use later requires a browser, install its binaries separately:
 ```powershell
 .\.venv\Scripts\scrapling.exe install
 ```
+
+The current Darwinbox transport uses `real_chrome=True`, so it requires an
+installed system Google Chrome and an interactive desktop session. This is an
+explicit runtime prerequisite; server/headless deployments are not silently
+substituted with stealth or direct API access.
 
 The official image is an alternative for isolated Linux execution:
 

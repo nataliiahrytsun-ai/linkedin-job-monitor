@@ -9,14 +9,12 @@ reconciliation, run history, and the UI source-neutral.
 - **Current production-approved source:** Lever. Users add a CompanySource through the
   source-management UI, select `Lever`, and configure a jobs URL in the form
   `https://jobs.lever.co/<site>`.
-- **Implemented and visible, but live access unavailable:** Darwinbox.
-  `DarwinboxSourceAdapter` is offline-tested against the observed Acuity
-  contract. Source management explains its current status, but normal Add
-  Source and Company-level execution exclude it. Direct automated HTTP listing
-  access currently receives Cloudflare 403; a clean browser context receives a
-  minimal HTML document without SPA bootstrap assets. Further transport
-  investigation is deferred. This does not mean the adapter is broken or that
-  Darwinbox is permanently unavailable.
+- **Current approved source:** Darwinbox. Its adapter uses a temporary normal
+  headful system-Chrome session through Scrapling `DynamicFetcher`, opens the
+  public candidate-v2 careers UI, and captures the listing/detail JSON emitted
+  by that UI. It never imports a profile or cookies and does not use stealth,
+  proxies, custom fingerprinting, or direct listing API replay. Darwinbox is a
+  normal Add Source choice and is executable through Update jobs/Update all.
 - **Internal test source:** Fixture. It remains registered for deterministic
   offline pipeline tests, but is not offered for new user-managed companies.
 - **Audited/planned, not implemented:** JazzHR.
@@ -37,6 +35,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe manage.py migrate
 .\.venv\Scripts\python.exe manage.py runserver
 ```
+
+Darwinbox execution additionally requires an installed system Google Chrome
+and an interactive desktop session because its verified public SPA transport is
+headful. A headless/server-only deployment must fail cleanly rather than fall
+back to direct HTTP or stealth transport.
 
 For development and verification, install the reproducible dev toolchain. The
 dev requirements include the runtime requirements:
