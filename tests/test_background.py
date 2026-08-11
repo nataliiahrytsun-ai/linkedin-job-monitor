@@ -23,6 +23,7 @@ from scraping.background import (
 )
 from scraping.pipeline import FixturePipelineError, FixturePipelineResult
 from scraping.sources.base import SourceAdapter
+from scraping.sources.lever import LeverSourceAdapter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "backend"
@@ -227,6 +228,38 @@ def test_source_neutral_submission_rejects_unknown_source() -> None:
         executor.submit_pipeline(company=company_record)
 
     assert model("scrape_runs.ScrapeRun").objects.count() == 0
+
+
+def test_lever_submission_uses_registry_and_company_site_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = model("companies.Company").objects.create(
+        name="Olo",
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/olo",
+    )
+    requested_urls: list[str] = []
+
+    def fake_http_get(url: str, timeout_seconds: float) -> str:
+        requested_urls.append(url)
+        assert timeout_seconds > 0
+        return "[]"
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(
+        registry._ADAPTER_FACTORIES,
+        "lever",
+        lambda: LeverSourceAdapter(http_get=fake_http_get),
+    )
+
+    with ControlledBackgroundExecutor(clock=IncrementingClock()) as executor:
+        result = executor.submit_pipeline(company=company_record).future.result(timeout=10)
+
+    result.scrape_run.refresh_from_db()
+    assert result.scrape_run.status == "success"
+    assert result.scrape_run.requests_made == 1
+    assert len(requested_urls) == 1
+    assert requested_urls[0].startswith("https://api.lever.co/v0/postings/olo?")
 
 
 def test_real_success_pipeline_uses_runtime_clock_and_returns_result() -> None:

@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from scraping.sources.base import SourceAdapter, SourceCompany, SourceError
 from scraping.sources.fixture import FixtureSourceAdapter
+from scraping.sources.lever import LeverSourceAdapter
 
 
 class UnknownSourceError(SourceError):
@@ -19,6 +20,7 @@ def normalize_source_key(source: str) -> str:
 
 _ADAPTER_FACTORIES: dict[str, Callable[[], SourceAdapter]] = {
     "fixture": FixtureSourceAdapter,
+    "lever": LeverSourceAdapter,
 }
 
 

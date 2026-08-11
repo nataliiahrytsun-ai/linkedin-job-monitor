@@ -7,6 +7,7 @@ import pytest
 
 from scraping.sources.base import SourceBatch
 from scraping.sources.fixture import FixtureSourceAdapter
+from scraping.sources.lever import LeverSourceAdapter
 from scraping.sources.registry import UnknownSourceError, get_source_adapter
 
 
@@ -33,6 +34,17 @@ def test_registry_normalizes_source_and_selects_fixture_adapter() -> None:
     adapter = get_source_adapter(CompanyStub(source="  FiXtUrE  "))
 
     assert isinstance(adapter, FixtureSourceAdapter)
+
+
+def test_registry_normalizes_source_and_selects_lever_adapter() -> None:
+    adapter = get_source_adapter(
+        CompanyStub(
+            source="  LeVeR  ",
+            source_jobs_url="https://jobs.lever.co/olo",
+        )
+    )
+
+    assert isinstance(adapter, LeverSourceAdapter)
 
 
 def test_registry_rejects_unknown_source_safely() -> None:
