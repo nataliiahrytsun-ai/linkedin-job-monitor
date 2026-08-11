@@ -989,6 +989,317 @@ h3 {
   margin-top: 2rem;
 }
 
+.source-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.source-summary-attention {
+  background: #fffaeb;
+  border-color: #fedf89;
+}
+
+.source-summary-copy,
+.source-dialog h2,
+.source-form-dialog h2,
+.source-row h3,
+.source-url,
+.source-dialog-empty p {
+  margin: 0;
+}
+
+.source-summary-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.source-summary-status {
+  color: var(--muted);
+}
+
+.source-dialog,
+.source-form-dialog {
+  width: min(68rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  color: var(--text);
+}
+
+.source-form-dialog {
+  width: min(37.5rem, calc(100vw - 2rem));
+}
+
+.source-dialog::backdrop,
+.source-form-dialog::backdrop {
+  background: rgb(16 24 40 / 55%);
+}
+
+.source-dialog-surface,
+.source-form-dialog-surface {
+  display: flex;
+  max-height: calc(100vh - 2rem);
+  flex-direction: column;
+}
+
+.source-dialog-header,
+.source-dialog-header-actions,
+.source-form-dialog-header,
+.source-row,
+.source-row-identity {
+  display: flex;
+  align-items: center;
+}
+
+.source-dialog-header,
+.source-form-dialog-header {
+  flex: none;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.source-form-dialog-header {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.dialog-close-button {
+  justify-self: end;
+  width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.4rem;
+  color: var(--muted);
+  font: inherit;
+  font-size: 1.35rem;
+  cursor: pointer;
+}
+
+.dialog-close-button:hover {
+  background: #f2f4f7;
+  color: var(--text);
+}
+
+.source-dialog-header-actions,
+.source-row-identity {
+  gap: 0.4rem;
+}
+
+.source-dialog-header-actions form,
+.source-row-actions form {
+  margin: 0;
+}
+
+.source-dialog-body {
+  min-height: 0;
+  padding: 0.5rem;
+  overflow-y: auto;
+}
+
+.source-form-dialog-body {
+  padding: 1rem;
+}
+
+.source-form-dialog form,
+.source-form-dialog .form-field input:not([type="checkbox"]),
+.source-form-dialog .form-field select {
+  width: 100%;
+  max-width: none;
+}
+
+.source-form-dialog-body .form-field:first-child {
+  margin-top: 0;
+}
+
+.source-form-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-weight: 700;
+}
+
+.source-readonly-value {
+  display: block;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.7rem;
+  background: #f2f4f7;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+}
+
+.source-list {
+  display: grid;
+}
+
+.source-row {
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.source-row:last-child {
+  border-bottom: 0;
+}
+
+.source-row-identity {
+  flex: none;
+  flex-wrap: nowrap;
+}
+
+.source-row h3 {
+  margin-right: 0.2rem;
+  font-size: 1rem;
+}
+
+.source-url {
+  min-width: 0;
+  flex: 1;
+  color: var(--muted);
+}
+
+.source-url a {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-row-actions {
+  flex: none;
+  flex-wrap: nowrap;
+}
+
+.button-compact {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.65rem;
+}
+
+.source-dialog-empty {
+  padding: 0.75rem;
+}
+
+.source-dialog-empty p + p {
+  margin-top: 0.25rem;
+  color: var(--muted);
+}
+
+@media screen and (max-width: 40rem) {
+  .source-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.4rem;
+    padding: 0.65rem 0.75rem;
+  }
+
+  .source-summary-copy {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+  }
+
+  .source-summary > [data-source-dialog-open] {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .source-dialog,
+  .source-form-dialog {
+    max-height: calc(100vh - 1rem);
+  }
+
+  .source-dialog {
+    inset-inline: 0;
+    width: calc(100% - 1.5rem);
+    max-width: 68rem;
+    margin-inline: auto;
+  }
+
+  .source-form-dialog {
+    width: calc(100vw - 1rem);
+  }
+
+  .source-dialog-surface,
+  .source-form-dialog-surface {
+    max-height: calc(100vh - 1rem);
+  }
+
+  .source-dialog-header,
+  .source-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .source-dialog-header {
+    gap: 0.6rem;
+    padding: 0.75rem;
+  }
+
+  .source-dialog-header-actions,
+  .source-row-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 0.5rem;
+  }
+
+  .source-dialog-header-actions > .button,
+  .source-dialog-header-actions form,
+  .source-row-actions > .button,
+  .source-row-actions form {
+    min-width: 0;
+    flex: 1 1 0;
+  }
+
+  .source-dialog-header-actions .button,
+  .source-row-actions .button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .source-dialog-body {
+    padding: 0.75rem;
+  }
+
+  .source-row {
+    gap: 0.4rem;
+    padding: 0.75rem;
+  }
+
+  .source-row-identity {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .source-url a {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+}
+
 .job-detail-header {
   align-items: flex-start;
 }
@@ -1927,6 +2238,42 @@ h3 {
   .detail-source-row,
   .detail-monitoring-row {
     grid-template-columns: 1fr;
+  }
+
+  .detail-panel {
+    padding: 1rem;
+  }
+
+  .detail-panel h2 {
+    margin-bottom: 0.65rem;
+  }
+
+  .detail-monitoring-row {
+    gap: 0;
+    padding-top: 0.4rem;
+  }
+
+  .detail-monitoring-row > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding-block: 0.45rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .detail-monitoring-row > div:last-child {
+    border-bottom: 0;
+  }
+
+  .detail-monitoring-row dt {
+    margin: 0;
+  }
+
+  .detail-monitoring-row dd {
+    min-width: 0;
+    text-align: right;
+    overflow-wrap: anywhere;
   }
 
   .jobs-table-container {

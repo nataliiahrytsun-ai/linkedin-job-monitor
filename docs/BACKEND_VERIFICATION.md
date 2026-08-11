@@ -24,7 +24,7 @@ The shared pipeline supports two deliberately different source roles:
   CompanySource stores `source="lever"` and a public URL such as
   `https://jobs.lever.co/olo`.
 - `fixture`: registered internal/test adapter. It reads local synthetic data,
-  reports `requests_made=0`, and is excluded from Add Company.
+  reports `requests_made=0`, and is excluded from user-managed source creation.
 
 LinkedIn has no production adapter or registry key. Darwinbox and JazzHR are
 also not implemented. Their audit artifacts are not production support.
@@ -47,6 +47,22 @@ The regression suite proves:
   reconciliation;
 - Company aggregate state is independent of callback order;
 - polling requires a post-baseline terminal run for every submitted source.
+
+## Source-management UI proof
+
+Company create/edit now manages Company-level fields without mutating the
+transitional legacy source fields. CompanySource configuration is managed
+separately from Company detail through responsive dialogs. Tests cover the
+compact empty/summary states, multiple source rows, registry-backed Add source,
+server-side Lever URL validation, duplicate handling, immutable source
+provenance, company scoping, POST-only activation changes, and RUNNING-source
+edit/deactivation protection.
+
+Manual source creation accepts only user-selectable registry adapters, currently
+Lever, and creates an approved active CompanySource. Fixture remains available
+to internal pipeline tests but cannot be assigned through this UI. Existing
+internal or unsupported rows remain visible without being exposed as ordinary
+user-manageable source options.
 
 ## Lever multi-page integration proof
 
@@ -82,11 +98,10 @@ Bootstrap and migration tests use unique temporary SQLite paths. The working
 repository `db.sqlite3` is not opened, migrated, replaced, or removed for the
 verification gate.
 
-## Current verified Slice 3 baseline
+## Current verified Slice 4 baseline
 
-- targeted tests: **294 passed**;
-- Olo/Lever `submit_company` regression: **1 passed**;
-- full pytest: **467 passed**, with 150 existing third-party `lxml` deprecation
+- targeted Company UI tests: **73 passed**;
+- full pytest: **487 passed**, with 150 existing third-party `lxml` deprecation
   warnings;
 - Ruff: **All checks passed**;
 - MyPy: **Success — 28 source files**;
@@ -98,9 +113,16 @@ verification gate.
 These checks used temporary database configuration. The working `db.sqlite3`
 was not opened or used, and no job-source network requests were performed.
 
+Manual visual review covered the compact Company Sources summary, Manage
+sources dialog, Add/Edit dialogs, desktop source rows, responsive mobile source
+management, compact mobile Company information rows, and checked narrow widths
+without observed horizontal overflow. This is a focused visual review, not an
+automated browser/device certification.
+
 ## Scope boundary
 
-This evidence verifies Slice 3 Company multi-source orchestration and the
-existing production Lever path. It does not verify or claim source-management
-UI, Source Discovery, Darwinbox/JazzHR/LinkedIn adapters, Acuity production
-integration, cross-source vacancy deduplication, or any future Slice 4 work.
+This evidence verifies Slice 4 source management together with the existing
+Company multi-source orchestration and production Lever path. It does not
+verify or claim Source Discovery, Darwinbox/JazzHR/LinkedIn adapters, Acuity
+production integration, cross-source vacancy deduplication, hard source delete,
+run cancellation, or final legacy-schema cleanup.

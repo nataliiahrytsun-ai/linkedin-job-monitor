@@ -6,8 +6,8 @@ reconciliation, run history, and the UI source-neutral.
 
 ## Current source status
 
-- **Current production source:** Lever. User-managed companies select `Lever`
-  and store `source="lever"`; the jobs URL has the form
+- **Current production source:** Lever. Users add a CompanySource through the
+  source-management UI, select `Lever`, and configure a jobs URL in the form
   `https://jobs.lever.co/<site>`.
 - **Internal test source:** Fixture. It remains registered for deterministic
   offline pipeline tests, but is not offered for new user-managed companies.
@@ -58,10 +58,11 @@ Company / UI action -> submit all approved active CompanySources
                     -> one ScrapeRun per source -> multi-source-aware polling
 ```
 
-One Company can own multiple CompanySource configurations, and one platform
-adapter can serve many companies. Background execution, run ownership, and
-reconciliation are source-scoped; a Company update can launch several eligible
-sources independently. Source-management UI is not yet implemented. See the
+One Company can own and manage multiple CompanySource configurations, and one
+platform adapter can serve many companies. Background execution, run ownership,
+and reconciliation are source-scoped; a Company update can launch several
+eligible sources independently. Company detail provides a compact source
+summary plus Add, Edit, Activate, and Deactivate workflows. See the
 [multi-source architecture](docs/MULTI_SOURCE_ARCHITECTURE.md) for the exact
 current and future boundaries.
 

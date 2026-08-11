@@ -169,6 +169,16 @@ def valid_company_data(**overrides: str) -> dict[str, str]:
     return values
 
 
+def valid_source_data(**overrides: str) -> dict[str, str]:
+    values = {
+        "source": "lever",
+        "source_jobs_url": "https://jobs.lever.co/example",
+        "is_active": "on",
+    }
+    values.update(overrides)
+    return values
+
+
 def test_company_list_empty_state_navigation_and_template_contract() -> None:
     response = client().get(reverse("companies:list"))
     html = response.content.decode()
@@ -355,7 +365,11 @@ def test_company_detail_renders_information_navigation_and_empty_states() -> Non
     assert html.count("Customer") == 1
     assert "Kunde" not in html
     assert "Sonstige" not in html
-    assert "fixture" in html
+    assert "Sources" in html
+    assert "Manage sources" in html
+    assert '<dialog class="source-dialog" id="job-sources-dialog"' in html
+    assert '<script src="/static/js/company_sources_dialog.js" defer></script>' in html
+    assert "Fixture" in html
     assert "ACTIVE" in html
     assert "Not run yet" in html
     assert "Never" in html
@@ -369,20 +383,17 @@ def test_company_detail_renders_information_navigation_and_empty_states() -> Non
     assert "Company type" not in html
     assert "Monitoring status" not in html
     for label in (
-        "Vacancy source",
-        "Jobs URL",
         "Last run status",
         "Last run time",
         "Active jobs",
     ):
         assert label in html
     assert "Source jobs URL" not in html
-    assert 'class="detail-row detail-source-row"' in html
     assert 'class="detail-row detail-monitoring-row"' in html
-    assert html.index("Vacancy source") < html.index("Jobs URL")
-    assert html.index("Jobs URL") < html.index("Last run status")
     assert html.index("Last run status") < html.index("Last run time")
     assert html.index("Last run time") < html.index("Active jobs")
+    assert html.index("Active jobs") < html.index("Sources")
+    assert html.index('id="sources-summary-heading"') < html.index('id="jobs-heading"')
     assert f'href="{reverse("companies:list")}"' in html
     assert f'href="{reverse("companies:edit", args=(company.pk,))}"' in html
     assert f'action="{reverse("companies:toggle_active", args=(company.pk,))}"' in html
@@ -1087,8 +1098,6 @@ def test_create_get_has_csrf_labels_and_only_user_managed_fields() -> None:
     for label in (
         "Company name",
         "Company type",
-        "Source",
-        "Source jobs URL",
         "Monitoring active",
     ):
         assert label in html
@@ -1097,10 +1106,8 @@ def test_create_get_has_csrf_labels_and_only_user_managed_fields() -> None:
     assert '<option value="client">Customer</option>' in html
     assert '<option value="supplier">Supplier</option>' in html
     assert '<option value="other" selected>Other</option>' in html
-    assert '<select name="source"' in html
-    assert 'type="text" name="source"' not in html
-    assert '<option value="lever">Lever</option>' in html
-    assert '<option value="fixture">Fixture</option>' not in html
+    assert 'name="source"' not in html
+    assert 'name="source_jobs_url"' not in html
     assert "Kunde" not in html
     assert "Sonstige" not in html
     assert html.count("<h1") == 1
@@ -1108,7 +1115,8 @@ def test_create_get_has_csrf_labels_and_only_user_managed_fields() -> None:
 
 
 def test_create_source_options_come_from_user_selectable_registry_api() -> None:
-    response = client().get(reverse("companies:create"))
+    company = create_company()
+    response = client().get(reverse("companies:source_create", args=(company.pk,)))
     source_field = response.context["form"].fields["source"]
     rendered_values = tuple(value for value, _label in source_field.choices)
     selectable_values = importlib.import_module(
@@ -1118,6 +1126,7 @@ def test_create_source_options_come_from_user_selectable_registry_api() -> None:
     assert rendered_values == selectable_values
     assert ("lever", "Lever") in tuple(source_field.choices)
     assert all(value != "fixture" for value, _label in source_field.choices)
+    assert "is_active" not in response.context["form"].fields
 
 
 def test_valid_create_uses_redirect_normalizes_source_and_refresh_does_not_duplicate() -> None:
@@ -1128,9 +1137,11 @@ def test_valid_create_uses_redirect_normalizes_source_and_refresh_does_not_dupli
     )
 
     assert response.status_code == 302
-    assert response.url == reverse("companies:list")
     company = model("companies.Company").objects.get()
-    assert company.source == "lever"
+    assert response.url == reverse("companies:detail", args=(company.pk,))
+    assert company.source == ""
+    assert company.source_jobs_url is None
+    assert company.sources.count() == 0
     assert company.company_type == "client"
 
     redirected = browser.get(response.url)
@@ -1147,7 +1158,7 @@ def test_invalid_create_preserves_values_shows_errors_and_creates_nothing() -> N
 
     assert response.status_code == 200
     assert "This field is required" in html
-    assert '<option value="lever" selected>Lever</option>' in html
+    assert 'name="source"' not in html
     assert model("companies.Company").objects.count() == 0
 
 
@@ -1157,9 +1168,10 @@ def test_create_rejects_unsupported_source_submitted_directly() -> None:
         valid_company_data(source="https://jobs.lever.co/olo"),
     )
 
-    assert response.status_code == 200
-    assert "Select a valid choice" in response.content.decode()
-    assert model("companies.Company").objects.count() == 0
+    assert response.status_code == 302
+    company = model("companies.Company").objects.get()
+    assert company.source == ""
+    assert company.sources.count() == 0
 
 
 def test_create_rejects_internal_fixture_source_submitted_directly() -> None:
@@ -1168,9 +1180,10 @@ def test_create_rejects_internal_fixture_source_submitted_directly() -> None:
         valid_company_data(source="fixture"),
     )
 
-    assert response.status_code == 200
-    assert "Select a valid choice" in response.content.decode()
-    assert model("companies.Company").objects.count() == 0
+    assert response.status_code == 302
+    company = model("companies.Company").objects.get()
+    assert company.source == ""
+    assert company.sources.count() == 0
 
 
 def test_duplicate_constraint_is_displayed_as_form_error() -> None:
@@ -1184,9 +1197,8 @@ def test_duplicate_constraint_is_displayed_as_form_error() -> None:
         ),
     )
 
-    assert response.status_code == 200
-    assert response.context["form"].errors
-    assert model("companies.Company").objects.count() == 1
+    assert response.status_code == 302
+    assert model("companies.Company").objects.count() == 2
 
 
 def test_edit_get_shows_current_values_without_changing_company() -> None:
@@ -1204,8 +1216,8 @@ def test_edit_get_shows_current_values_without_changing_company() -> None:
     assert response.status_code == 200
     assert "Current Name" in html
     assert 'value="supplier" selected' in html
-    assert '<select name="source"' in html
-    assert '<option value="lever" selected>Lever</option>' in html
+    assert 'name="source"' not in html
+    assert 'name="source_jobs_url"' not in html
     assert model("companies.Company").objects.values().get(pk=company.pk) == before
 
 
@@ -1216,9 +1228,8 @@ def test_edit_get_shows_existing_internal_source_without_selecting_lever() -> No
     html = response.content.decode()
 
     assert response.status_code == 200
-    assert '<option value="fixture" selected>Fixture (internal)</option>' in html
-    assert '<option value="lever">Lever</option>' in html
-    assert '<option value="lever" selected>' not in html
+    assert 'name="source"' not in html
+    assert company.source == "fixture"
 
 
 def test_valid_edit_of_internal_company_preserves_source_and_shows_success() -> None:
@@ -1241,10 +1252,11 @@ def test_valid_edit_of_internal_company_preserves_source_and_shows_success() -> 
     assert company.name == "Updated Company"
     assert company.company_type == "supplier"
     assert company.source == "fixture"
+    assert company.source_jobs_url == "https://jobs.example.test/example/openings"
     assert b"was updated" in browser.get(response.url).content
 
 
-def test_edit_rejects_internal_fixture_source() -> None:
+def test_edit_ignores_crafted_internal_fixture_source_fields() -> None:
     company = create_company(
         source="lever",
         source_jobs_url="https://jobs.lever.co/example",
@@ -1258,10 +1270,10 @@ def test_edit_rejects_internal_fixture_source() -> None:
         ),
     )
 
-    assert response.status_code == 200
-    assert "Select a valid choice" in response.content.decode()
+    assert response.status_code == 302
     company.refresh_from_db()
     assert company.source == "lever"
+    assert company.source_jobs_url == "https://jobs.lever.co/example"
 
 
 def test_invalid_edit_does_not_save_partial_changes() -> None:
@@ -1273,13 +1285,13 @@ def test_invalid_edit_does_not_save_partial_changes() -> None:
     )
 
     assert response.status_code == 200
-    assert '<option value="lever" selected>Lever</option>' in response.content.decode()
+    assert 'name="source"' not in response.content.decode()
     company.refresh_from_db()
     assert company.name == "Original Name"
     assert company.source == "fixture"
 
 
-def test_edit_rejects_unsupported_source_submitted_directly() -> None:
+def test_edit_ignores_unsupported_source_submitted_directly() -> None:
     company = create_company(source="lever", source_jobs_url="https://jobs.lever.co/olo")
 
     response = client().post(
@@ -1287,16 +1299,429 @@ def test_edit_rejects_unsupported_source_submitted_directly() -> None:
         valid_company_data(source="not-registered"),
     )
 
-    assert response.status_code == 200
-    assert "Select a valid choice" in response.content.decode()
+    assert response.status_code == 302
     company.refresh_from_db()
     assert company.source == "lever"
+    assert company.source_jobs_url == "https://jobs.lever.co/olo"
 
 
 def test_unknown_company_edit_returns_not_found() -> None:
     response = client().get(reverse("companies:edit", args=(999_999,)))
 
     assert response.status_code == 404
+
+
+def test_company_without_sources_renders_source_empty_state_and_add_action() -> None:
+    company = model("companies.Company").objects.create(name="No Sources")
+
+    response = client().get(reverse("companies:detail", args=(company.pk,)))
+    html = response.content.decode()
+
+    assert "No sources configured" in html
+    assert "Configure sources" in html
+    assert '<dialog class="source-dialog" id="job-sources-dialog"' in html
+    dialog_html = html[html.index('<dialog class="source-dialog"') :]
+    assert "No job sources configured." in dialog_html
+    assert reverse("companies:source_create", args=(company.pk,)) in dialog_html
+    assert 'class="source-row"' not in html
+    assert company.sources.count() == 0
+
+
+def test_company_detail_add_source_dialog_is_compact_and_registry_driven() -> None:
+    company = model("companies.Company").objects.create(name="Dialog Add")
+
+    html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
+    add_dialog = html[html.index('id="add-source-dialog"') :]
+
+    assert "Add source" in add_dialog
+    assert '<option value="lever">Lever</option>' in add_dialog
+    assert "Fixture" not in add_dialog
+    assert "Darwinbox" not in add_dialog
+    assert "Jazzhr" not in add_dialog
+    assert 'name="source"' in add_dialog
+    assert 'name="source_jobs_url"' in add_dialog
+    assert "Jobs URL" in add_dialog
+    assert 'name="is_active"' not in add_dialog
+    assert "Cancel" in add_dialog
+
+
+def test_company_detail_inactive_source_summary_and_compact_edit_dialog() -> None:
+    company = model("companies.Company").objects.create(name="Dialog Edit")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/inactive",
+        approval_status="approved",
+        is_active=False,
+    )
+
+    html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
+    summary_html = html[: html.index('<dialog class="source-dialog"')]
+    edit_dialog = html[html.index(f'id="edit-source-dialog-{source.pk}"') :]
+
+    assert "0 active" in summary_html
+    assert "1 configured" in summary_html
+    assert "Edit source" in edit_dialog
+    assert 'class="source-readonly-value">Lever</span>' in edit_dialog
+    assert 'name="source_jobs_url"' in edit_dialog
+    assert '<select name="source"' not in edit_dialog
+    assert 'name="is_active"' not in edit_dialog
+    assert "Cancel" in edit_dialog
+    assert ">Save</button>" in edit_dialog
+
+
+def test_company_source_dialog_script_supports_open_close_and_escape() -> None:
+    script = (Path(__file__).parents[1] / "static/js/company_sources_dialog.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "dialog.showModal()" in script
+    assert 'event.key === "Escape"' in script
+    assert "dialog.close()" in script
+    assert "[data-dialog-target]" in script
+
+
+def test_add_source_uses_registry_choices_and_creates_approved_active_lever() -> None:
+    company = model("companies.Company").objects.create(name="Source Company")
+    add_url = reverse("companies:source_create", args=(company.pk,))
+    get_response = client().get(add_url)
+    html = get_response.content.decode()
+
+    assert '<option value="lever">Lever</option>' in html
+    assert "Fixture" not in html
+    assert "Darwinbox" not in html
+    assert "Jazzhr" not in html
+    response = client().post(add_url, valid_source_data())
+
+    assert response.status_code == 302
+    assert response.url.endswith("?manage_sources=1")
+    source = company.sources.get()
+    assert source.source == "lever"
+    assert source.source_jobs_url == "https://jobs.lever.co/example"
+    assert source.approval_status == "approved"
+    assert source.is_active is True
+    detail = client().get(response.url).content.decode()
+    summary_html = detail[: detail.index('<dialog class="source-dialog"')]
+    assert "1 active" in summary_html
+    assert "1 configured" in summary_html
+    assert 'class="source-row"' not in summary_html
+    assert "Lever" in detail
+    assert "APPROVED" in detail
+    assert "ACTIVE" in detail
+
+
+@pytest.mark.parametrize(
+    ("source", "url"),
+    [
+        ("fixture", "https://jobs.example.test/internal"),
+        ("darwinbox", "https://careers.example.test/jobs"),
+        ("lever", ""),
+        ("lever", "https://example.com/not-lever"),
+    ],
+)
+def test_add_source_rejects_internal_unsupported_blank_and_invalid_config(
+    source: str,
+    url: str,
+) -> None:
+    company = model("companies.Company").objects.create(name="Invalid Source")
+
+    response = client().post(
+        reverse("companies:source_create", args=(company.pk,)),
+        valid_source_data(source=source, source_jobs_url=url),
+    )
+
+    assert response.status_code == 200
+    assert response.context["form"].errors
+    assert 'id="add-source-dialog"' in response.content.decode()
+    assert 'data-auto-open' in response.content.decode()
+    assert company.sources.count() == 0
+
+
+def test_duplicate_source_is_a_form_error_and_same_url_is_allowed_for_other_company() -> None:
+    first = model("companies.Company").objects.create(name="First")
+    second = model("companies.Company").objects.create(name="Second")
+    first.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/shared",
+        approval_status="approved",
+        is_active=True,
+    )
+    data = valid_source_data(source_jobs_url="https://jobs.lever.co/shared")
+
+    duplicate = client().post(
+        reverse("companies:source_create", args=(first.pk,)), data
+    )
+    other_owner = client().post(
+        reverse("companies:source_create", args=(second.pk,)), data
+    )
+
+    assert duplicate.status_code == 200
+    assert "already configured" in duplicate.content.decode()
+    assert other_owner.status_code == 302
+    assert second.sources.count() == 1
+
+
+def test_source_detail_is_company_scoped_and_displays_two_independent_sources() -> None:
+    first = model("companies.Company").objects.create(name="First")
+    second = model("companies.Company").objects.create(name="Second")
+    source_a = first.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/a",
+        approval_status="approved",
+        is_active=True,
+    )
+    source_b = first.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/b",
+        approval_status="approved",
+        is_active=False,
+    )
+    foreign = second.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/foreign",
+        approval_status="approved",
+        is_active=True,
+    )
+
+    html = client().get(reverse("companies:detail", args=(first.pk,))).content.decode()
+    summary_html = html[: html.index('<dialog class="source-dialog"')]
+    dialog_html = html[html.index('<dialog class="source-dialog"') :]
+
+    assert "1 active" in summary_html
+    assert "2 configured" in summary_html
+    assert 'class="source-row"' not in summary_html
+    assert source_a.source_jobs_url in dialog_html
+    assert source_b.source_jobs_url in dialog_html
+    assert foreign.source_jobs_url not in html
+    assert dialog_html.count('class="source-row"') == 2
+    assert dialog_html.count("APPROVED") == 2
+    assert "INACTIVE" in dialog_html
+    assert "Edit" in dialog_html
+    assert "Deactivate" in dialog_html
+    assert "Activate" in dialog_html
+    assert reverse("companies:source_create", args=(first.pk,)) in dialog_html
+
+
+def test_edit_source_changes_url_but_platform_is_immutable_and_cross_company_is_404() -> None:
+    company = model("companies.Company").objects.create(name="Owner")
+    other = model("companies.Company").objects.create(name="Other")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/old",
+        approval_status="approved",
+        is_active=False,
+    )
+    edit_url = reverse("companies:source_edit", args=(company.pk, source.pk))
+
+    response = client().post(
+        edit_url,
+        valid_source_data(
+            source="fixture",
+            source_jobs_url="https://jobs.lever.co/new",
+        ),
+    )
+    cross_company = client().post(
+        reverse("companies:source_edit", args=(other.pk, source.pk)),
+        valid_source_data(source_jobs_url="https://jobs.lever.co/stolen"),
+    )
+
+    assert response.status_code == 302
+    assert response.url.endswith("?manage_sources=1")
+    assert cross_company.status_code == 404
+    source.refresh_from_db()
+    assert source.source == "lever"
+    assert source.source_jobs_url == "https://jobs.lever.co/new"
+    assert source.is_active is False
+
+
+def test_invalid_source_edit_preserves_existing_configuration() -> None:
+    company = model("companies.Company").objects.create(name="Preserved")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/original",
+        approval_status="approved",
+        is_active=True,
+    )
+
+    response = client().post(
+        reverse("companies:source_edit", args=(company.pk, source.pk)),
+        valid_source_data(source_jobs_url="https://example.com/wrong"),
+    )
+
+    assert response.status_code == 200
+    assert response.context["form"].errors
+    assert f'id="edit-source-dialog-{source.pk}"' in response.content.decode()
+    assert 'data-auto-open' in response.content.decode()
+    source.refresh_from_db()
+    assert source.source == "lever"
+    assert source.source_jobs_url == "https://jobs.lever.co/original"
+    assert source.is_active is True
+
+
+@pytest.mark.parametrize("approval_status", ["needs_review", "blocked", "rejected"])
+def test_nonapproved_source_cannot_be_activated_by_crafted_post(
+    approval_status: str,
+) -> None:
+    company = model("companies.Company").objects.create(name="Review")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/review",
+        approval_status=approval_status,
+        is_active=False,
+    )
+
+    response = client().post(
+        reverse("companies:source_toggle_active", args=(company.pk, source.pk))
+    )
+
+    assert response.status_code == 302
+    source.refresh_from_db()
+    assert source.is_active is False
+
+
+def test_unregistered_approved_source_cannot_be_activated() -> None:
+    company = model("companies.Company").objects.create(name="Unknown")
+    source = company.sources.create(
+        source="not-registered",
+        source_jobs_url="https://jobs.example.test/unknown",
+        approval_status="approved",
+        is_active=False,
+    )
+
+    response = client().post(
+        reverse("companies:source_toggle_active", args=(company.pk, source.pk))
+    )
+
+    assert response.status_code == 302
+    source.refresh_from_db()
+    assert source.is_active is False
+
+
+def test_source_toggle_is_post_only_scoped_and_matches_backend_eligibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company = model("companies.Company").objects.create(name="Toggle")
+    other = model("companies.Company").objects.create(name="Other")
+    source_a = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/a",
+        approval_status="approved",
+        is_active=True,
+    )
+    source_b = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/b",
+        approval_status="approved",
+        is_active=True,
+    )
+    toggle_url = reverse(
+        "companies:source_toggle_active", args=(company.pk, source_b.pk)
+    )
+
+    assert client().get(toggle_url).status_code == 405
+    assert client().post(
+        reverse("companies:source_toggle_active", args=(other.pk, source_b.pk))
+    ).status_code == 404
+    assert client().post(toggle_url).status_code == 302
+    source_a.refresh_from_db()
+    source_b.refresh_from_db()
+    assert source_a.is_active is True
+    assert source_b.is_active is False
+    background = importlib.import_module("scraping.background")
+    sentinel = object()
+    monkeypatch.setattr(
+        "scraping.background.run_source_pipeline",
+        lambda **kwargs: sentinel,
+    )
+    with background.ControlledBackgroundExecutor() as executor:
+        inactive_result = executor.submit_company(company=company)
+        for handle in inactive_result.submitted:
+            assert handle.future.result(timeout=5) is sentinel
+    assert inactive_result.submitted_source_ids == (source_a.pk,)
+
+    assert client().post(toggle_url).status_code == 302
+    source_b.refresh_from_db()
+    assert source_b.is_active is True
+    with background.ControlledBackgroundExecutor() as executor:
+        active_result = executor.submit_company(company=company)
+        for handle in active_result.submitted:
+            assert handle.future.result(timeout=5) is sentinel
+    assert active_result.submitted_source_ids == (source_a.pk, source_b.pk)
+
+
+def test_running_source_blocks_edit_and_deactivate_but_not_other_source() -> None:
+    company = model("companies.Company").objects.create(name="Running Source")
+    running_source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/running",
+        approval_status="approved",
+        is_active=True,
+    )
+    other_source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/other",
+        approval_status="approved",
+        is_active=True,
+    )
+    run = create_scrape_run(
+        company,
+        company_source=running_source,
+        status="running",
+        started_at=datetime(2026, 8, 11, 12, tzinfo=UTC),
+    )
+
+    edit_response = client().post(
+        reverse("companies:source_edit", args=(company.pk, running_source.pk)),
+        valid_source_data(source_jobs_url="https://jobs.lever.co/changed"),
+    )
+    toggle_response = client().post(
+        reverse(
+            "companies:source_toggle_active",
+            args=(company.pk, running_source.pk),
+        )
+    )
+    other_response = client().post(
+        reverse(
+            "companies:source_toggle_active", args=(company.pk, other_source.pk)
+        )
+    )
+
+    assert edit_response.status_code == 200
+    assert "currently running" in edit_response.content.decode()
+    assert toggle_response.status_code == 302
+    assert other_response.status_code == 302
+    running_source.refresh_from_db()
+    other_source.refresh_from_db()
+    assert running_source.source_jobs_url == "https://jobs.lever.co/running"
+    assert running_source.is_active is True
+    assert other_source.is_active is False
+
+    run.status = "success"
+    run.finished_at = datetime(2026, 8, 11, 12, 1, tzinfo=UTC)
+    run.duration_seconds = Decimal("60.000")
+    run.save()
+    assert client().post(
+        reverse(
+            "companies:source_toggle_active",
+            args=(company.pk, running_source.pk),
+        )
+    ).status_code == 302
+    running_source.refresh_from_db()
+    assert running_source.is_active is False
+
+
+def test_source_forms_have_csrf_protection_under_existing_anonymous_policy() -> None:
+    company = model("companies.Company").objects.create(name="CSRF")
+    csrf_client = importlib.import_module("django.test").Client(
+        enforce_csrf_checks=True
+    )
+
+    response = csrf_client.post(
+        reverse("companies:source_create", args=(company.pk,)),
+        valid_source_data(),
+    )
+
+    assert response.status_code == 403
+    assert company.sources.count() == 0
 
 
 def test_toggle_requires_post_and_changes_only_active_state_and_timestamp() -> None:

@@ -1,13 +1,16 @@
 """Server-rendered company management views."""
 
 from django.contrib import messages
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
+from django.db.models import Exists, OuterRef
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
-from companies.forms import CompanyForm
-from companies.models import Company
+from companies.forms import CompanyForm, CompanySourceForm, validate_source_configuration
+from companies.models import Company, CompanySource
 from jobs.forms import CompanyJobFilterForm
 from jobs.models import JobPosting
 from jobs.views import _apply_filters
@@ -16,8 +19,13 @@ from scraping.background import (
     BackgroundExecutionError,
     ControlledBackgroundExecutor,
 )
+from scraping.sources.registry import normalize_source_key, user_selectable_source_keys
 
 background_executor = ControlledBackgroundExecutor()
+
+
+def _manage_sources_url(company_pk: int) -> str:
+    return f"{reverse('companies:detail', args=(company_pk,))}?manage_sources=1"
 
 
 def company_list(request: HttpRequest) -> HttpResponse:
@@ -26,7 +34,15 @@ def company_list(request: HttpRequest) -> HttpResponse:
     return render(request, "companies/company_list.html", {"companies": companies})
 
 
-def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
+def company_detail(
+    request: HttpRequest,
+    pk: int,
+    *,
+    add_source_form: CompanySourceForm | None = None,
+    edit_source_form: CompanySourceForm | None = None,
+    edit_source_pk: int | None = None,
+    auto_open_source_dialog: str | None = None,
+) -> HttpResponse:
     """Show one company and its saved vacancies without starting a run."""
     company = get_object_or_404(Company, pk=pk)
     company_jobs = company.job_postings.all()
@@ -55,6 +71,48 @@ def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
     active_job_count = company.job_postings.filter(
         status=JobPosting.Status.ACTIVE
     ).count()
+    running_source_runs = ScrapeRun.objects.filter(
+        company_source_id=OuterRef("pk"),
+        status=ScrapeRun.Status.RUNNING,
+    )
+    company_sources = list(
+        company.sources.annotate(has_running_run=Exists(running_source_runs)).order_by(
+            "pk"
+        )
+    )
+    if auto_open_source_dialog is None and request.GET.get("manage_sources") == "1":
+        auto_open_source_dialog = "job-sources-dialog"
+    selectable_sources = set(user_selectable_source_keys())
+    source_rows = []
+    for source in company_sources:
+        source_edit_form = (
+            edit_source_form
+            if edit_source_pk == source.pk and edit_source_form is not None
+            else CompanySourceForm(
+                company=company,
+                instance=source,
+                auto_id=f"id_source_{source.pk}_%s",
+            )
+        )
+        source_rows.append(
+            {
+                "source": source,
+                "edit_form": source_edit_form,
+                "edit_dialog_id": f"edit-source-dialog-{source.pk}",
+                "is_auto_open": auto_open_source_dialog
+                == f"edit-source-dialog-{source.pk}",
+                "is_manageable": normalize_source_key(source.source)
+                in selectable_sources,
+                "has_running_run": source.has_running_run,
+            }
+        )
+    source_count = len(company_sources)
+    active_source_count = sum(source.is_active for source in company_sources)
+    if add_source_form is None:
+        add_source_form = CompanySourceForm(
+            company=company,
+            auto_id="id_add_source_%s",
+        )
     watch_after_run_id = _watch_after_run_id(request)
     watched_source_ids = _watch_source_ids(request, company_id=company.pk)
     running_run_ids = tuple(
@@ -87,6 +145,12 @@ def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "has_any_jobs": company_jobs.exists(),
             "jobs": jobs,
             "active_job_count": active_job_count,
+            "active_source_count": active_source_count,
+            "source_count": source_count,
+            "source_rows": source_rows,
+            "add_source_form": add_source_form,
+            "form": edit_source_form if edit_source_form is not None else add_source_form,
+            "auto_open_source_dialog": auto_open_source_dialog,
             "company_run_polling": company_run_polling,
         },
     )
@@ -130,7 +194,7 @@ def company_create(request: HttpRequest) -> HttpResponse:
     if request.method == "POST" and form.is_valid():
         company = form.save()
         messages.success(request, f"Company “{company.name}” was added.")
-        return redirect("companies:list")
+        return redirect("companies:detail", pk=company.pk)
     return render(
         request,
         "companies/company_form.html",
@@ -145,7 +209,7 @@ def company_edit(request: HttpRequest, pk: int) -> HttpResponse:
     if request.method == "POST" and form.is_valid():
         saved_company = form.save()
         messages.success(request, f"Company “{saved_company.name}” was updated.")
-        return redirect("companies:list")
+        return redirect("companies:detail", pk=saved_company.pk)
     return render(
         request,
         "companies/company_form.html",
@@ -162,6 +226,121 @@ def company_toggle_active(request: HttpRequest, pk: int) -> HttpResponse:
     state = "activated" if company.is_active else "deactivated"
     messages.success(request, f"Company “{company.name}” was {state}.")
     return redirect("companies:list")
+
+
+def company_source_create(request: HttpRequest, company_pk: int) -> HttpResponse:
+    """Create one manually approved CompanySource using PRG."""
+    company = get_object_or_404(Company, pk=company_pk)
+    form = CompanySourceForm(request.POST or None, company=company)
+    if request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                form.save()
+        except IntegrityError:
+            form.add_error(None, "This job source could not be saved safely.")
+        else:
+            messages.success(request, "Job source was added.")
+            return redirect(_manage_sources_url(company.pk))
+    if request.method == "POST":
+        return company_detail(
+            request,
+            company.pk,
+            add_source_form=form,
+            auto_open_source_dialog="add-source-dialog",
+        )
+    return render(
+        request,
+        "companies/company_source_form.html",
+        {
+            "company": company,
+            "form": form,
+            "page_title": "Add job source",
+            "submit_label": "Add source",
+        },
+    )
+
+
+def company_source_edit(
+    request: HttpRequest,
+    company_pk: int,
+    source_pk: int,
+) -> HttpResponse:
+    """Edit URL/state while preserving immutable source provenance."""
+    company = get_object_or_404(Company, pk=company_pk)
+    source = get_object_or_404(CompanySource, pk=source_pk, company=company)
+    form = CompanySourceForm(request.POST or None, company=company, instance=source)
+    if request.method == "POST" and source.scrape_runs.filter(
+        status=ScrapeRun.Status.RUNNING
+    ).exists():
+        form.add_error(None, "This source is currently running. Wait until it finishes.")
+    elif request.method == "POST" and form.is_valid():
+        try:
+            with transaction.atomic():
+                form.save()
+        except IntegrityError:
+            form.add_error(None, "This job source could not be saved safely.")
+        else:
+            messages.success(request, "Job source was updated.")
+            return redirect(_manage_sources_url(company.pk))
+    if request.method == "POST":
+        return company_detail(
+            request,
+            company.pk,
+            edit_source_form=form,
+            edit_source_pk=source.pk,
+            auto_open_source_dialog=f"edit-source-dialog-{source.pk}",
+        )
+    return render(
+        request,
+        "companies/company_source_form.html",
+        {
+            "company": company,
+            "source": source,
+            "form": form,
+            "page_title": "Edit job source",
+            "submit_label": "Save source",
+        },
+    )
+
+
+@require_POST
+def company_source_toggle_active(
+    request: HttpRequest,
+    company_pk: int,
+    source_pk: int,
+) -> HttpResponse:
+    """Safely activate or deactivate one source scoped to its Company."""
+    company = get_object_or_404(Company, pk=company_pk)
+    source = get_object_or_404(CompanySource, pk=source_pk, company=company)
+    if normalize_source_key(source.source) not in user_selectable_source_keys():
+        messages.error(request, "This internal source is not user-manageable.")
+        return redirect(_manage_sources_url(company.pk))
+    if source.scrape_runs.filter(status=ScrapeRun.Status.RUNNING).exists():
+        messages.error(
+            request,
+            "This source is currently running. Wait until it finishes.",
+        )
+        return redirect(_manage_sources_url(company.pk))
+    if source.is_active:
+        source.is_active = False
+        source.save(update_fields=("is_active", "updated_at"))
+        messages.success(request, "Job source was deactivated.")
+        return redirect(_manage_sources_url(company.pk))
+    if source.approval_status != CompanySource.ApprovalStatus.APPROVED:
+        messages.error(request, "Only an approved source can be activated.")
+        return redirect(_manage_sources_url(company.pk))
+    try:
+        validate_source_configuration(
+            source=source.source,
+            source_jobs_url=source.source_jobs_url,
+        )
+    except ValidationError as error:
+        messages.error(request, str(error))
+        return redirect(_manage_sources_url(company.pk))
+    source.is_active = True
+    source.save(update_fields=("is_active", "updated_at"))
+    messages.success(request, "Job source was activated.")
+    return redirect(_manage_sources_url(company.pk))
 
 
 @require_POST

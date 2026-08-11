@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
@@ -60,10 +59,8 @@ class Company(models.Model):
         ]
 
     def save(self, *args: Any, **kwargs: Any) -> None:
-        """Normalize the adapter key for every ordinary ORM save."""
+        """Normalize the transitional legacy adapter key when present."""
         normalized_source = (self.source or "").strip().lower()
-        if not normalized_source:
-            raise ValidationError({"source": "Source must not be empty."})
         self.source = normalized_source
         if self.source_jobs_url == "":
             self.source_jobs_url = None

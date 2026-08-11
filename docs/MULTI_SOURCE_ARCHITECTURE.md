@@ -15,7 +15,9 @@ Company
 - `CompanySource` is one concrete careers site or job feed. It stores the platform/source key, `source_jobs_url`, approval status, and active state.
 - `SourceAdapter` is the fetching and mapping implementation for one ATS or platform. One registered adapter can serve many CompanySource rows.
 
-The schema, source ownership, source-scoped persistence/reconciliation, and Company multi-source orchestration are implemented. Source-management UI and additional ATS adapters are not implemented.
+The schema, source ownership, source-scoped persistence/reconciliation, Company
+multi-source orchestration, and source-management UI are implemented. Additional
+ATS adapters and automatic Source Discovery are not implemented.
 
 ## CompanySource is not an adapter
 
@@ -142,6 +144,37 @@ If A is already `success` but B has not created its run row yet, polling continu
 
 Dashboard **Running now** counts actual ScrapeRun rows with status `running`, not distinct companies. Two running sources of one Company therefore produce `Running now = 2`.
 
+## Source-management UI
+
+Company create/edit manages Company-level data only. Source-specific
+configuration is managed separately as CompanySource data. Company detail keeps
+the primary Company state, **Update jobs**, and saved jobs prominent; a compact
+Sources summary opens the **Manage sources** dialog for the secondary source
+configuration workflow. The dialog lists multiple sources independently and is
+responsive on narrow viewports.
+
+Manual **Add source** obtains its platform choices from the registry's
+user-selectable API. Lever is currently the only production/user-selectable
+adapter. A valid public jobs URL is required and checked server-side. A manually
+created source starts as `approval_status=approved` and `is_active=True`.
+Fixture remains registered for internal tests but is not offered or accepted as
+a normal user-managed source; Darwinbox and JazzHR are not selectable because
+their adapters do not exist.
+
+The source platform is immutable after creation because CompanySource is both a
+provenance and execution boundary. **Edit source** can update the supported
+source configuration, including its URL, but cannot silently convert the row to
+another platform. A different platform requires a new CompanySource.
+
+Activate and Deactivate are separate POST-only actions. An unapproved or
+unregistered source cannot be made executable. The conservative management
+policy also blocks unsafe editing or deactivation while that source has a
+RUNNING ScrapeRun. Hard deletion and run cancellation are not implemented.
+
+A Company may exist with no CompanySource. The UI exposes the configuration
+action, while **Update jobs** still fails closed when there is no executable
+source. It does not fall back to legacy Company source fields.
+
 ## Implemented
 
 - CompanySource schema foundation and deterministic legacy backfill;
@@ -152,6 +185,8 @@ Dashboard **Running now** counts actual ScrapeRun rows with status `running`, no
 - Company multi-source orchestration and failure isolation;
 - transactional aggregate Company status/time;
 - multi-source-aware polling, Update jobs, and Update all;
+- responsive CompanySource management UI with Add, Edit, Activate, and
+  Deactivate workflows;
 - existing single-source Olo/Lever compatibility.
 
 ## Transitional legacy fields
@@ -165,13 +200,18 @@ The staged migration still retains:
 
 Legacy exactly-one-source resolution remains only for compatibility entry points and tests. Normal Company UI execution uses `submit_company` and does not use legacy fields to choose an execution source.
 
+Normal Company create/edit forms no longer expose or mutate
+`Company.source`/`Company.source_jobs_url`. These fields remain in the schema
+only for staged migration and backward compatibility; final cleanup has not
+been completed.
+
 ## Not implemented
 
-- source-management UI or Add/Edit/Disable Source workflows;
 - automatic Source Discovery or LinkedIn-to-careers discovery;
 - `DarwinboxSourceAdapter`, `JazzHRSourceAdapter`, Greenhouse/Ashby adapters, or `LinkedInSourceAdapter`;
 - cross-source vacancy matching/deduplication or `CanonicalVacancy`;
 - final removal of legacy Company fields or final non-null ownership cleanup;
+- hard deletion of CompanySource or run cancellation;
 - a parent/group ScrapeRun.
 
 ## Acuity reference case
@@ -180,7 +220,11 @@ The architecture can now represent and orchestrate two independent sources for A
 
 ## Conceptual onboarding
 
-For a future Company, identify the official jobs source and its ATS. If a production adapter already exists, create a reviewed CompanySource using that platform key and URL. If the platform is new, implement and approve one shared SourceAdapter, then reuse it for other companies on that ATS. These are architecture steps, not claims about currently available management UI.
+For a future Company, identify the official jobs source and its ATS. If a
+production/user-selectable adapter already exists, use the source-management UI
+to create its CompanySource with the platform key and URL. If the platform is
+new, implement, register, and approve one shared SourceAdapter before exposing
+it to users, then reuse it for other companies on that ATS.
 
 ## Source Discovery status
 
@@ -190,6 +234,8 @@ a CompanySource candidate for review. That investigation currently happens
 manually outside the application. A LinkedIn reference is not executable
 without a separately approved and implemented adapter/access path.
 
-## Next staged slice
+## Next work
 
-Slices 1-3 are complete. The next safe step is Slice 4: source-management UI. Source Discovery and additional ATS integrations remain separate future work.
+Slices 1-4 are complete. The next planned integration work is a Darwinbox
+adapter and the separately reviewed Acuity source configuration. JazzHR,
+Source Discovery, and other ATS integrations remain separate future work.

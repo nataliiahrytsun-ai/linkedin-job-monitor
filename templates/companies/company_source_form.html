@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }} · Job Monitor{% endblock %}
+
+{% block content %}
+  <p class="back-link"><a href="{% url 'companies:detail' company.pk %}">← Back to {{ company.name }}</a></p>
+  <div class="form-container">
+    <p class="eyebrow">Job source management</p>
+    <h1>{{ page_title }}</h1>
+    <p class="section-note">Company: {{ company.name }}</p>
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+      {% if form.non_field_errors %}
+        <div class="form-errors" role="alert">{{ form.non_field_errors }}</div>
+      {% endif %}
+      {% for field in form %}
+        <div class="form-field{% if field.errors %} form-field-error{% endif %}">
+          {% if field.field.widget.input_type == "checkbox" %}
+            <div class="checkbox-field">
+              {{ field }}
+              <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+            </div>
+          {% else %}
+            <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+          {% endif %}
+          {% if field.help_text %}<p class="help-text">{{ field.help_text }}</p>{% endif %}
+          {% if field.errors %}<div class="field-errors" role="alert">{{ field.errors }}</div>{% endif %}
+        </div>
+      {% endfor %}
+      <div class="form-actions">
+        <button class="button button-primary" type="submit">{{ submit_label }}</button>
+        <a class="button button-secondary" href="{% url 'companies:detail' company.pk %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}

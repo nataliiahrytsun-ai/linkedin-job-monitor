@@ -25,8 +25,8 @@ Akzeptanzkriterien. Der aktuell abgeschlossene Produktionsumfang ist jedoch
 source-neutral und verwendet **Lever** als ersten freigegebenen externen
 Source:
 
-- `lever` ist als Production Adapter registriert und in den Company-Formularen
-  auswählbar;
+- `lever` ist als Production Adapter registriert und beim Hinzufügen einer
+  CompanySource auswählbar;
 - `fixture` bleibt als interner Offline-/Test-Adapter registriert, ist aber
   keine auswählbare Production Source;
 - Normalisierung, Persistenz, Reconciliation, `ScrapeRun`, Background
@@ -48,12 +48,15 @@ Der verbindliche aktuelle Status steht in
 [`docs/MILESTONES.md`](MILESTONES.md); reproduzierbare Prüfungen stehen in
 [`docs/BACKEND_VERIFICATION.md`](BACKEND_VERIFICATION.md).
 
-Die nachträglich ergänzte Multi-Source-Architektur ist bis Slice 3 umgesetzt:
+Die nachträglich ergänzte Multi-Source-Architektur ist bis Slice 4 umgesetzt:
 `CompanySource` repräsentiert einen konkreten Job-Feed sowie die Execution
 Boundary. Pipeline, Persistenz, Reconciliation und jeder `ScrapeRun` verwenden
 diesen Source-Kontext. Company Update kann alle freigegebenen aktiven Sources
-unabhängig ausführen. Source-Management-UI und Source Discovery sind weiterhin
-nicht implementiert. Aktueller Contract und Grenzen stehen
+unabhängig ausführen. CompanySource-Konfiguration wird getrennt von Company
+create/edit über die Source-Management-UI verwaltet; mehrere Sources können
+angezeigt, hinzugefügt, bearbeitet und unabhängig aktiviert/deaktiviert werden.
+Source Discovery und zusätzliche ATS-Adapter sind weiterhin nicht implementiert.
+Aktueller Contract und Grenzen stehen
 in [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 
 # Funktionale Anforderungen

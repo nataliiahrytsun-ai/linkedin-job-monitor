@@ -60,9 +60,9 @@ repeatable checks are in
 ## Result
 
 - Company add, edit, and detail views.
-- Registry-backed production Source dropdown: Lever is selectable; Fixture is
-  internal-only. Existing fixture companies can be edited without silently
-  changing their source.
+- Registry-backed production Source selection: Lever is selectable when adding
+  a CompanySource; Fixture is internal-only. Company create/edit no longer
+  manages source-specific fields.
 - Vacancy list, filters, detail display, and active-job information.
 - Company-specific **Update jobs** and global **Update all** actions using the
   controlled background executor.
@@ -106,12 +106,18 @@ slices:
   polling, Update jobs, and Update all are implemented. Its quality gate passed
   with 467 tests and the existing 150 third-party `lxml` warnings; all other
   checks passed.
-- **Slice 4 — source-management UI: Next.** Add/Edit/Disable Source workflows
-  are not implemented.
+- **Slice 4 — source-management UI: Completed.** Company detail now provides a
+  compact source summary and responsive Manage/Add/Edit dialogs. Users can add
+  registry-approved production sources, edit source configuration without
+  changing immutable platform provenance, and independently activate or
+  deactivate eligible sources. RUNNING-source safety and POST-only state
+  changes are enforced. Its quality gate passed with 487 tests and the existing
+  150 third-party `lxml` warnings; all other checks passed.
 
-Source Discovery, Darwinbox/JazzHR adapters, and cross-source
-vacancy deduplication are also not implemented. The current architecture and
-boundaries are documented in
+The next planned work is the Darwinbox adapter and Acuity integration. Source
+Discovery, Darwinbox/JazzHR adapters, cross-source vacancy deduplication, hard
+source deletion, run cancellation, and final legacy cleanup are not implemented
+in this completed slice. The current architecture and boundaries are documented in
 [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 
 LinkedIn remains the original product target, but it is not a current
