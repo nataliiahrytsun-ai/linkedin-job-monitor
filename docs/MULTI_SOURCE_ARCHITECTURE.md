@@ -2,187 +2,194 @@
 
 ## Purpose and current status
 
-The application monitors organisations, but an organisation can publish jobs
-through more than one independent careers feed. `CompanySource` provides the
-ownership boundary needed to keep those feeds separate:
+One monitored organisation can publish jobs through several independent careers feeds:
 
 ```text
 Company
-├── CompanySource
-├── CompanySource
-└── ...
+|-- CompanySource
+|-- CompanySource
+`-- ...
 ```
 
 - `Company` is the monitored organisation.
-- `CompanySource` is one concrete careers site or job feed for that
-  organisation. It stores the platform/source key, `source_jobs_url`, approval
-  status, and active state.
-- `SourceAdapter` is the fetching and mapping implementation for one ATS or
-  platform.
+- `CompanySource` is one concrete careers site or job feed. It stores the platform/source key, `source_jobs_url`, approval status, and active state.
+- `SourceAdapter` is the fetching and mapping implementation for one ATS or platform. One registered adapter can serve many CompanySource rows.
 
-The schema and source-scoped backend ownership are implemented. Execution of
-all sources for one Company and source-management UI are not implemented yet.
+The schema, source ownership, source-scoped persistence/reconciliation, and Company multi-source orchestration are implemented. Source-management UI and additional ATS adapters are not implemented.
 
 ## CompanySource is not an adapter
 
-An adapter is not created separately for every Company. One adapter supports
-many source configurations on the same platform. For example:
+An adapter is not created separately for every Company:
 
 ```text
 LeverSourceAdapter
-├── Olo      -> CompanySource(url=https://jobs.lever.co/olo)
-├── Company B -> CompanySource(url=https://jobs.lever.co/company-b)
-└── Company C -> CompanySource(url=https://jobs.lever.co/company-c)
+|-- Olo       -> CompanySource(url=https://jobs.lever.co/olo)
+|-- Company B -> CompanySource(url=https://jobs.lever.co/company-b)
+`-- Company C -> CompanySource(url=https://jobs.lever.co/company-c)
 ```
 
-Each organisation owns its own `CompanySource`, while all three configurations
-use the single registered `LeverSourceAdapter`. The same architectural rule is
-intended for future Darwinbox, JazzHR, Greenhouse, or other ATS integrations.
-Those adapters are not implied to exist merely because the model can represent
-their sources.
+Each organisation owns its own CompanySource configuration, while all three use the single registered `LeverSourceAdapter`. The same design can support future ATS integrations, but an adapter is not considered supported until it has actually been implemented, registered, and tested.
 
-## Implemented behavior
+## Execution ownership
 
-### Ownership foundation
+`CompanySource` is the execution boundary:
 
-- The `CompanySource` model exists.
-- Legacy Company source configurations were deterministically backfilled into
-  generated CompanySource rows.
-- `JobPosting.company_source` and `ScrapeRun.company_source` provide the source
-  ownership context while remaining nullable for staged migration compatibility.
+```text
+Company
+|-- CompanySource A
+|   `-- ScrapeRun A
+`-- CompanySource B
+    `-- ScrapeRun B
+```
 
-### Pipeline and registry
+Each source is submitted independently, receives its own `ScrapeRun`, owns its request and job counters, and runs persistence and reconciliation only for its own postings. There is no parent or group ScrapeRun.
 
-Production source execution uses an explicit `CompanySource` context. The
-adapter registry selects the implementation through `CompanySource.source`,
-and the adapter receives that source's `source_jobs_url`.
+The database and in-process executor enforce source-level duplicate protection. Two sources of one Company may run concurrently:
 
-### Persistence and identity
+```text
+Acuity / Source A -> RUNNING
+Acuity / Source B -> RUNNING
+```
 
-Production persistence creates and updates a posting inside one
-`CompanySource`. Identity is source-local:
+Two simultaneous runs for the same source are rejected:
+
+```text
+Acuity / Source A -> RUNNING #1
+Acuity / Source A -> RUNNING #2  (rejected)
+```
+
+Legacy ScrapeRun rows without `company_source` retain transitional Company-level RUNNING protection.
+
+## Background orchestration
+
+`ControlledBackgroundExecutor.submit_source(company_source)` validates and submits one explicit CompanySource. Active-task ownership is keyed by `company_source_id`, so work for Source A does not block Source B.
+
+`ControlledBackgroundExecutor.submit_company(company)`:
+
+1. verifies that the Company is active;
+2. reads all CompanySource rows in deterministic primary-key order;
+3. independently submits each eligible source;
+4. reports submitted, already-running, skipped, and failed source IDs.
+
+It does not call `.first()`, select an arbitrary source, or fall back to `Company.source`. A source is executable when the Company is active, the CompanySource is active and approved, its adapter is registered/executable, and its required configuration is accepted by the adapter path. Inactive, unapproved, or unregistered sources are not run. A Company with no executable source fails closed.
+
+## Persistence, identity, and reconciliation
+
+Production persistence creates and updates postings inside one CompanySource. Identity is source-local:
 
 ```text
 (company_source, source_job_id)
 ```
 
-with the existing canonical URL/dedupe-key fallback also scoped to that source.
-The same external ID, title, location, or URL in another CompanySource is not a
-cross-source match.
+The canonical URL/dedupe-key fallback is also scoped to the source. An equal external ID in another CompanySource is not a duplicate.
 
-### Reconciliation
-
-A successful snapshot reconciles only postings owned by the executed
-CompanySource. Seen posting IDs are validated against that same source and an
-ID from another source is rejected rather than silently ignored.
+A successful snapshot reconciles only postings owned by its executed source:
 
 ```text
 Company Acuity
-├── Source A -> posting A
-└── Source B -> posting B
+|-- Source A -> posting A
+`-- Source B -> posting B
 
 Empty SUCCESS snapshot for Source A:
 posting A -> may accumulate a miss and become not_found
 posting B -> unchanged
 ```
 
-This isolation prevents one incomplete or empty feed from deactivating jobs
-owned by another feed of the same Company.
+## Failure isolation
 
-### ScrapeRun
+Company orchestration is not one atomic transaction:
 
-Every new production pipeline run is associated with the executed
-`CompanySource`. The transitional `ScrapeRun.company` field remains consistent
-with `ScrapeRun.company_source.company`.
+```text
+Company
+|-- Source A -> SUCCESS
+`-- Source B -> FAILED
+```
 
-Company-level active-job counters currently aggregate active source postings.
-They do not represent cross-source deduplicated vacancies.
+Source A keeps its successful persistence and reconciliation. Source B keeps its own FAILED ScrapeRun. Its failure neither rolls back Source A nor reconciles Source A jobs. Company-level state is recomputed from both relevant source results.
 
-## Transitional legacy execution
+## Company aggregate state
 
-The staged migration intentionally retains these fields:
+`Company.last_scrape_status` and `Company.last_scraped_at` remain transitional aggregate/cache fields. For active, approved CompanySources, the latest run of each source is evaluated in this order:
 
-- `Company.source`
-- `Company.source_jobs_url`
-- `JobPosting.company`
-- `JobPosting.source`
-- `ScrapeRun.company`
+1. any `running` -> Company `running`;
+2. otherwise any `failed` -> Company `failed`;
+3. otherwise any `partial` -> Company `partial`;
+4. otherwise, if every relevant source has a latest `success` -> Company `success`;
+5. otherwise -> existing `never` semantics.
 
-They remain for backward compatibility, provenance, and the existing UI and
-background entry points. The legacy Company execution path resolves exactly
-one approved, active CompanySource compatible with the legacy configuration.
-It fails closed when there are zero or more than one executable sources. It
-does not use `.first()` or select an arbitrary source.
+`last_scraped_at` is the maximum relevant terminal `finished_at`, not the timestamp from whichever worker callback happened last. Lifecycle transitions recompute these fields transactionally while locking the Company row.
 
-This preserves the existing single-source Olo/Lever flow without claiming that
-Company-wide multi-source orchestration is complete.
+## Polling and Company actions
+
+### Update jobs
+
+Company-level **Update jobs** calls `submit_company(company)`. One executable source produces one execution; two executable sources produce two independent executions. The existing Olo workflow remains unchanged from the user's perspective:
+
+```text
+Olo -> Lever CompanySource -> submit_company(Olo) -> LeverSourceAdapter
+    -> persistence -> reconciliation -> terminal ScrapeRun
+```
+
+### Polling
+
+The submission carries the expected submitted CompanySource IDs and a pre-submission ScrapeRun baseline. The existing read-only status polling waits for a post-baseline run for every expected source and treats the submission as complete only when every such run exists and is no longer `running`.
+
+If A is already `success` but B has not created its run row yet, polling continues. This handles very fast sources without treating the first terminal run as completion of the whole Company submission. Polling uses a five-second interval.
+
+### Update all and Dashboard
+
+**Update all** calls Company orchestration for each eligible active Company. An already-running Source A does not block submission of eligible Source B.
+
+Dashboard **Running now** counts actual ScrapeRun rows with status `running`, not distinct companies. Two running sources of one Company therefore produce `Running now = 2`.
+
+## Implemented
+
+- CompanySource schema foundation and deterministic legacy backfill;
+- CompanySource ownership for JobPosting and ScrapeRun;
+- source-local identity, persistence, and reconciliation;
+- source-level lifecycle and duplicate protection;
+- `submit_source` and `submit_company`;
+- Company multi-source orchestration and failure isolation;
+- transactional aggregate Company status/time;
+- multi-source-aware polling, Update jobs, and Update all;
+- existing single-source Olo/Lever compatibility.
+
+## Transitional legacy fields
+
+The staged migration still retains:
+
+- `Company.source` and `Company.source_jobs_url`;
+- `JobPosting.company` and `JobPosting.source`;
+- `ScrapeRun.company`;
+- nullable source-ownership fields for historical compatibility.
+
+Legacy exactly-one-source resolution remains only for compatibility entry points and tests. Normal Company UI execution uses `submit_company` and does not use legacy fields to choose an execution source.
 
 ## Not implemented
 
-The following are not implemented at the current Slice 2 boundary:
-
-- running all active sources of a Company from one action;
-- source-level background orchestration;
-- parallel or multi-source execution orchestration;
-- multi-source/source-management UI;
-- automatic Source Discovery;
-- automatic LinkedIn-to-careers-source discovery;
-- `DarwinboxSourceAdapter`;
-- `JazzHRSourceAdapter`;
-- `LinkedInSourceAdapter`;
-- cross-source vacancy deduplication;
-- a `CanonicalVacancy` abstraction.
+- source-management UI or Add/Edit/Disable Source workflows;
+- automatic Source Discovery or LinkedIn-to-careers discovery;
+- `DarwinboxSourceAdapter`, `JazzHRSourceAdapter`, Greenhouse/Ashby adapters, or `LinkedInSourceAdapter`;
+- cross-source vacancy matching/deduplication or `CanonicalVacancy`;
+- final removal of legacy Company fields or final non-null ownership cleanup;
+- a parent/group ScrapeRun.
 
 ## Acuity reference case
 
-The Acuity source audit identified a possible architecture:
+The architecture can now represent and orchestrate two independent sources for Acuity. This is architecture capability, not an active integration. Darwinbox and JazzHR adapters are not implemented, Acuity production monitoring is not enabled, and Source Discovery remains manual/outside the application. No vacancy-completeness claim is made.
 
-```text
-Acuity Analytics
-├── Darwinbox
-└── JazzHR
-```
+## Conceptual onboarding
 
-This audited case motivated multi-source ownership because one Company can have
-independent feeds. It is not an active production integration: Darwinbox and
-JazzHR adapters have not been implemented, Acuity multi-source monitoring is
-not enabled, and no completeness claim is made.
+For a future Company, identify the official jobs source and its ATS. If a production adapter already exists, create a reviewed CompanySource using that platform key and URL. If the platform is new, implement and approve one shared SourceAdapter, then reuse it for other companies on that ATS. These are architecture steps, not claims about currently available management UI.
 
-## Conceptual onboarding for a future source
+## Source Discovery status
 
-When investigating a new Company:
-
-1. Identify its official public careers/jobs source.
-2. Identify the ATS or platform behind that source.
-3. Check whether a production adapter for that platform is registered.
-4. If it exists, create a CompanySource with that platform key and source URL.
-5. If the platform is new, implement and approve one SourceAdapter for the
-   platform.
-6. Reuse that adapter for other companies on the same ATS through their own
-   CompanySource rows.
-
-For Company X on Lever, the existing `LeverSourceAdapter` is reused and no new
-adapter is needed. For Company Y on a future Greenhouse source, a
-`GreenhouseSourceAdapter` would first be required if none exists. These are
-architecture steps, not claims about currently available admin or UI workflows.
-
-## Source Discovery
-
-Source Discovery is a proposed future enhancement:
-
-```text
-Company / LinkedIn reference
--> find official Careers site
--> identify ATS
--> create a CompanySource candidate for review
-```
-
-Discovery currently happens outside the application through manual
-investigation. A LinkedIn reference is not an executable source unless a
-separately approved and implemented LinkedIn adapter/access path exists.
+Source Discovery remains a proposed future enhancement: locate an official
+careers site from a Company or LinkedIn reference, identify its ATS, and create
+a CompanySource candidate for review. That investigation currently happens
+manually outside the application. A LinkedIn reference is not executable
+without a separately approved and implemented adapter/access path.
 
 ## Next staged slice
 
-The next safe architecture step is source-level lifecycle/background execution
-and Company multi-source orchestration. This document does not describe that
-Slice 3 work as implemented.
+Slices 1-3 are complete. The next safe step is Slice 4: source-management UI. Source Discovery and additional ATS integrations remain separate future work.

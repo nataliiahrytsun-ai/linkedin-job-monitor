@@ -52,16 +52,16 @@ requests.
 The source-owned production flow is:
 
 ```text
-Company / UI action -> one resolved CompanySource -> source registry
-                    -> SourceAdapter -> SourceBatch -> normalization
-                    -> source-scoped persistence and reconciliation
-                    -> source-owned ScrapeRun -> UI / status polling
+Company / UI action -> submit all approved active CompanySources
+                    -> source registry -> SourceAdapter -> SourceBatch
+                    -> source-scoped normalization, persistence, reconciliation
+                    -> one ScrapeRun per source -> multi-source-aware polling
 ```
 
 One Company can own multiple CompanySource configurations, and one platform
-adapter can serve many companies. Source-scoped ownership is implemented;
-running all sources for one Company and managing them in the UI are not yet
-implemented. See the
+adapter can serve many companies. Background execution, run ownership, and
+reconciliation are source-scoped; a Company update can launch several eligible
+sources independently. Source-management UI is not yet implemented. See the
 [multi-source architecture](docs/MULTI_SOURCE_ARCHITECTURE.md) for the exact
 current and future boundaries.
 

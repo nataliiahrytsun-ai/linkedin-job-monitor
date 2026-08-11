@@ -11,7 +11,6 @@ from jobs.models import JobPosting
 from scrape_runs.models import ScrapeRun
 from scraping.background import (
     BackgroundExecutionError,
-    BackgroundRunAlreadyScheduledError,
 )
 
 
@@ -69,28 +68,21 @@ def home(request: HttpRequest) -> HttpResponse:
 
 @require_POST
 def update_all(request: HttpRequest) -> HttpResponse:
-    """Queue source-neutral monitoring for every active eligible company."""
+    """Submit every executable source of every active Company."""
     active_companies = Company.objects.filter(is_active=True).order_by("pk")
     started_count = 0
     already_running_count = 0
     failed_count = 0
 
     for company in active_companies:
-        if ScrapeRun.objects.filter(
-            company=company,
-            status=ScrapeRun.Status.RUNNING,
-        ).exists():
-            already_running_count += 1
-            continue
-
         try:
-            background_executor.submit_pipeline(company=company)
-        except BackgroundRunAlreadyScheduledError:
-            already_running_count += 1
+            submission = background_executor.submit_company(company=company)
         except BackgroundExecutionError:
             failed_count += 1
         else:
-            started_count += 1
+            started_count += len(submission.submitted_source_ids)
+            already_running_count += len(submission.already_running_source_ids)
+            failed_count += len(submission.failed_source_ids)
 
     if not (started_count or already_running_count or failed_count):
         messages.info(request, "No active companies to update.")
@@ -98,9 +90,9 @@ def update_all(request: HttpRequest) -> HttpResponse:
 
     summary_parts = []
     if started_count:
-        company_label = "company" if started_count == 1 else "companies"
+        source_label = "source" if started_count == 1 else "sources"
         summary_parts.append(
-            f"Monitoring started for {started_count} {company_label}."
+            f"Monitoring started for {started_count} {source_label}."
         )
     if already_running_count:
         summary_parts.append(f"{already_running_count} already running.")

@@ -365,9 +365,9 @@ additional live run or production use.
 - **Selector update:** capture the smallest approved/redacted fragment, add a
   failing fixture test, update only the centralized selector module, and record
   evidence/date.
-- **Scheduler:** after Milestone 2 proves safe execution, add the smallest
-  controlled periodic trigger. Prevent overlapping company runs. Celery/Redis
-  are not justified by this milestone.
+- **Scheduler:** if scheduling is later approved, add the smallest controlled
+  periodic trigger. Preserve the implemented source-level overlap protection;
+  Celery/Redis are not justified by the current scope.
 - **SQLite to PostgreSQL:** keep Django ORM models database-neutral, avoid
   SQLite-specific SQL, test migrations and uniqueness constraints on the target
   database. This is future scope, not implemented here.

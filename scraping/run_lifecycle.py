@@ -78,7 +78,7 @@ class RunNotSavedError(RunLifecycleError):
 
 
 class DuplicateRunningRunError(RunLifecycleError):
-    """The company already has a RUNNING run."""
+    """The CompanySource already has a RUNNING run."""
 
 
 class InvalidRunTransitionError(RunLifecycleError):
@@ -127,24 +127,88 @@ def _validated_company_source(company_source: CompanySourceRecord) -> Any:
         or not model.objects.filter(pk=source_pk).exists()
     ):
         raise CompanyNotSavedError("company source must already be saved")
-    stored_source = (
-        model.objects.select_for_update()
-        .select_related("company")
-        .get(pk=source_pk)
-    )
+    stored_source = model.objects.select_for_update().select_related("company").get(pk=source_pk)
     if company_source.company_id != stored_source.company_id:
-        raise CompanyNotSavedError(
-            "company source company does not match its persisted ownership"
-        )
+        raise CompanyNotSavedError("company source company does not match its persisted ownership")
     return stored_source
 
 
 def _is_duplicate_running_constraint(error: IntegrityError) -> bool:
     message = str(error).lower()
-    return "uniq_running_run_company" in message or (
-        "unique constraint failed" in message
-        and "scrape_runs_scraperun.company_id" in message
+    return (
+        "uniq_running_run_source" in message
+        or "uniq_running_run_company" in message
+        or (
+            "unique constraint failed" in message
+            and (
+                "scrape_runs_scraperun.company_source_id" in message
+                or "scrape_runs_scraperun.company_id" in message
+            )
+        )
     )
+
+
+def _aggregate_company_state(stored_company: Any) -> None:
+    """Recompute the transitional Company cache from executable source runs."""
+    source_ids = list(
+        _company_source_model()
+        .objects.filter(
+            company_id=stored_company.pk,
+            approval_status="approved",
+            is_active=True,
+        )
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
+    latest_by_source: dict[int, Any] = {}
+    if source_ids:
+        for run in (
+            _scrape_run_model()
+            .objects.filter(company_source_id__in=source_ids)
+            .order_by("company_source_id", "-started_at", "-pk")
+        ):
+            latest_by_source.setdefault(run.company_source_id, run)
+
+    latest_runs = tuple(latest_by_source.values())
+    statuses = {run.status for run in latest_runs}
+    if "running" in statuses:
+        aggregate_status = "running"
+    elif "failed" in statuses:
+        aggregate_status = "failed"
+    elif "partial" in statuses:
+        aggregate_status = "partial"
+    elif source_ids and len(latest_runs) == len(source_ids) and statuses == {"success"}:
+        aggregate_status = "success"
+    else:
+        aggregate_status = "never"
+
+    latest_terminal = (
+        _scrape_run_model()
+        .objects.filter(
+            company_source_id__in=source_ids,
+            finished_at__isnull=False,
+        )
+        .order_by("-finished_at", "-pk")
+        .values_list("finished_at", flat=True)
+        .first()
+        if source_ids
+        else None
+    )
+    stored_company.last_scrape_status = aggregate_status
+    stored_company.last_scraped_at = latest_terminal
+    stored_company.save(update_fields=("last_scrape_status", "last_scraped_at"))
+
+
+def recompute_company_scrape_state(*, company_id: int) -> None:
+    """Race-safely refresh Company status/timestamp from source-level runs."""
+    if type(company_id) is not int or company_id < 1:
+        raise CompanyNotSavedError("company_id must identify a saved company")
+    with transaction.atomic():
+        try:
+            stored_company = _company_model().objects.select_for_update().get(pk=company_id)
+        except _company_model().DoesNotExist as error:
+            raise CompanyNotSavedError("company must already be saved") from error
+        _aggregate_company_state(stored_company)
 
 
 def start_scrape_run(
@@ -167,23 +231,18 @@ def start_scrape_run(
         except SourceError as error:
             raise CompanyNotSavedError(str(error)) from error
     elif company is not None:
-        raise CompanyNotSavedError(
-            "provide company_source or legacy company, not both"
-        )
+        raise CompanyNotSavedError("provide company_source or legacy company, not both")
 
     try:
         with transaction.atomic():
             stored_source = _validated_company_source(company_source)
-            stored_company = stored_source.company
+            stored_company = (
+                _company_model().objects.select_for_update().get(pk=stored_source.company_id)
+            )
             if not stored_company.is_active:
                 raise InactiveCompanyError("inactive company cannot start a run")
-            if (
-                stored_source.approval_status != "approved"
-                or not stored_source.is_active
-            ):
-                raise InactiveCompanySourceError(
-                    "company source must be approved and active"
-                )
+            if stored_source.approval_status != "approved" or not stored_source.is_active:
+                raise InactiveCompanySourceError("company source must be approved and active")
 
             run = _scrape_run_model().objects.create(
                 company=stored_company,
@@ -198,18 +257,16 @@ def start_scrape_run(
                 requests_made=0,
                 error_message="",
             )
-            stored_company.last_scrape_status = "running"
-            stored_company.save(update_fields=("last_scrape_status",))
-            company_source.company.last_scrape_status = "running"
+            _aggregate_company_state(stored_company)
+            company_source.company.last_scrape_status = stored_company.last_scrape_status
+            company_source.company.last_scraped_at = stored_company.last_scraped_at
             return cast(ScrapeRunRecord, run)
     except IntegrityError as error:
         if _is_duplicate_running_constraint(error):
             raise DuplicateRunningRunError(
-                "company already has a RUNNING scrape run"
+                "company source already has a RUNNING scrape run"
             ) from error
-        raise RunLifecycleDatabaseError(
-            "database rejected scrape-run start"
-        ) from error
+        raise RunLifecycleDatabaseError("database rejected scrape-run start") from error
 
 
 def _validated_terminal_status(status: TerminalRunStatus | str) -> TerminalRunStatus:
@@ -232,9 +289,7 @@ def _validated_counters(
     }
     for name, value in counters.items():
         if type(value) is not int or value < 0:
-            raise InvalidRunCountersError(
-                f"{name} must be a non-negative int, excluding bool"
-            )
+            raise InvalidRunCountersError(f"{name} must be a non-negative int, excluding bool")
     if jobs_created > jobs_found:
         raise InvalidRunCountersError("jobs_created cannot exceed jobs_found")
     if jobs_updated > jobs_found:
@@ -257,9 +312,8 @@ def _validated_error_message(status: TerminalRunStatus, error_message: str) -> s
 def _duration_seconds(*, started_at: datetime, finished_at: datetime) -> Decimal:
     elapsed = finished_at - started_at
     total_microseconds = (
-        (elapsed.days * 86_400 + elapsed.seconds) * 1_000_000
-        + elapsed.microseconds
-    )
+        elapsed.days * 86_400 + elapsed.seconds
+    ) * 1_000_000 + elapsed.microseconds
     return (Decimal(total_microseconds) / Decimal(1_000_000)).quantize(
         Decimal("0.001"),
         rounding=ROUND_HALF_UP,
@@ -277,9 +331,7 @@ def _validated_stored_run(scrape_run: ScrapeRunRecord) -> Any:
     ):
         raise RunNotSavedError("scrape_run must already be saved")
     return (
-        model.objects.select_for_update()
-        .select_related("company", "company_source")
-        .get(pk=run_pk)
+        model.objects.select_for_update().select_related("company", "company_source").get(pk=run_pk)
     )
 
 
@@ -294,7 +346,7 @@ def finish_scrape_run(
     requests_made: int,
     error_message: str = "",
 ) -> ScrapeRunRecord:
-    """Atomically finish a RUNNING run and synchronize its company status.
+    """Atomically finish one source RUNNING run and recompute Company state.
 
     PARTIAL requires a non-empty explanation because it is not a complete
     successful snapshot. This service deliberately performs no reconciliation.
@@ -314,9 +366,7 @@ def finish_scrape_run(
         with transaction.atomic():
             stored_run = _validated_stored_run(scrape_run)
             if stored_run.status != "running":
-                raise InvalidRunTransitionError(
-                    "only a RUNNING scrape run can be finished"
-                )
+                raise InvalidRunTransitionError("only a RUNNING scrape run can be finished")
             if (
                 stored_run.company_source_id is None
                 or stored_run.company_source.company_id != stored_run.company_id
@@ -325,13 +375,9 @@ def finish_scrape_run(
                     "RUNNING scrape run must have consistent company source ownership"
                 )
             if not _is_aware(stored_run.started_at):
-                raise InvalidRunTimestampError(
-                    "stored started_at must be timezone-aware"
-                )
+                raise InvalidRunTimestampError("stored started_at must be timezone-aware")
             if finished_at < stored_run.started_at:
-                raise InvalidRunTimestampError(
-                    "finished_at cannot be earlier than started_at"
-                )
+                raise InvalidRunTimestampError("finished_at cannot be earlier than started_at")
 
             stored_company = (
                 _company_model().objects.select_for_update().get(pk=stored_run.company_id)
@@ -360,13 +406,7 @@ def finish_scrape_run(
                 )
             )
 
-            stored_company.last_scrape_status = terminal_status.value
-            stored_company.last_scraped_at = finished_at
-            stored_company.save(
-                update_fields=("last_scrape_status", "last_scraped_at")
-            )
+            _aggregate_company_state(stored_company)
             return cast(ScrapeRunRecord, stored_run)
     except IntegrityError as error:
-        raise RunLifecycleDatabaseError(
-            "database rejected scrape-run completion"
-        ) from error
+        raise RunLifecycleDatabaseError("database rejected scrape-run completion") from error

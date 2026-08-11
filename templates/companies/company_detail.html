@@ -232,6 +232,8 @@
       data-status-url="{% url 'scrape_runs:status' %}"
       data-company-id="{{ company.pk }}"
       data-baseline-run-id="{{ company_run_polling.baseline_run_id }}"
+      data-expected-source-ids="{{ company_run_polling.expected_source_ids }}"
+      data-expected-run-ids="{{ company_run_polling.expected_run_ids }}"
       data-mode="{{ company_run_polling.mode }}"
       data-interval-ms="5000"
     ></div>

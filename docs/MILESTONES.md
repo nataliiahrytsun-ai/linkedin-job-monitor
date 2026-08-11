@@ -100,10 +100,16 @@ slices:
   resolution is ambiguous. Its quality gate passed with 444 tests and the
   existing 150 third-party `lxml` deprecation warnings; Ruff, MyPy, Django,
   migration, dependency, and diff checks passed.
-- **Slice 3 — lifecycle/background orchestration: Next.** Source-level
-  scheduling and Company multi-source execution have not been implemented.
+- **Slice 3 — lifecycle/background orchestration: Completed.** Source-level
+  RUNNING protection, background ownership, independent execution and failure
+  isolation, Company orchestration, aggregate status/time, multi-source-aware
+  polling, Update jobs, and Update all are implemented. Its quality gate passed
+  with 467 tests and the existing 150 third-party `lxml` warnings; all other
+  checks passed.
+- **Slice 4 — source-management UI: Next.** Add/Edit/Disable Source workflows
+  are not implemented.
 
-Multi-source UI, Source Discovery, Darwinbox/JazzHR adapters, and cross-source
+Source Discovery, Darwinbox/JazzHR adapters, and cross-source
 vacancy deduplication are also not implemented. The current architecture and
 boundaries are documented in
 [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).

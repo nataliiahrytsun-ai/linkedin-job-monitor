@@ -58,8 +58,13 @@ class ScrapeRun(models.Model):
         constraints: ClassVar[list[Any]] = [
             models.UniqueConstraint(
                 fields=("company",),
-                condition=Q(status="running"),
+                condition=Q(status="running", company_source__isnull=True),
                 name="uniq_running_run_company",
+            ),
+            models.UniqueConstraint(
+                fields=("company_source",),
+                condition=Q(status="running", company_source__isnull=False),
+                name="uniq_running_run_source",
             ),
             models.CheckConstraint(
                 condition=(

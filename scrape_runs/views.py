@@ -67,6 +67,10 @@ def _requested_company_id(raw_company_id: str) -> int | None:
 def scrape_run_status(request: HttpRequest) -> JsonResponse:
     """Return latest, running, and requested run state without starting work."""
     run_ids = _requested_run_ids(request.GET.get("ids", ""))
+    company_source_ids = _requested_run_ids(
+        request.GET.get("company_source_ids", "")
+    )
+    after_id = _requested_after_id(request.GET.get("after_id", ""))
     company_id = _requested_company_id(request.GET.get("company_id", ""))
     run_filter = Q(pk__in=run_ids) | Q(status=ScrapeRun.Status.RUNNING)
     if company_id is not None:
@@ -89,6 +93,26 @@ def scrape_run_status(request: HttpRequest) -> JsonResponse:
             .order_by("-started_at", "-pk")
             .first()
         )
+    expected_source_runs: list[dict[str, object] | None] = []
+    if company_id is not None:
+        for company_source_id in company_source_ids:
+            source_run = (
+                ScrapeRun.objects.filter(
+                    company_id=company_id,
+                    company_source_id=company_source_id,
+                    pk__gt=after_id,
+                )
+                .select_related("company")
+                .order_by("-started_at", "-pk")
+                .first()
+            )
+            expected_source_runs.append(
+                _serialize_run(source_run) if source_run else None
+            )
+    submission_complete = bool(company_source_ids) and all(
+        run is not None and bool(run["is_terminal"])
+        for run in expected_source_runs
+    )
     return JsonResponse(
         {
             "latest_run": _serialize_run(latest_run) if latest_run else None,
@@ -96,8 +120,19 @@ def scrape_run_status(request: HttpRequest) -> JsonResponse:
                 _serialize_run(company_latest_run) if company_latest_run else None
             ),
             "runs": [_serialize_run(run) for run in runs],
+            "expected_source_runs": expected_source_runs,
+            "submission_complete": submission_complete,
         }
     )
+
+
+def _requested_after_id(raw_after_id: str) -> int:
+    """Parse a non-negative post-submission run baseline."""
+    try:
+        after_id = int(raw_after_id)
+    except ValueError:
+        return 0
+    return after_id if after_id >= 0 else 0
 
 
 def _serialize_run(run: ScrapeRun) -> dict[str, object]:
@@ -105,6 +140,7 @@ def _serialize_run(run: ScrapeRun) -> dict[str, object]:
     return {
         "id": run.pk,
         "company": run.company.name,
+        "company_source_id": run.company_source_id,
         "status": run.status,
         "is_terminal": run.status != ScrapeRun.Status.RUNNING,
         "started_at": run.started_at.isoformat(),

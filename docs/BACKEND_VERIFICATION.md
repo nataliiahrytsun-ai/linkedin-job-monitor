@@ -5,58 +5,67 @@
 The current source-owned path is:
 
 ```text
-Company / UI action -> exactly one resolved CompanySource
-                    -> background execution -> immutable source registry
-                    -> SourceAdapter -> SourceBatch -> normalization
-                    -> source-scoped persistence -> source-scoped reconciliation
-                    -> source-owned ScrapeRun
-                    -> Dashboard / Company / ScrapeRun UI and status polling
+Company / UI action -> submit_company -> eligible CompanySources
+                    -> source-level background execution
+                    -> immutable source registry -> SourceAdapter -> SourceBatch
+                    -> normalization -> source-scoped persistence/reconciliation
+                    -> one source-owned ScrapeRun per execution
+                    -> aggregate Company state and multi-source-aware polling
 ```
 
-`JobPosting` identity and successful-snapshot reconciliation are isolated by
-`CompanySource`. Tests cover equal external IDs in two sources of one Company,
-empty-snapshot isolation in both source directions, foreign-source seen-ID
-rejection, explicit source URL delivery to the adapter, and fail-closed legacy
-resolution with zero or multiple executable sources.
+`CompanySource` is the execution and ownership boundary. Tests cover independent
+RUNNING runs for two sources of one Company, same-source duplicate rejection,
+deterministic Company orchestration, failure isolation, source-scoped identity
+and reconciliation, aggregate Company state, and the fast-source polling race.
 
 The shared pipeline supports two deliberately different source roles:
 
-- `lever`: current production and user-selectable adapter. The executable
+- `lever`: current production and user-selectable adapter. An executable
   CompanySource stores `source="lever"` and a public URL such as
-  `https://jobs.lever.co/olo`; matching legacy Company fields remain during the
-  staged migration.
+  `https://jobs.lever.co/olo`.
 - `fixture`: registered internal/test adapter. It reads local synthetic data,
-  reports `requests_made=0`, and remains available to pipeline tests, but it is
-  excluded from Add Company and rejected as a user-assigned source.
+  reports `requests_made=0`, and is excluded from Add Company.
 
-LinkedIn has no production adapter or registry key. Its spike and diagnostic
-artifacts are historical feasibility evidence only.
+LinkedIn has no production adapter or registry key. Darwinbox and JazzHR are
+also not implemented. Their audit artifacts are not production support.
+
+## Source-level orchestration proof
+
+`submit_source(company_source)` owns one explicit source execution. Active
+tasks are keyed by `company_source_id`. `submit_company(company)` evaluates all
+CompanySource rows in deterministic order and independently reports submitted,
+already-running, skipped, and failed source IDs. It does not use legacy
+Company fields to select one source.
+
+The regression suite proves:
+
+- two eligible sources create two independently owned ScrapeRun rows;
+- one already-running source does not block another eligible source;
+- inactive/unapproved sources are skipped and zero executable sources fail
+  closed;
+- one source may succeed while another fails without rollback or cross-source
+  reconciliation;
+- Company aggregate state is independent of callback order;
+- polling requires a post-baseline terminal run for every submitted source.
 
 ## Lever multi-page integration proof
 
 `test_lever_multi_page_submission_persists_complete_snapshot_without_network`
-in `tests/test_background.py` enters through the production background
-submission path. The registry selects `LeverSourceAdapter`; injected fake HTTP
-returns the existing two JSON fixtures:
+in `tests/test_background.py` enters through the production background path.
+The registry selects `LeverSourceAdapter`; injected fake HTTP returns two JSON
+fixtures:
 
 ```text
 request 1: limit=2, skip=0 -> lever-1, lever-2
 request 2: limit=2, skip=2 -> lever-3
 ```
 
-The test verifies exactly two calls, three normalized/persisted jobs, the
-expected source IDs and titles, reconciliation of the complete snapshot, a
-terminal `SUCCESS` ScrapeRun, and `requests_made=2`. It uses the pytest
-temporary database and performs no real network request.
-
-Additional coverage verifies adapter URL validation and mapping, pagination
-termination and limits, duplicate IDs, timeout/error conversion, registry
-routing, fixture execution, persistence updates, partial/failed runs,
-reconciliation, background duplicate-run protection, and UI status contracts.
+The test verifies two calls, three normalized/persisted jobs, reconciliation,
+a terminal SUCCESS ScrapeRun, and `requests_made=2`. A separate Olo regression
+proves that the single Lever CompanySource is submitted through
+`submit_company`. No real network request is made.
 
 ## Reproducible checks
-
-Install the runtime and pinned development tools through the dev requirements:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
@@ -69,30 +78,29 @@ Install the runtime and pinned development tools through the dev requirements:
 git diff --check
 ```
 
-Bootstrap tests override Django's database configuration with a unique
-temporary SQLite path. The working repository `db.sqlite3` is not a test
-precondition and must not be opened, migrated, replaced, or removed for the
+Bootstrap and migration tests use unique temporary SQLite paths. The working
+repository `db.sqlite3` is not opened, migrated, replaced, or removed for the
 verification gate.
 
-## Current verified baseline
+## Current verified Slice 3 baseline
 
-The verified Slice 2 ownership baseline is:
-
-- `pytest`: **444 passed**, with 150 existing third-party `lxml` deprecation
+- targeted tests: **294 passed**;
+- Olo/Lever `submit_company` regression: **1 passed**;
+- full pytest: **467 passed**, with 150 existing third-party `lxml` deprecation
   warnings;
 - Ruff: **All checks passed**;
-- MyPy: **Success, no issues found**;
-- `pip check`: **No broken requirements found**;
+- MyPy: **Success — 28 source files**;
 - Django system check: **0 issues**;
 - migration check: **No changes detected**;
+- `pip check`: **No broken requirements found**;
 - `git diff --check`: **Pass**.
+
+These checks used temporary database configuration. The working `db.sqlite3`
+was not opened or used, and no job-source network requests were performed.
 
 ## Scope boundary
 
-This evidence verifies the current application, the production Lever path, and
-Slice 2 source ownership. It does not verify future Company-wide multi-source
-orchestration, Source Discovery, Darwinbox/JazzHR adapters, or a production
-LinkedIn integration. It does not authorize LinkedIn collection or prove
-collection of every vacancy exposed by an external service. Live Olo
-verification is an already-completed manual check; normal automated checks stay
-offline.
+This evidence verifies Slice 3 Company multi-source orchestration and the
+existing production Lever path. It does not verify or claim source-management
+UI, Source Discovery, Darwinbox/JazzHR/LinkedIn adapters, Acuity production
+integration, cross-source vacancy deduplication, or any future Slice 4 work.

@@ -65,6 +65,26 @@ def create_company(**overrides: object) -> Any:
     return company_record
 
 
+def company_submission(
+    company: Any,
+    *,
+    submitted: tuple[int, ...] = (),
+    already_running: tuple[int, ...] = (),
+    failed: tuple[int, ...] = (),
+) -> Any:
+    result_type = importlib.import_module("scraping.background").CompanySubmissionResult
+    handles = tuple(
+        type("Handle", (), {"company_source_id": source_id})() for source_id in submitted
+    )
+    return result_type(
+        company_id=company.pk,
+        submitted=handles,
+        already_running_source_ids=already_running,
+        skipped_source_ids=(),
+        failed_source_ids=failed,
+    )
+
+
 def create_job(company: Any, **overrides: object) -> Any:
     sequence = model("jobs.JobPosting").objects.count() + 1
     values: dict[str, object] = {
@@ -85,12 +105,13 @@ def create_scrape_run(
     *,
     status: str,
     started_at: datetime,
+    company_source: Any | None = None,
     error_message: str = "",
 ) -> Any:
     terminal = status != "running"
     return model("scrape_runs.ScrapeRun").objects.create(
         company=company,
-        company_source=company.sources.get(),
+        company_source=company_source or company.sources.get(),
         status=status,
         started_at=started_at,
         finished_at=started_at + timedelta(seconds=1) if terminal else None,
@@ -275,9 +296,7 @@ def test_company_list_responsive_layout_contract() -> None:
     assert ".responsive-field-label" in tablet_css
     assert "white-space: nowrap" in tablet_css
     assert "@media (min-width: 48.01rem) and (max-width: 70rem)" in tablet_css
-    tablet_alignment_start = tablet_css.index(
-        "@media (min-width: 48.01rem) and (max-width: 70rem)"
-    )
+    tablet_alignment_start = tablet_css.index("@media (min-width: 48.01rem) and (max-width: 70rem)")
     tablet_alignment_css = tablet_css[tablet_alignment_start:]
     assert "grid-template-rows: 1fr 1fr" in tablet_alignment_css
     assert "row-gap: 0.35rem" in tablet_alignment_css
@@ -381,12 +400,10 @@ def test_company_detail_shows_safe_source_link_and_missing_url_fallback() -> Non
         is_active=False,
     )
 
-    configured_html = client().get(
-        reverse("companies:detail", args=(configured.pk,))
-    ).content.decode()
-    missing_html = client().get(
-        reverse("companies:detail", args=(missing.pk,))
-    ).content.decode()
+    configured_html = (
+        client().get(reverse("companies:detail", args=(configured.pk,))).content.decode()
+    )
+    missing_html = client().get(reverse("companies:detail", args=(missing.pk,))).content.decode()
 
     assert 'href="https://jobs.example.test/example/openings"' in configured_html
     assert 'target="_blank"' in configured_html
@@ -426,9 +443,7 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
         source_job_url=None,
         status="not_found",
     )
-    closed = create_job(
-        company, source_job_id="closed-job", title="Closed Role", status="closed"
-    )
+    closed = create_job(company, source_job_id="closed-job", title="Closed Role", status="closed")
     create_job(other_company, source_job_id="hidden-job", title="Hidden Other Job")
 
     response = client().get(reverse("companies:detail", args=(company.pk,)))
@@ -460,8 +475,7 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
     assert ">Open</a>" not in jobs_html
     for posting in (newer, older, closed):
         assert (
-            f'<a href="{reverse("jobs:detail", args=(posting.pk,))}">'
-            f"{posting.title}</a>"
+            f'<a href="{reverse("jobs:detail", args=(posting.pk,))}">{posting.title}</a>'
         ) in jobs_html
     assert 'class="status-badge status-active">ACTIVE</span>' in jobs_html
     assert 'class="status-badge">NOT_FOUND</span>' in jobs_html
@@ -557,12 +571,9 @@ def test_company_detail_filter_ui_reuses_column_popovers_and_clean_company_url()
     form_start = html.index('<form class="jobs-table-filter-form"')
     filter_form = html[form_start : html.index("</form>", form_start)]
 
+    assert f'action="{reverse("companies:detail", args=(company.pk,))}"' in filter_form
     assert (
-        f'action="{reverse("companies:detail", args=(company.pk,))}"' in filter_form
-    )
-    assert (
-        f'href="{reverse("companies:detail", args=(company.pk,))}">Clear filters</a>'
-        in filter_form
+        f'href="{reverse("companies:detail", args=(company.pk,))}">Clear filters</a>' in filter_form
     )
     assert filter_form.count('<details class="column-filter') == 5
     for label in (
@@ -671,16 +682,14 @@ def test_runtime_fixture_setting_uses_tracked_demo_data_not_test_fixtures() -> N
     settings = importlib.import_module("django.conf").settings
     expected = Path(settings.BASE_DIR) / "data" / "fixtures" / "demo_jobs.json"
     test_fixture = Path(__file__).parent / "fixtures" / "backend" / "run_1.json"
-    view_source = (
-        Path(__file__).resolve().parents[1] / "companies" / "views.py"
-    ).read_text(encoding="utf-8")
+    view_source = (Path(__file__).resolve().parents[1] / "companies" / "views.py").read_text(
+        encoding="utf-8"
+    )
 
     assert isinstance(settings.JOB_MONITOR_FIXTURE_PATH, Path)
     assert expected == settings.JOB_MONITOR_FIXTURE_PATH
     assert expected.is_file()
-    assert expected.read_text(encoding="utf-8") == test_fixture.read_text(
-        encoding="utf-8"
-    )
+    assert expected.read_text(encoding="utf-8") == test_fixture.read_text(encoding="utf-8")
     assert '"tests" / "fixtures"' not in view_source
 
 
@@ -688,7 +697,7 @@ def test_update_jobs_requires_post_and_get_starts_nothing() -> None:
     company = create_company()
     update_url = reverse("companies:update_jobs", args=(company.pk,))
 
-    with patch("companies.views.background_executor.submit_pipeline") as submit:
+    with patch("companies.views.background_executor.submit_company") as submit:
         response = client().get(update_url)
 
     assert response.status_code == 405
@@ -700,11 +709,17 @@ def test_update_jobs_submits_source_neutral_background_task_and_redirects() -> N
     company = create_company()
     browser = client()
     update_url = reverse("companies:update_jobs", args=(company.pk,))
-    with patch("companies.views.background_executor.submit_pipeline") as submit:
+    source_id = company.sources.get().pk
+    with patch(
+        "companies.views.background_executor.submit_company",
+        return_value=company_submission(company, submitted=(source_id,)),
+    ) as submit:
         response = browser.post(update_url)
 
     assert response.status_code == 302
-    assert response.url == f'{reverse("companies:detail", args=(company.pk,))}?watch_after=0'
+    assert response.url == (
+        f"{reverse('companies:detail', args=(company.pk,))}?watch_after=0&watch_sources={source_id}"
+    )
     submit.assert_called_once()
     assert submit.call_args.kwargs["company"].pk == company.pk
     assert set(submit.call_args.kwargs) == {"company"}
@@ -712,11 +727,12 @@ def test_update_jobs_submits_source_neutral_background_task_and_redirects() -> N
     assert "Job update started." in detail_html
     assert 'id="company-run-polling"' in detail_html
     assert 'data-baseline-run-id="0"' in detail_html
-    assert 'data-mode="new"' in detail_html
+    assert 'data-mode="submission"' in detail_html
+    assert f'data-expected-source-ids="{source_id}"' in detail_html
     assert 'src="/static/js/company_run_polling.js"' in detail_html
     javascript = Path("static/js/company_run_polling.js").read_text(encoding="utf-8")
-    assert "maxNewRunChecks = 24" in javascript
-    assert "remainingNewRunChecks <= 0" in javascript
+    assert "maxSubmissionChecks = 24" in javascript
+    assert "remainingSubmissionChecks <= 0" in javascript
 
 
 def test_update_jobs_view_does_not_inspect_configured_fixture_path(
@@ -729,12 +745,18 @@ def test_update_jobs_view_does_not_inspect_configured_fixture_path(
 
     with (
         override_settings(JOB_MONITOR_FIXTURE_PATH=missing_fixture),
-        patch("companies.views.background_executor.submit_pipeline") as submit,
+        patch(
+            "companies.views.background_executor.submit_company",
+            return_value=company_submission(
+                company,
+                submitted=(company.sources.get().pk,),
+            ),
+        ) as submit,
     ):
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
-    assert response.url == f'{reverse("companies:detail", args=(company.pk,))}?watch_after=0'
+    assert response.url.endswith(f"?watch_after=0&watch_sources={company.sources.get().pk}")
     submit.assert_called_once_with(company=company)
     assert b"Job update started." in browser.get(response.url).content
 
@@ -748,9 +770,12 @@ def test_company_polling_detects_fast_terminal_run_created_after_baseline() -> N
     )
     watched_page = client().get(
         reverse("companies:detail", args=(company.pk,)),
-        {"watch_after": old_run.pk},
+        {
+            "watch_after": old_run.pk,
+            "watch_sources": company.sources.get().pk,
+        },
     )
-    assert 'data-mode="new"' in watched_page.content.decode()
+    assert 'data-mode="submission"' in watched_page.content.decode()
 
     new_run = create_scrape_run(
         company,
@@ -759,13 +784,111 @@ def test_company_polling_detects_fast_terminal_run_created_after_baseline() -> N
     )
     response = client().get(
         reverse("scrape_runs:status"),
-        {"company_id": company.pk, "ids": old_run.pk},
+        {
+            "company_id": company.pk,
+            "company_source_ids": company.sources.get().pk,
+            "after_id": old_run.pk,
+        },
     )
     payload = response.json()
 
     assert payload["company_latest_run"]["id"] == new_run.pk
     assert payload["company_latest_run"]["status"] == "success"
     assert payload["company_latest_run"]["is_terminal"] is True
+    assert payload["submission_complete"] is True
+
+
+def test_company_polling_waits_for_every_expected_source_after_baseline() -> None:
+    company = create_company()
+    first_source = company.sources.get()
+    second_source = model("companies.CompanySource").objects.create(
+        company=company,
+        source="fixture",
+        source_jobs_url="https://jobs.example.test/example/secondary",
+        approval_status="approved",
+        is_active=True,
+    )
+    baseline = create_scrape_run(
+        company,
+        company_source=first_source,
+        status="success",
+        started_at=datetime(2026, 8, 11, 8, tzinfo=UTC),
+    )
+    first_terminal = create_scrape_run(
+        company,
+        company_source=first_source,
+        status="success",
+        started_at=datetime(2026, 8, 11, 9, tzinfo=UTC),
+    )
+    query = {
+        "company_id": company.pk,
+        "company_source_ids": f"{first_source.pk},{second_source.pk}",
+        "after_id": baseline.pk,
+    }
+
+    missing_payload = client().get(reverse("scrape_runs:status"), query).json()
+    assert missing_payload["submission_complete"] is False
+    assert missing_payload["expected_source_runs"][0]["id"] == first_terminal.pk
+    assert missing_payload["expected_source_runs"][0]["company_source_id"] == (first_source.pk)
+    assert missing_payload["expected_source_runs"][1] is None
+
+    second_running = create_scrape_run(
+        company,
+        company_source=second_source,
+        status="running",
+        started_at=datetime(2026, 8, 11, 9, 1, tzinfo=UTC),
+    )
+    running_payload = client().get(reverse("scrape_runs:status"), query).json()
+    assert running_payload["submission_complete"] is False
+    assert running_payload["expected_source_runs"][1]["id"] == second_running.pk
+    assert running_payload["expected_source_runs"][1]["is_terminal"] is False
+
+    second_running.status = "failed"
+    second_running.finished_at = datetime(2026, 8, 11, 9, 2, tzinfo=UTC)
+    second_running.duration_seconds = Decimal("60.000")
+    second_running.error_message = "source failed"
+    second_running.save()
+    terminal_payload = client().get(reverse("scrape_runs:status"), query).json()
+    assert terminal_payload["submission_complete"] is True
+    assert [run["status"] for run in terminal_payload["expected_source_runs"]] == [
+        "success",
+        "failed",
+    ]
+
+
+def test_unrelated_newer_run_does_not_complete_expected_source_submission() -> None:
+    company = create_company(name="Expected Company")
+    expected_source = company.sources.get()
+    unrelated = create_company(
+        name="Unrelated Company",
+        source_jobs_url="https://jobs.example.test/unrelated/openings",
+    )
+    baseline = create_scrape_run(
+        company,
+        status="success",
+        started_at=datetime(2026, 8, 11, 8, tzinfo=UTC),
+    )
+    create_scrape_run(
+        unrelated,
+        status="success",
+        started_at=datetime(2026, 8, 11, 9, tzinfo=UTC),
+    )
+
+    payload = (
+        client()
+        .get(
+            reverse("scrape_runs:status"),
+            {
+                "company_id": company.pk,
+                "company_source_ids": expected_source.pk,
+                "after_id": baseline.pk,
+            },
+        )
+        .json()
+    )
+
+    assert payload["expected_source_runs"] == [None]
+    assert payload["submission_complete"] is False
 
 
 def test_company_polling_tracks_running_to_terminal_then_stops() -> None:
@@ -776,15 +899,12 @@ def test_company_polling_tracks_running_to_terminal_then_stops() -> None:
         started_at=datetime(2026, 8, 11, 10, tzinfo=UTC),
     )
 
-    running_html = client().get(
-        reverse("companies:detail", args=(company.pk,))
-    ).content.decode()
+    running_html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
     assert 'data-mode="running"' in running_html
-    assert f'data-baseline-run-id="{running.pk}"' in running_html
+    assert 'data-baseline-run-id="0"' in running_html
+    assert f'data-expected-run-ids="{running.pk}"' in running_html
 
-    finish_scrape_run = importlib.import_module(
-        "scraping.run_lifecycle"
-    ).finish_scrape_run
+    finish_scrape_run = importlib.import_module("scraping.run_lifecycle").finish_scrape_run
     finish_scrape_run(
         scrape_run=running,
         status="success",
@@ -794,19 +914,21 @@ def test_company_polling_tracks_running_to_terminal_then_stops() -> None:
         jobs_updated=0,
         requests_made=0,
     )
-    endpoint_payload = client().get(
-        reverse("scrape_runs:status"),
-        {"company_id": company.pk, "ids": running.pk},
-    ).json()
-    terminal_html = client().get(
-        reverse("companies:detail", args=(company.pk,))
-    ).content.decode()
+    endpoint_payload = (
+        client()
+        .get(
+            reverse("scrape_runs:status"),
+            {"company_id": company.pk, "ids": running.pk},
+        )
+        .json()
+    )
+    terminal_html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
 
     assert endpoint_payload["company_latest_run"]["is_terminal"] is True
     assert 'id="company-run-polling"' not in terminal_html
     javascript = Path("static/js/company_run_polling.js").read_text(encoding="utf-8")
     assert 'mode === "running"' in javascript
-    assert "latestRun.is_terminal" in javascript
+    assert "expectedRunIds.every" in javascript
     assert "window.location.reload()" in javascript
 
 
@@ -830,10 +952,14 @@ def test_other_company_run_does_not_change_company_specific_status() -> None:
         started_at=datetime(2026, 8, 11, 11, tzinfo=UTC),
     )
 
-    payload = client().get(
-        reverse("scrape_runs:status"),
-        {"company_id": watched_company.pk, "ids": watched_run.pk},
-    ).json()
+    payload = (
+        client()
+        .get(
+            reverse("scrape_runs:status"),
+            {"company_id": watched_company.pk, "ids": watched_run.pk},
+        )
+        .json()
+    )
 
     assert payload["latest_run"]["id"] == other_run.pk
     assert payload["company_latest_run"]["id"] == watched_run.pk
@@ -851,7 +977,7 @@ def test_company_status_polling_endpoint_is_read_only_and_starts_no_work() -> No
     before_run = model("scrape_runs.ScrapeRun").objects.values().get(pk=run.pk)
 
     with (
-        patch("companies.views.background_executor.submit_pipeline") as submit,
+        patch("companies.views.background_executor.submit_company") as submit,
         patch("scraping.pipeline.run_source_pipeline") as pipeline,
     ):
         response = client().get(
@@ -870,16 +996,14 @@ def test_update_jobs_rejects_inactive_company_without_submission() -> None:
     company = create_company(is_active=False)
     browser = client()
 
-    with patch("companies.views.background_executor.submit_pipeline") as submit:
+    with patch("companies.views.background_executor.submit_company") as submit:
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
     submit.assert_not_called()
     company.refresh_from_db()
     assert company.is_active is False
-    assert b"Activate this company before updating jobs." in browser.get(
-        response.url
-    ).content
+    assert b"Activate this company before updating jobs." in browser.get(response.url).content
 
 
 def test_update_jobs_reports_controlled_unknown_source_submission_error() -> None:
@@ -888,7 +1012,7 @@ def test_update_jobs_reports_controlled_unknown_source_submission_error() -> Non
 
     source_error = importlib.import_module("scraping.background").BackgroundSourceError
     with patch(
-        "companies.views.background_executor.submit_pipeline",
+        "companies.views.background_executor.submit_company",
         side_effect=source_error("unknown source"),
     ) as submit:
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
@@ -900,39 +1024,42 @@ def test_update_jobs_reports_controlled_unknown_source_submission_error() -> Non
 
 def test_update_jobs_reports_existing_running_run_without_submission() -> None:
     company = create_company()
-    model("scrape_runs.ScrapeRun").objects.create(company=company)
+    source = company.sources.get()
+    model("scrape_runs.ScrapeRun").objects.create(
+        company=company,
+        company_source=source,
+    )
     browser = client()
 
-    with patch("companies.views.background_executor.submit_pipeline") as submit:
+    with patch(
+        "companies.views.background_executor.submit_company",
+        return_value=company_submission(company, already_running=(source.pk,)),
+    ) as submit:
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
-    submit.assert_not_called()
+    submit.assert_called_once_with(company=company)
     assert model("scrape_runs.ScrapeRun").objects.filter(company=company).count() == 1
-    assert b"A job update is already running for this company." in browser.get(
-        response.url
-    ).content
+    assert b"A job update is already running." in browser.get(response.url).content
 
 
 def test_update_jobs_reports_executor_duplicate_without_second_run() -> None:
     company = create_company()
     browser = client()
-    duplicate_error = importlib.import_module(
-        "scraping.background"
-    ).BackgroundRunAlreadyScheduledError
 
     with patch(
-        "companies.views.background_executor.submit_pipeline",
-        side_effect=duplicate_error("already scheduled"),
+        "companies.views.background_executor.submit_company",
+        return_value=company_submission(
+            company,
+            already_running=(company.sources.get().pk,),
+        ),
     ) as submit:
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
     submit.assert_called_once()
     assert model("scrape_runs.ScrapeRun").objects.count() == 0
-    assert b"A job update is already running for this company." in browser.get(
-        response.url
-    ).content
+    assert b"A job update is already running." in browser.get(response.url).content
 
 
 def test_unknown_company_detail_returns_not_found() -> None:

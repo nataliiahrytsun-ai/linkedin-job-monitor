@@ -377,5 +377,7 @@ class ScrapeRunPollingEndpointTests(TestCase):  # type: ignore[misc]
             "latest_run": None,
             "company_latest_run": None,
             "runs": [],
+            "expected_source_runs": [],
+            "submission_complete": False,
         }
         assert model("scrape_runs.ScrapeRun").objects.count() == 0

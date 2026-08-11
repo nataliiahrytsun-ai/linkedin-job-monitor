@@ -14,7 +14,6 @@ from jobs.views import _apply_filters
 from scrape_runs.models import ScrapeRun
 from scraping.background import (
     BackgroundExecutionError,
-    BackgroundRunAlreadyScheduledError,
     ControlledBackgroundExecutor,
 )
 
@@ -56,19 +55,26 @@ def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
     active_job_count = company.job_postings.filter(
         status=JobPosting.Status.ACTIVE
     ).count()
-    latest_run = company.scrape_runs.order_by("-started_at", "-pk").first()
     watch_after_run_id = _watch_after_run_id(request)
-    if latest_run and latest_run.status == ScrapeRun.Status.RUNNING:
+    watched_source_ids = _watch_source_ids(request, company_id=company.pk)
+    running_run_ids = tuple(
+        company.scrape_runs.filter(status=ScrapeRun.Status.RUNNING)
+        .order_by("company_source_id", "pk")
+        .values_list("pk", flat=True)
+    )
+    if watched_source_ids:
         company_run_polling = {
-            "baseline_run_id": latest_run.pk,
-            "mode": "running",
+            "baseline_run_id": watch_after_run_id or 0,
+            "expected_source_ids": ",".join(map(str, watched_source_ids)),
+            "expected_run_ids": "",
+            "mode": "submission",
         }
-    elif watch_after_run_id is not None and (
-        latest_run is None or latest_run.pk == watch_after_run_id
-    ):
+    elif running_run_ids:
         company_run_polling = {
-            "baseline_run_id": watch_after_run_id,
-            "mode": "new",
+            "baseline_run_id": 0,
+            "expected_source_ids": "",
+            "expected_run_ids": ",".join(map(str, running_run_ids)),
+            "mode": "running",
         }
     else:
         company_run_polling = None
@@ -96,6 +102,26 @@ def _watch_after_run_id(request: HttpRequest) -> int | None:
     except ValueError:
         return None
     return run_id if run_id >= 0 else None
+
+
+def _watch_source_ids(request: HttpRequest, *, company_id: int) -> tuple[int, ...]:
+    """Return bounded submitted source IDs that belong to this Company."""
+    parsed: list[int] = []
+    for token in request.GET.get("watch_sources", "").split(",")[:100]:
+        try:
+            source_id = int(token)
+        except ValueError:
+            continue
+        if source_id > 0 and source_id not in parsed:
+            parsed.append(source_id)
+    if not parsed:
+        return ()
+    valid_ids = set(
+        Company.objects.get(pk=company_id)
+        .sources.filter(pk__in=parsed)
+        .values_list("pk", flat=True)
+    )
+    return tuple(source_id for source_id in parsed if source_id in valid_ids)
 
 
 def company_create(request: HttpRequest) -> HttpResponse:
@@ -140,19 +166,12 @@ def company_toggle_active(request: HttpRequest, pk: int) -> HttpResponse:
 
 @require_POST
 def company_update_jobs(request: HttpRequest, pk: int) -> HttpResponse:
-    """Queue the existing fixture pipeline for one eligible company."""
+    """Queue all executable CompanySources for one active Company."""
     company = get_object_or_404(Company, pk=pk)
 
     if not company.is_active:
         messages.error(request, "Activate this company before updating jobs.")
         return redirect("companies:detail", pk=company.pk)
-    if ScrapeRun.objects.filter(company=company, status=ScrapeRun.Status.RUNNING).exists():
-        messages.warning(
-            request,
-            "A job update is already running for this company.",
-        )
-        return redirect("companies:detail", pk=company.pk)
-
     latest_run_id = (
         ScrapeRun.objects.filter(company=company)
         .order_by("-started_at", "-pk")
@@ -160,16 +179,33 @@ def company_update_jobs(request: HttpRequest, pk: int) -> HttpResponse:
         .first()
     )
     try:
-        background_executor.submit_pipeline(company=company)
-    except BackgroundRunAlreadyScheduledError:
-        messages.warning(
-            request,
-            "A job update is already running for this company.",
-        )
+        submission = background_executor.submit_company(company=company)
     except BackgroundExecutionError:
         messages.error(request, "Job update could not be started.")
     else:
-        messages.success(request, "Job update started.")
+        submitted_count = len(submission.submitted_source_ids)
+        already_count = len(submission.already_running_source_ids)
+        failed_count = len(submission.failed_source_ids)
+        if submitted_count:
+            text = (
+                "Job update started."
+                if submitted_count == 1
+                else f"Job updates started for {submitted_count} sources."
+            )
+            if already_count or failed_count:
+                messages.warning(request, text)
+            else:
+                messages.success(request, text)
+        elif already_count:
+            messages.warning(request, "A job update is already running.")
+        else:
+            messages.error(request, "Job update could not be started.")
+
+        if not submitted_count:
+            return redirect("companies:detail", pk=company.pk)
         detail_url = reverse("companies:detail", args=(company.pk,))
-        return redirect(f"{detail_url}?watch_after={latest_run_id or 0}")
+        source_ids = ",".join(map(str, submission.submitted_source_ids))
+        return redirect(
+            f"{detail_url}?watch_after={latest_run_id or 0}&watch_sources={source_ids}"
+        )
     return redirect("companies:detail", pk=company.pk)

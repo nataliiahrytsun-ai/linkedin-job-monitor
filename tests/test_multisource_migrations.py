@@ -189,3 +189,74 @@ def test_company_source_data_migration_fails_closed_on_job_source_mismatch(
             assert JobPosting.objects.get().company_source_id is None
         """,
     )
+
+
+def test_running_constraint_migration_scopes_source_owned_runs(
+    tmp_path: Path,
+) -> None:
+    _run_migration_scenario(
+        database_path=tmp_path / "source-running-constraint.sqlite3",
+        code="""
+            import django
+            django.setup()
+
+            from django.db import IntegrityError, connection, transaction
+            from django.db.migrations.executor import MigrationExecutor
+
+            old_target = [
+                ("companies", "0003_backfill_company_sources"),
+                ("scrape_runs", "0002_scraperun_company_source"),
+            ]
+            new_target = [
+                (
+                    "scrape_runs",
+                    "0003_remove_scraperun_uniq_running_run_company_and_more",
+                )
+            ]
+            executor = MigrationExecutor(connection)
+            executor.migrate(old_target)
+            old_apps = executor.loader.project_state(old_target).apps
+            Company = old_apps.get_model("companies", "Company")
+            CompanySource = old_apps.get_model("companies", "CompanySource")
+
+            company = Company.objects.create(name="Two Source", source="fixture")
+            first_source = CompanySource.objects.create(
+                company=company,
+                source="fixture",
+                source_jobs_url="https://jobs.example.test/first",
+                approval_status="approved",
+                is_active=True,
+            )
+            second_source = CompanySource.objects.create(
+                company=company,
+                source="fixture",
+                source_jobs_url="https://jobs.example.test/second",
+                approval_status="approved",
+                is_active=True,
+            )
+
+            executor = MigrationExecutor(connection)
+            executor.migrate(new_target)
+            new_apps = executor.loader.project_state(new_target).apps
+            ScrapeRun = new_apps.get_model("scrape_runs", "ScrapeRun")
+
+            ScrapeRun.objects.create(
+                company_id=company.pk,
+                company_source_id=first_source.pk,
+            )
+            ScrapeRun.objects.create(
+                company_id=company.pk,
+                company_source_id=second_source.pk,
+            )
+            try:
+                with transaction.atomic():
+                    ScrapeRun.objects.create(
+                        company_id=company.pk,
+                        company_source_id=first_source.pk,
+                    )
+            except IntegrityError:
+                pass
+            else:
+                raise AssertionError("migration allowed duplicate RUNNING source")
+        """,
+    )

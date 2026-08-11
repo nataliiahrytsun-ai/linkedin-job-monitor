@@ -15,6 +15,8 @@ import pytest
 from scraping.background import (
     BackgroundCompanyNotSavedError,
     BackgroundExecutorShutdownError,
+    BackgroundInactiveCompanyError,
+    BackgroundNoExecutableSourcesError,
     BackgroundRunAlreadyScheduledError,
     BackgroundSourceError,
     ControlledBackgroundExecutor,
@@ -23,7 +25,7 @@ from scraping.background import (
     InvalidShutdownWaitError,
 )
 from scraping.pipeline import FixturePipelineError, FixturePipelineResult
-from scraping.sources.base import SourceAdapter
+from scraping.sources.base import SourceAdapter, SourceBatch, SourceError
 from scraping.sources.lever import LeverSourceAdapter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -79,13 +81,22 @@ def company(*, name: str = "Background Company") -> Any:
     return company_record
 
 
-def add_company_source(company_record: Any) -> Any:
+def add_company_source(
+    company_record: Any,
+    *,
+    source: str | None = None,
+    source_jobs_url: str | None = None,
+    approval_status: str = "approved",
+    is_active: bool = True,
+) -> Any:
     return model("companies.CompanySource").objects.create(
         company=company_record,
-        source=company_record.source,
-        source_jobs_url=company_record.source_jobs_url,
-        approval_status="approved",
-        is_active=True,
+        source=source or company_record.source,
+        source_jobs_url=(
+            company_record.source_jobs_url if source_jobs_url is None else source_jobs_url
+        ),
+        approval_status=approval_status,
+        is_active=is_active,
     )
 
 
@@ -217,9 +228,7 @@ def test_source_neutral_submission_selects_adapter_from_reloaded_company(
     monkeypatch.setattr("scraping.background.run_source_pipeline", inspect_pipeline)
 
     with ControlledBackgroundExecutor() as executor:
-        result = executor.submit_pipeline(company=submitted_company).future.result(
-            timeout=5
-        )
+        result = executor.submit_pipeline(company=submitted_company).future.result(timeout=5)
 
     assert result is sentinel
     assert len(selected_sources) == 2
@@ -303,9 +312,11 @@ def test_lever_submission_uses_registry_and_company_site_without_network(
     )
 
     with ControlledBackgroundExecutor(clock=IncrementingClock()) as executor:
-        result = executor.submit_pipeline(company=company_record).future.result(timeout=10)
+        submission = executor.submit_company(company=company_record)
+        result = submission.submitted[0].future.result(timeout=10)
 
     result.scrape_run.refresh_from_db()
+    assert submission.submitted_source_ids == (company_record.sources.get().pk,)
     assert result.scrape_run.status == "success"
     assert result.scrape_run.company_source_id == company_record.sources.get().pk
     assert result.scrape_run.requests_made == 1
@@ -348,9 +359,7 @@ def test_lever_multi_page_submission_persists_complete_snapshot_without_network(
         result = executor.submit_pipeline(company=company_record).future.result(timeout=10)
 
     stored_jobs = list(
-        model("jobs.JobPosting")
-        .objects.filter(company=company_record)
-        .order_by("source_job_id")
+        model("jobs.JobPosting").objects.filter(company=company_record).order_by("source_job_id")
     )
     result.scrape_run.refresh_from_db()
 
@@ -373,9 +382,7 @@ def test_lever_multi_page_submission_persists_complete_snapshot_without_network(
     ]
     assert [job.workplace_type for job in stored_jobs] == ["hybrid", "remote", "onsite"]
     assert all(job.source == "lever" and job.status == "active" for job in stored_jobs)
-    assert all(
-        job.company_source_id == company_record.sources.get().pk for job in stored_jobs
-    )
+    assert all(job.company_source_id == company_record.sources.get().pk for job in stored_jobs)
     assert result.jobs_found == 3
     assert result.jobs_created == 3
     assert result.scrape_run.status == "success"
@@ -407,9 +414,7 @@ def test_real_success_pipeline_uses_runtime_clock_and_returns_result() -> None:
         datetime(2026, 8, 8, 9, 0, 2, tzinfo=UTC),
         datetime(2026, 8, 8, 9, 0, 3, tzinfo=UTC),
     ]
-    assert result.scrape_run.finished_at == datetime(
-        2026, 8, 8, 9, 0, 4, tzinfo=UTC
-    )
+    assert result.scrape_run.finished_at == datetime(2026, 8, 8, 9, 0, 4, tzinfo=UTC)
 
 
 def test_real_partial_pipeline_returns_partial_without_reconciliation() -> None:
@@ -625,10 +630,228 @@ def test_shutdown_waits_is_repeatable_and_rejects_new_submissions(
         with pytest.raises(InvalidShutdownWaitError):
             executor.shutdown(wait=1)  # type: ignore[arg-type]
         assert not any(
-            thread.name.startswith("fixture-pipeline")
-            for thread in threading.enumerate()
+            thread.name.startswith("source-pipeline") for thread in threading.enumerate()
         )
     finally:
         release.set()
         shutdown_thread.join(timeout=5)
         executor.shutdown(wait=True)
+
+
+def test_two_sources_of_same_company_have_independent_active_task_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company()
+    first_source = company_record.sources.get()
+    second_source = add_company_source(
+        company_record,
+        source_jobs_url="https://jobs.example.test/background/second",
+    )
+    entered = {first_source.pk: threading.Event(), second_source.pk: threading.Event()}
+    release = threading.Event()
+    sentinel = cast(FixturePipelineResult, object())
+
+    def blocked_pipeline(**kwargs: object) -> FixturePipelineResult:
+        source = cast(Any, kwargs["company_source"])
+        entered[source.pk].set()
+        if not release.wait(timeout=5):
+            raise TimeoutError("test did not release source workers")
+        return sentinel
+
+    monkeypatch.setattr("scraping.background.run_source_pipeline", blocked_pipeline)
+    executor = ControlledBackgroundExecutor(max_workers=2)
+    try:
+        first = executor.submit_source(company_source=first_source)
+        second = executor.submit_source(company_source=second_source)
+        assert entered[first_source.pk].wait(timeout=5)
+        assert entered[second_source.pk].wait(timeout=5)
+        assert first.company_source_id == first_source.pk
+        assert second.company_source_id == second_source.pk
+        with pytest.raises(BackgroundRunAlreadyScheduledError):
+            executor.submit_source(company_source=first_source)
+        release.set()
+        assert first.future.result(timeout=5) is sentinel
+        assert second.future.result(timeout=5) is sentinel
+    finally:
+        release.set()
+        executor.shutdown()
+
+
+@pytest.mark.parametrize(
+    "approval_status",
+    ["needs_review", "blocked", "rejected"],
+)
+def test_company_submission_skips_nonapproved_sources(
+    approval_status: str,
+) -> None:
+    company_record = company()
+    internal_source = add_company_source(
+        company_record,
+        source="review-source",
+        source_jobs_url=f"https://jobs.example.test/{approval_status}",
+        approval_status=approval_status,
+        is_active=False,
+    )
+
+    with ControlledBackgroundExecutor() as executor:
+        result = executor.submit_company(company=company_record)
+        for handle in result.submitted:
+            handle.future.result(timeout=10)
+
+    assert result.submitted_source_ids == (company_record.sources.get(source="fixture").pk,)
+    assert result.skipped_source_ids == (internal_source.pk,)
+
+
+def test_company_submission_skips_inactive_approved_source() -> None:
+    company_record = company()
+    inactive_source = add_company_source(
+        company_record,
+        source_jobs_url="https://jobs.example.test/background/inactive",
+        is_active=False,
+    )
+
+    with ControlledBackgroundExecutor() as executor:
+        result = executor.submit_company(company=company_record)
+        for handle in result.submitted:
+            handle.future.result(timeout=10)
+
+    assert result.skipped_source_ids == (inactive_source.pk,)
+
+
+def test_inactive_company_and_zero_executable_sources_fail_closed() -> None:
+    inactive_company = company(name="Inactive Company")
+    inactive_company.is_active = False
+    inactive_company.save(update_fields=("is_active", "updated_at"))
+    no_sources_company = company(name="No Sources")
+    no_sources_company.sources.update(is_active=False)
+
+    with ControlledBackgroundExecutor() as executor:
+        with pytest.raises(BackgroundInactiveCompanyError):
+            executor.submit_company(company=inactive_company)
+        with pytest.raises(BackgroundNoExecutableSourcesError):
+            executor.submit_company(company=no_sources_company)
+
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
+
+
+def test_unknown_registered_key_failure_is_reported_without_submission() -> None:
+    company_record = company()
+    company_record.sources.update(is_active=False)
+    unknown_source = add_company_source(
+        company_record,
+        source="unknown",
+        source_jobs_url="https://jobs.example.test/unknown",
+    )
+
+    with ControlledBackgroundExecutor() as executor:
+        result = executor.submit_company(company=company_record)
+
+    assert result.submitted_source_ids == ()
+    assert result.failed_source_ids == (unknown_source.pk,)
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
+
+
+def test_already_running_source_does_not_block_second_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company()
+    first_source = company_record.sources.get()
+    second_source = add_company_source(
+        company_record,
+        source_jobs_url="https://jobs.example.test/background/eligible",
+    )
+    model("scrape_runs.ScrapeRun").objects.create(
+        company=company_record,
+        company_source=first_source,
+    )
+    sentinel = cast(FixturePipelineResult, object())
+    monkeypatch.setattr(
+        "scraping.background.run_source_pipeline",
+        lambda **kwargs: sentinel,
+    )
+
+    with ControlledBackgroundExecutor() as executor:
+        result = executor.submit_company(company=company_record)
+        assert result.submitted[0].future.result(timeout=5) is sentinel
+
+    assert result.already_running_source_ids == (first_source.pk,)
+    assert result.submitted_source_ids == (second_source.pk,)
+
+
+def test_company_submission_runs_two_sources_in_deterministic_order() -> None:
+    company_record = company()
+    first_source = company_record.sources.get()
+    second_source = add_company_source(
+        company_record,
+        source_jobs_url="https://jobs.example.test/background/second",
+    )
+
+    with ControlledBackgroundExecutor(clock=IncrementingClock()) as executor:
+        result = executor.submit_company(company=company_record)
+        outcomes = [handle.future.result(timeout=10) for handle in result.submitted]
+
+    assert result.submitted_source_ids == (first_source.pk, second_source.pk)
+    assert [outcome.scrape_run.company_source_id for outcome in outcomes] == [
+        first_source.pk,
+        second_source.pk,
+    ]
+    assert model("scrape_runs.ScrapeRun").objects.filter(status="success").count() == 2
+    assert model("jobs.JobPosting").objects.filter(company=company_record).count() == 6
+
+
+def test_source_failure_does_not_rollback_other_source_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company()
+    company_record.sources.all().delete()
+    success_source = add_company_source(
+        company_record,
+        source="success-source",
+        source_jobs_url="https://jobs.example.test/success",
+    )
+    failed_source = add_company_source(
+        company_record,
+        source="failed-source",
+        source_jobs_url="https://jobs.example.test/failed",
+    )
+
+    class SuccessAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            return SourceBatch(
+                records=(
+                    {
+                        "source": company.source,
+                        "source_job_id": "shared-1",
+                        "title": "Retained success",
+                    },
+                ),
+                requests_made=1,
+            )
+
+    class FailedAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            del company
+            raise SourceError("synthetic source failure", requests_made=2)
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "success-source", SuccessAdapter)
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "failed-source", FailedAdapter)
+
+    with ControlledBackgroundExecutor(clock=IncrementingClock()) as executor:
+        result = executor.submit_company(company=company_record)
+        success = result.submitted[0].future.result(timeout=10)
+        with pytest.raises(FixturePipelineError):
+            result.submitted[1].future.result(timeout=10)
+
+    runs = {
+        run.company_source_id: run
+        for run in model("scrape_runs.ScrapeRun").objects.filter(company=company_record)
+    }
+    assert success.scrape_run.company_source_id == success_source.pk
+    assert runs[success_source.pk].status == "success"
+    assert runs[success_source.pk].requests_made == 1
+    assert runs[failed_source.pk].status == "failed"
+    assert runs[failed_source.pk].requests_made == 2
+    assert model("jobs.JobPosting").objects.get().company_source_id == success_source.pk
+    company_record.refresh_from_db()
+    assert company_record.last_scrape_status == "failed"

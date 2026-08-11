@@ -31,14 +31,10 @@ def model(name: str) -> Any:
 
 def exception(name: str) -> type[BaseException]:
     if name == "ValidationError":
-        exception_type = importlib.import_module(
-            "django.core.exceptions"
-        ).ValidationError
+        exception_type = importlib.import_module("django.core.exceptions").ValidationError
         return cast("type[BaseException]", exception_type)
     if name == "ProtectedError":
-        exception_type = importlib.import_module(
-            "django.db.models.deletion"
-        ).ProtectedError
+        exception_type = importlib.import_module("django.db.models.deletion").ProtectedError
         return cast("type[BaseException]", exception_type)
     exception_type = importlib.import_module("django.db").IntegrityError
     return cast("type[BaseException]", exception_type)
@@ -316,6 +312,45 @@ def test_scrape_run_counter_defaults() -> None:
     assert run.requests_made == 0
     assert run.error_message == ""
     assert run.company_source is None
+
+
+def test_running_scrape_run_uniqueness_is_scoped_to_company_source() -> None:
+    company = create_company()
+    first_source = create_company_source(
+        company,
+        approval_status="approved",
+        is_active=True,
+    )
+    second_source = create_company_source(
+        company,
+        source_jobs_url="https://feed.example/secondary-jobs",
+        approval_status="approved",
+        is_active=True,
+    )
+
+    model("scrape_runs.ScrapeRun").objects.create(
+        company=company,
+        company_source=first_source,
+    )
+    second_run = model("scrape_runs.ScrapeRun").objects.create(
+        company=company,
+        company_source=second_source,
+    )
+
+    assert second_run.status == "running"
+    with pytest.raises(exception("IntegrityError")), atomic():
+        model("scrape_runs.ScrapeRun").objects.create(
+            company=company,
+            company_source=first_source,
+        )
+
+
+def test_legacy_running_scrape_run_uniqueness_remains_company_scoped() -> None:
+    company = create_company()
+    model("scrape_runs.ScrapeRun").objects.create(company=company)
+
+    with pytest.raises(exception("IntegrityError")), atomic():
+        model("scrape_runs.ScrapeRun").objects.create(company=company)
 
 
 def test_initial_migrations_created_all_model_tables() -> None:

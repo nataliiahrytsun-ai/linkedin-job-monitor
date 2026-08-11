@@ -64,6 +64,16 @@ def company(*, name: str = "Example", active: bool = True) -> Any:
     return company_record
 
 
+def add_source(company_record: Any, *, suffix: str = "second") -> Any:
+    return model("companies.CompanySource").objects.create(
+        company=company_record,
+        source="feed",
+        source_jobs_url=f"https://jobs.example.test/{suffix}",
+        approval_status="approved",
+        is_active=True,
+    )
+
+
 def started_at() -> datetime:
     return datetime(2026, 8, 6, 10, tzinfo=UTC)
 
@@ -124,7 +134,7 @@ def test_start_creates_default_running_run_and_updates_only_company_status() -> 
     assert run.requests_made == 0
     assert run.error_message == ""
     assert company_record.last_scrape_status == "running"
-    assert company_record.last_scraped_at == previous_completion
+    assert company_record.last_scraped_at is None
 
 
 def test_duplicate_running_run_is_rejected_by_database_constraint() -> None:
@@ -412,7 +422,10 @@ def test_start_rolls_back_run_when_company_update_fails(monkeypatch: pytest.Monk
     original_save = company_model.save
 
     def failing_save(instance: Any, *args: object, **kwargs: object) -> None:
-        if kwargs.get("update_fields") == ("last_scrape_status",):
+        if kwargs.get("update_fields") == (
+            "last_scrape_status",
+            "last_scraped_at",
+        ):
             raise RuntimeError("synthetic company update failure")
         original_save(instance, *args, **kwargs)
 
@@ -450,3 +463,159 @@ def test_finish_rolls_back_run_when_company_update_fails(
     assert run.finished_at is None
     assert company_record.last_scrape_status == "running"
     assert company_record.last_scraped_at is None
+
+
+def test_two_sources_can_run_concurrently_but_one_source_cannot_duplicate() -> None:
+    company_record = company()
+    first_source = company_record.sources.get()
+    second_source = add_source(company_record)
+
+    first = start_scrape_run(company_source=first_source, started_at=started_at())
+    second = start_scrape_run(
+        company_source=second_source,
+        started_at=started_at() + timedelta(seconds=1),
+    )
+
+    assert first.company_source_id == first_source.pk
+    assert second.company_source_id == second_source.pk
+    assert model("scrape_runs.ScrapeRun").objects.filter(status="running").count() == 2
+    with pytest.raises(DuplicateRunningRunError):
+        start_scrape_run(
+            company_source=first_source,
+            started_at=started_at() + timedelta(seconds=2),
+        )
+
+
+def test_company_aggregate_running_then_all_success() -> None:
+    company_record = company()
+    first_source = company_record.sources.get()
+    second_source = add_source(company_record)
+    first = start_scrape_run(company_source=first_source, started_at=started_at())
+    second = start_scrape_run(
+        company_source=second_source,
+        started_at=started_at() + timedelta(seconds=1),
+    )
+
+    first_finished = started_at() + timedelta(minutes=1)
+    finish(first, finished_at=first_finished)
+    company_record.refresh_from_db()
+    assert company_record.last_scrape_status == "running"
+    assert company_record.last_scraped_at == first_finished
+
+    second_finished = started_at() + timedelta(minutes=2)
+    finish(second, finished_at=second_finished)
+    company_record.refresh_from_db()
+    assert company_record.last_scrape_status == "success"
+    assert company_record.last_scraped_at == second_finished
+
+
+@pytest.mark.parametrize("failed_finishes_first", [True, False])
+def test_company_aggregate_success_and_failure_is_completion_order_independent(
+    failed_finishes_first: bool,
+) -> None:
+    company_record = company()
+    success_source = company_record.sources.get()
+    failed_source = add_source(company_record)
+    success_run = start_scrape_run(
+        company_source=success_source,
+        started_at=started_at(),
+    )
+    failed_run = start_scrape_run(
+        company_source=failed_source,
+        started_at=started_at() + timedelta(seconds=1),
+    )
+    success_finished = started_at() + timedelta(minutes=1)
+    failed_finished = started_at() + timedelta(minutes=2)
+
+    if failed_finishes_first:
+        finish(
+            failed_run,
+            status=TerminalRunStatus.FAILED,
+            finished_at=failed_finished,
+            error_message="source failed",
+        )
+        finish(success_run, finished_at=success_finished)
+    else:
+        finish(success_run, finished_at=success_finished)
+        finish(
+            failed_run,
+            status=TerminalRunStatus.FAILED,
+            finished_at=failed_finished,
+            error_message="source failed",
+        )
+
+    company_record.refresh_from_db()
+    assert company_record.last_scrape_status == "failed"
+    assert company_record.last_scraped_at == failed_finished
+
+
+def test_later_callback_cannot_replace_maximum_terminal_timestamp() -> None:
+    company_record = company()
+    first_source = company_record.sources.get()
+    second_source = add_source(company_record)
+    first = start_scrape_run(company_source=first_source, started_at=started_at())
+    second = start_scrape_run(
+        company_source=second_source,
+        started_at=started_at() + timedelta(seconds=1),
+    )
+    later_timestamp = started_at() + timedelta(minutes=5)
+    earlier_timestamp = started_at() + timedelta(minutes=2)
+
+    finish(second, finished_at=later_timestamp)
+    finish(first, finished_at=earlier_timestamp)
+
+    company_record.refresh_from_db()
+    assert company_record.last_scrape_status == "success"
+    assert company_record.last_scraped_at == later_timestamp
+
+
+def test_inactive_source_run_does_not_poison_company_aggregate() -> None:
+    company_record = company()
+    active_source = company_record.sources.get()
+    inactive_source = add_source(company_record)
+    inactive_source.is_active = False
+    inactive_source.save(update_fields=("is_active", "updated_at"))
+    inactive_finished = started_at() + timedelta(minutes=5)
+    model("scrape_runs.ScrapeRun").objects.create(
+        company=company_record,
+        company_source=inactive_source,
+        status="failed",
+        started_at=started_at(),
+        finished_at=inactive_finished,
+        duration_seconds=Decimal("300.000"),
+        error_message="inactive source history",
+    )
+
+    active = start_scrape_run(company_source=active_source, started_at=started_at())
+    active_finished = started_at() + timedelta(minutes=1)
+    finish(active, finished_at=active_finished)
+
+    company_record.refresh_from_db()
+    assert company_record.last_scrape_status == "success"
+    assert company_record.last_scraped_at == active_finished
+
+
+def test_partial_source_has_priority_after_all_sources_finish() -> None:
+    company_record = company()
+    success_source = company_record.sources.get()
+    partial_source = add_source(company_record)
+    success_run = start_scrape_run(
+        company_source=success_source,
+        started_at=started_at(),
+    )
+    partial_run = start_scrape_run(
+        company_source=partial_source,
+        started_at=started_at() + timedelta(seconds=1),
+    )
+
+    finish(success_run, finished_at=started_at() + timedelta(minutes=1))
+    finish(
+        partial_run,
+        status=TerminalRunStatus.PARTIAL,
+        finished_at=started_at() + timedelta(minutes=2),
+        error_message="incomplete snapshot",
+    )
+
+    company_record.refresh_from_db()
+    assert company_record.last_scrape_status == "partial"
+    assert company_record.last_scraped_at == started_at() + timedelta(minutes=2)

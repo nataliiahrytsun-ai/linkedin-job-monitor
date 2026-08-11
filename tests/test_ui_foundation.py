@@ -56,6 +56,25 @@ def company(*, name: str, is_active: bool = True) -> Any:
     return company_record
 
 
+def company_submission(
+    company_record: Any,
+    *,
+    submitted: bool = True,
+    already_running: bool = False,
+    failed: bool = False,
+) -> Any:
+    source_id = company_record.sources.get().pk
+    return type(
+        "Submission",
+        (),
+        {
+            "submitted_source_ids": (source_id,) if submitted else (),
+            "already_running_source_ids": (source_id,) if already_running else (),
+            "failed_source_ids": (source_id,) if failed else (),
+        },
+    )()
+
+
 def job(company_record: Any, *, sequence: int, status: str) -> Any:
     return model("jobs.JobPosting").objects.create(
         company=company_record,
@@ -78,9 +97,7 @@ def scrape_run(
     finished_at: datetime | None = None,
 ) -> Any:
     terminal = status != "running"
-    resolved_finished_at = finished_at or (
-        started_at + timedelta(minutes=1) if terminal else None
-    )
+    resolved_finished_at = finished_at or (started_at + timedelta(minutes=1) if terminal else None)
     return model("scrape_runs.ScrapeRun").objects.create(
         company=company_record,
         company_source=company_record.sources.get(),
@@ -128,13 +145,9 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         assert 'href="/companies/">Companies</a>' in html
         assert 'href="/jobs/">Jobs</a>' in html
         assert (
-            'class="card dashboard-primary-metric dashboard-metric-link" '
-            'href="/companies/"' in html
+            'class="card dashboard-primary-metric dashboard-metric-link" href="/companies/"' in html
         )
-        assert (
-            'class="card dashboard-primary-metric dashboard-metric-link" '
-            'href="/jobs/"' in html
-        )
+        assert 'class="card dashboard-primary-metric dashboard-metric-link" href="/jobs/"' in html
         assert "Companies →" not in html
         assert "Jobs →" not in html
         assert html.count("dashboard-metric-link") == 2
@@ -154,13 +167,16 @@ class HomePageTests(TestCase):  # type: ignore[misc]
 
     def test_dashboard_messages_use_dashboard_content_width(self) -> None:
         company(name="Message Company")
-        with patch("job_monitor.views.background_executor.submit_pipeline"):
+        with patch(
+            "job_monitor.views.background_executor.submit_company",
+            side_effect=lambda *, company: company_submission(company),
+        ):
             response = self.client.post(reverse("update_all"))
 
         html = self.client.get(response.url).content.decode()
 
         assert 'class="messages dashboard-shell"' in html
-        assert "Monitoring started for 1 company." in html
+        assert "Monitoring started for 1 source." in html
 
     def test_unknown_url_still_returns_not_found(self) -> None:
         response = self.client.get("/not-a-real-page/")
@@ -232,9 +248,7 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         running.status = "success"
         running.finished_at = datetime(2026, 8, 9, 10, 1, tzinfo=UTC)
         running.duration_seconds = Decimal("60.000")
-        running.save(
-            update_fields=("status", "finished_at", "duration_seconds")
-        )
+        running.save(update_fields=("status", "finished_at", "duration_seconds"))
 
         terminal_response = self.client.get("/")
         terminal_html = terminal_response.content.decode()
@@ -321,7 +335,7 @@ class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
     def test_update_all_requires_post_and_get_submits_nothing(self) -> None:
         company(name="GET Company")
 
-        with patch("job_monitor.views.background_executor.submit_pipeline") as submit:
+        with patch("job_monitor.views.background_executor.submit_company") as submit:
             response = self.client.get(reverse("update_all"))
 
         assert response.status_code == 405
@@ -332,7 +346,10 @@ class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
         inactive = company(name="Inactive", is_active=False)
         second = company(name="Second Active")
 
-        with patch("job_monitor.views.background_executor.submit_pipeline") as submit:
+        with patch(
+            "job_monitor.views.background_executor.submit_company",
+            side_effect=lambda *, company: company_submission(company),
+        ) as submit:
             response = self.client.post(reverse("update_all"))
 
         assert response.status_code == 302
@@ -341,12 +358,37 @@ class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
             first.pk,
             second.pk,
         ]
-        assert inactive.pk not in {
-            call.kwargs["company"].pk for call in submit.call_args_list
-        }
-        assert b"Monitoring started for 2 companies." in self.client.get(
-            response.url
-        ).content
+        assert inactive.pk not in {call.kwargs["company"].pk for call in submit.call_args_list}
+        assert b"Monitoring started for 2 sources." in self.client.get(response.url).content
+
+    def test_update_all_counts_every_submitted_source_for_one_company(self) -> None:
+        company_record = company(name="Multi Source")
+        first_source = company_record.sources.get()
+        second_source = model("companies.CompanySource").objects.create(
+            company=company_record,
+            source="fixture",
+            source_jobs_url="https://jobs.example.test/multi-source/secondary",
+            approval_status="approved",
+            is_active=True,
+        )
+        submission = type(
+            "Submission",
+            (),
+            {
+                "submitted_source_ids": (first_source.pk, second_source.pk),
+                "already_running_source_ids": (),
+                "failed_source_ids": (),
+            },
+        )()
+
+        with patch(
+            "job_monitor.views.background_executor.submit_company",
+            return_value=submission,
+        ) as submit:
+            response = self.client.post(reverse("update_all"))
+
+        submit.assert_called_once_with(company=company_record)
+        assert b"Monitoring started for 2 sources." in self.client.get(response.url).content
 
     def test_running_company_is_skipped_without_blocking_other_companies(self) -> None:
         running_company = company(name="Already Running")
@@ -357,30 +399,48 @@ class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
             started_at=datetime(2026, 8, 9, 10, tzinfo=UTC),
         )
 
-        with patch("job_monitor.views.background_executor.submit_pipeline") as submit:
+        def submit_company(*, company: Any) -> Any:
+            return company_submission(
+                company,
+                submitted=company.pk == eligible_company.pk,
+                already_running=company.pk == running_company.pk,
+            )
+
+        with patch(
+            "job_monitor.views.background_executor.submit_company",
+            side_effect=submit_company,
+        ) as submit:
             response = self.client.post(reverse("update_all"))
 
-        submit.assert_called_once_with(company=eligible_company)
+        assert [call.kwargs["company"].pk for call in submit.call_args_list] == [
+            running_company.pk,
+            eligible_company.pk,
+        ]
         html = self.client.get(response.url).content
-        assert b"Monitoring started for 1 company. 1 already running." in html
-        assert model("scrape_runs.ScrapeRun").objects.filter(
-            company=running_company,
-            status="running",
-        ).count() == 1
+        assert b"Monitoring started for 1 source. 1 already running." in html
+        assert (
+            model("scrape_runs.ScrapeRun")
+            .objects.filter(
+                company=running_company,
+                status="running",
+            )
+            .count()
+            == 1
+        )
 
     def test_executor_duplicate_is_skipped_and_next_company_is_submitted(self) -> None:
         duplicate_company = company(name="Executor Duplicate")
         eligible_company = company(name="Executor Eligible")
-        duplicate_error = importlib.import_module(
-            "scraping.background"
-        ).BackgroundRunAlreadyScheduledError
 
-        def submit_company(*, company: Any) -> None:
-            if company.pk == duplicate_company.pk:
-                raise duplicate_error("already scheduled")
+        def submit_company(*, company: Any) -> Any:
+            return company_submission(
+                company,
+                submitted=company.pk == eligible_company.pk,
+                already_running=company.pk == duplicate_company.pk,
+            )
 
         with patch(
-            "job_monitor.views.background_executor.submit_pipeline",
+            "job_monitor.views.background_executor.submit_company",
             side_effect=submit_company,
         ) as submit:
             response = self.client.post(reverse("update_all"))
@@ -389,21 +449,23 @@ class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
             duplicate_company.pk,
             eligible_company.pk,
         ]
-        assert b"Monitoring started for 1 company. 1 already running." in self.client.get(
-            response.url
-        ).content
+        assert (
+            b"Monitoring started for 1 source. 1 already running."
+            in self.client.get(response.url).content
+        )
 
     def test_controlled_source_error_does_not_block_next_company(self) -> None:
         unsupported_company = company(name="Unsupported")
         eligible_company = company(name="Supported")
         source_error = importlib.import_module("scraping.background").BackgroundSourceError
 
-        def submit_company(*, company: Any) -> None:
+        def submit_company(*, company: Any) -> Any:
             if company.pk == unsupported_company.pk:
                 raise source_error("unknown source")
+            return company_submission(company)
 
         with patch(
-            "job_monitor.views.background_executor.submit_pipeline",
+            "job_monitor.views.background_executor.submit_company",
             side_effect=submit_company,
         ) as submit:
             response = self.client.post(reverse("update_all"))
@@ -414,14 +476,14 @@ class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
             unsupported_company.pk,
             eligible_company.pk,
         ]
-        assert b"Monitoring started for 1 company. 1 could not be started." in (
+        assert b"Monitoring started for 1 source. 1 could not be started." in (
             self.client.get(response.url).content
         )
 
     def test_update_all_handles_no_active_companies(self) -> None:
         company(name="Inactive Only", is_active=False)
 
-        with patch("job_monitor.views.background_executor.submit_pipeline") as submit:
+        with patch("job_monitor.views.background_executor.submit_company") as submit:
             response = self.client.post(reverse("update_all"))
 
         assert response.status_code == 302
