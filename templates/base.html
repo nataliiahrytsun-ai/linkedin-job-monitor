@@ -23,7 +23,9 @@
           <li>
             <a href="{% url 'jobs:list' %}"{% if request.resolver_match.namespace == 'jobs' %} aria-current="page"{% endif %}>Jobs</a>
           </li>
-          <li><span class="nav-placeholder" aria-disabled="true">Scrape runs</span></li>
+          <li>
+            <a href="{% url 'scrape_runs:list' %}"{% if request.resolver_match.namespace == 'scrape_runs' %} aria-current="page"{% endif %}>Scrape runs</a>
+          </li>
         </ul>
       </nav>
     </div>

@@ -226,5 +226,16 @@
       {% endif %}
     </form>
   </section>
+  {% if company_run_polling %}
+    <div
+      id="company-run-polling"
+      data-status-url="{% url 'scrape_runs:status' %}"
+      data-company-id="{{ company.pk }}"
+      data-baseline-run-id="{{ company_run_polling.baseline_run_id }}"
+      data-mode="{{ company_run_polling.mode }}"
+      data-interval-ms="5000"
+    ></div>
+    <script src="{% static 'js/company_run_polling.js' %}" defer></script>
+  {% endif %}
   <script src="{% static 'js/job_filters.js' %}" defer></script>
 {% endblock %}

@@ -3,6 +3,7 @@
 from django.contrib import messages
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from companies.forms import CompanyForm
@@ -55,6 +56,22 @@ def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
     active_job_count = company.job_postings.filter(
         status=JobPosting.Status.ACTIVE
     ).count()
+    latest_run = company.scrape_runs.order_by("-started_at", "-pk").first()
+    watch_after_run_id = _watch_after_run_id(request)
+    if latest_run and latest_run.status == ScrapeRun.Status.RUNNING:
+        company_run_polling = {
+            "baseline_run_id": latest_run.pk,
+            "mode": "running",
+        }
+    elif watch_after_run_id is not None and (
+        latest_run is None or latest_run.pk == watch_after_run_id
+    ):
+        company_run_polling = {
+            "baseline_run_id": watch_after_run_id,
+            "mode": "new",
+        }
+    else:
+        company_run_polling = None
     return render(
         request,
         "companies/company_detail.html",
@@ -64,8 +81,21 @@ def company_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "has_any_jobs": company_jobs.exists(),
             "jobs": jobs,
             "active_job_count": active_job_count,
+            "company_run_polling": company_run_polling,
         },
     )
+
+
+def _watch_after_run_id(request: HttpRequest) -> int | None:
+    """Return a valid post-submission baseline from the detail-page query."""
+    raw_run_id = request.GET.get("watch_after")
+    if raw_run_id is None:
+        return None
+    try:
+        run_id = int(raw_run_id)
+    except ValueError:
+        return None
+    return run_id if run_id >= 0 else None
 
 
 def company_create(request: HttpRequest) -> HttpResponse:
@@ -123,6 +153,12 @@ def company_update_jobs(request: HttpRequest, pk: int) -> HttpResponse:
         )
         return redirect("companies:detail", pk=company.pk)
 
+    latest_run_id = (
+        ScrapeRun.objects.filter(company=company)
+        .order_by("-started_at", "-pk")
+        .values_list("pk", flat=True)
+        .first()
+    )
     try:
         background_executor.submit_pipeline(company=company)
     except BackgroundRunAlreadyScheduledError:
@@ -134,4 +170,6 @@ def company_update_jobs(request: HttpRequest, pk: int) -> HttpResponse:
         messages.error(request, "Job update could not be started.")
     else:
         messages.success(request, "Job update started.")
+        detail_url = reverse("companies:detail", args=(company.pk,))
+        return redirect(f"{detail_url}?watch_after={latest_run_id or 0}")
     return redirect("companies:detail", pk=company.pk)

@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Scrape runs · Job Monitor{% endblock %}
+
+{% block content %}
+  <div class="page-heading scrape-runs-heading">
+    <div>
+      <p class="eyebrow">Monitoring</p>
+      <h1>Scrape runs</h1>
+      <p class="lead">Current activity and recent monitoring results.</p>
+    </div>
+  </div>
+
+  <section class="current-runs" aria-labelledby="current-runs-heading">
+    <div class="scrape-runs-section-heading">
+      <h2 id="current-runs-heading">Current activity</h2>
+      {% if running_runs %}<span class="status-badge status-running">RUNNING</span>{% endif %}
+    </div>
+    {% if running_runs %}
+      <div class="current-run-list">
+        {% for run in running_runs %}
+          <article class="card current-run-card">
+            <div>
+              <a class="current-run-company" href="{% url 'companies:detail' run.company.pk %}">{{ run.company.name }}</a>
+              <p>Started <time datetime="{{ run.started_at|date:'c' }}">{{ run.started_at|date:"j M Y, H:i" }}</time></p>
+            </div>
+            <span class="status-badge status-running">RUNNING</span>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="current-runs-idle">No monitoring runs are active.</p>
+    {% endif %}
+  </section>
+
+  <section class="scrape-run-history" aria-labelledby="run-history-heading">
+    <div class="scrape-runs-section-heading">
+      <h2 id="run-history-heading">Run history</h2>
+    </div>
+    {% if page_obj.object_list %}
+      <div class="scrape-run-table-container">
+        <table class="data-table scrape-run-table">
+          <thead>
+            <tr>
+              <th scope="col">Company</th>
+              <th scope="col">Status</th>
+              <th scope="col">Started</th>
+              <th scope="col">Finished</th>
+              <th scope="col">Found</th>
+              <th scope="col">Created</th>
+              <th scope="col">Updated</th>
+              <th scope="col">Requests</th>
+              <th scope="col">Duration</th>
+              <th scope="col">Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in page_obj.object_list %}
+              <tr data-run-id="{{ run.pk }}">
+                <th class="scrape-run-company" scope="row">
+                  <a href="{% url 'companies:detail' run.company.pk %}">{{ run.company.name }}</a>
+                </th>
+                <td class="scrape-run-status">
+                  <span class="status-badge status-{{ run.status }}">{{ run.status|upper }}</span>
+                </td>
+                <td class="scrape-run-started">
+                  <time datetime="{{ run.started_at|date:'c' }}">{{ run.started_at|date:"j M Y, H:i" }}</time>
+                </td>
+                <td class="scrape-run-finished">
+                  {% if run.finished_at %}<time datetime="{{ run.finished_at|date:'c' }}">{{ run.finished_at|date:"j M Y, H:i" }}</time>{% else %}—{% endif %}
+                </td>
+                <td class="scrape-run-number">{{ run.jobs_found }}</td>
+                <td class="scrape-run-number">{{ run.jobs_created }}</td>
+                <td class="scrape-run-number">{{ run.jobs_updated }}</td>
+                <td class="scrape-run-number">{{ run.requests_made }}</td>
+                <td class="scrape-run-duration">
+                  {% if run.duration_seconds is not None %}{{ run.duration_seconds }}s{% else %}—{% endif %}
+                </td>
+                <td class="scrape-run-error">
+                  {% if run.error_message %}
+                    <details>
+                      <summary>{{ run.error_message|truncatechars:48 }}</summary>
+                      <p>{{ run.error_message }}</p>
+                    </details>
+                  {% else %}
+                    <span class="scrape-run-no-error">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="scrape-run-cards">
+        {% for run in page_obj.object_list %}
+          <article class="card scrape-run-history-card" data-run-id="{{ run.pk }}">
+            <header class="scrape-run-card-header">
+              <a href="{% url 'companies:detail' run.company.pk %}">{{ run.company.name }}</a>
+              <span class="status-badge status-{{ run.status }}">{{ run.status|upper }}</span>
+            </header>
+            <div class="scrape-run-card-body">
+              <dl class="scrape-run-card-time">
+                <div>
+                  <dt>Started</dt>
+                  <dd><time datetime="{{ run.started_at|date:'c' }}">{{ run.started_at|date:"j M Y, H:i" }}</time></dd>
+                </div>
+                <div>
+                  <dt>Finished</dt>
+                  <dd>{% if run.finished_at %}<time datetime="{{ run.finished_at|date:'c' }}">{{ run.finished_at|date:"j M Y, H:i" }}</time>{% else %}—{% endif %}</dd>
+                </div>
+              </dl>
+              <dl class="scrape-run-card-results">
+                <div><dt>Found</dt><dd>{{ run.jobs_found }}</dd></div>
+                <div><dt>Created</dt><dd>{{ run.jobs_created }}</dd></div>
+                <div><dt>Updated</dt><dd>{{ run.jobs_updated }}</dd></div>
+              </dl>
+              <dl class="scrape-run-card-performance">
+                <div><dt>Requests</dt><dd>{{ run.requests_made }}</dd></div>
+                <div><dt>Duration</dt><dd>{% if run.duration_seconds is not None %}{{ run.duration_seconds }}s{% else %}—{% endif %}</dd></div>
+                <div class="scrape-run-card-performance-error">
+                  {% if run.error_message %}
+                    <dt>Error</dt>
+                    <dd>
+                      <details>
+                        <summary>View error</summary>
+                        <p>{{ run.error_message }}</p>
+                      </details>
+                    </dd>
+                  {% endif %}
+                </div>
+              </dl>
+            </div>
+            <div class="scrape-run-card-error{% if not run.error_message %} scrape-run-card-error-empty{% endif %}">
+              <span class="scrape-run-card-label">Error</span>
+              {% if run.error_message %}
+                <details>
+                  <summary>{{ run.error_message|truncatechars:72 }}</summary>
+                  <p>{{ run.error_message }}</p>
+                </details>
+              {% else %}
+                <span class="scrape-run-no-error">—</span>
+              {% endif %}
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+
+      {% if page_obj.paginator.num_pages > 1 %}
+        <nav class="pagination" aria-label="Scrape run history pages">
+          {% if page_obj.has_previous %}
+            <a class="button button-secondary" href="?page={{ page_obj.previous_page_number }}">Previous</a>
+          {% endif %}
+          <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+          {% if page_obj.has_next %}
+            <a class="button button-secondary" href="?page={{ page_obj.next_page_number }}">Next</a>
+          {% endif %}
+        </nav>
+      {% endif %}
+    {% else %}
+      <section class="empty-state scrape-runs-empty">
+        <h3>No scrape runs yet</h3>
+        <p>Monitoring history will appear here after a company update starts.</p>
+      </section>
+    {% endif %}
+  </section>
+
+  {{ running_run_ids|json_script:"running-run-ids" }}
+  {{ latest_run_state|json_script:"latest-run-state" }}
+  <div id="scrape-run-polling" data-status-url="{% url 'scrape_runs:status' %}" data-interval-ms="5000"></div>
+  <script src="{% static 'js/scrape_run_polling.js' %}" defer></script>
+{% endblock %}

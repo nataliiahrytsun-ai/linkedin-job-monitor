@@ -10,5 +10,6 @@ urlpatterns = [
     path("update-all/", update_all, name="update_all"),
     path("companies/", include("companies.urls")),
     path("jobs/", include("jobs.urls")),
+    path("scrape-runs/", include("scrape_runs.urls")),
     path("admin/", admin.site.urls),
 ]

@@ -139,8 +139,8 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         )
         assert f'action="{reverse("update_all")}" method="post"' in html
         assert 'type="submit">Update all</button>' in html
-        assert 'href="/scrape-runs/' not in html
-        assert '<span class="nav-placeholder" aria-disabled="true">Scrape runs</span>' in html
+        assert 'href="/scrape-runs/">Scrape runs</a>' in html
+        assert "nav-placeholder" not in html
 
     def test_dashboard_messages_use_dashboard_content_width(self) -> None:
         company(name="Message Company")

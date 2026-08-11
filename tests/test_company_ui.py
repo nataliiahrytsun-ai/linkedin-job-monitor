@@ -3,7 +3,8 @@ from __future__ import annotations
 import importlib
 import os
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -70,6 +71,26 @@ def create_job(company: Any, **overrides: object) -> Any:
     return model("jobs.JobPosting").objects.create(**values)
 
 
+def create_scrape_run(
+    company: Any,
+    *,
+    status: str,
+    started_at: datetime,
+    error_message: str = "",
+) -> Any:
+    terminal = status != "running"
+    return model("scrape_runs.ScrapeRun").objects.create(
+        company=company,
+        status=status,
+        started_at=started_at,
+        finished_at=started_at + timedelta(seconds=1) if terminal else None,
+        duration_seconds=Decimal("1.000") if terminal else None,
+        jobs_found=1 if terminal else 0,
+        jobs_created=1 if terminal else 0,
+        error_message=error_message,
+    )
+
+
 def create_filterable_jobs(company: Any) -> dict[str, Any]:
     return {
         "remote": create_job(
@@ -131,7 +152,7 @@ def test_company_list_empty_state_navigation_and_template_contract() -> None:
     assert "Add first company" not in html
     assert f'href="{reverse("companies:list")}"' in html
     assert 'href="/jobs/"' in html
-    assert 'href="/scrape-runs/' not in html
+    assert 'href="/scrape-runs/"' in html
     assert '<meta name="viewport"' in html
     assert '<link rel="stylesheet" href="/static/css/app.css">' in html
     assert html.count("<h1") == 1
@@ -673,11 +694,19 @@ def test_update_jobs_submits_source_neutral_background_task_and_redirects() -> N
         response = browser.post(update_url)
 
     assert response.status_code == 302
-    assert response.url == reverse("companies:detail", args=(company.pk,))
+    assert response.url == f'{reverse("companies:detail", args=(company.pk,))}?watch_after=0'
     submit.assert_called_once()
     assert submit.call_args.kwargs["company"].pk == company.pk
     assert set(submit.call_args.kwargs) == {"company"}
-    assert b"Job update started." in browser.get(response.url).content
+    detail_html = browser.get(response.url).content.decode()
+    assert "Job update started." in detail_html
+    assert 'id="company-run-polling"' in detail_html
+    assert 'data-baseline-run-id="0"' in detail_html
+    assert 'data-mode="new"' in detail_html
+    assert 'src="/static/js/company_run_polling.js"' in detail_html
+    javascript = Path("static/js/company_run_polling.js").read_text(encoding="utf-8")
+    assert "maxNewRunChecks = 24" in javascript
+    assert "remainingNewRunChecks <= 0" in javascript
 
 
 def test_update_jobs_view_does_not_inspect_configured_fixture_path(
@@ -695,9 +724,136 @@ def test_update_jobs_view_does_not_inspect_configured_fixture_path(
         response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
 
     assert response.status_code == 302
-    assert response.url == reverse("companies:detail", args=(company.pk,))
+    assert response.url == f'{reverse("companies:detail", args=(company.pk,))}?watch_after=0'
     submit.assert_called_once_with(company=company)
     assert b"Job update started." in browser.get(response.url).content
+
+
+def test_company_polling_detects_fast_terminal_run_created_after_baseline() -> None:
+    company = create_company()
+    old_run = create_scrape_run(
+        company,
+        status="success",
+        started_at=datetime(2026, 8, 11, 9, tzinfo=UTC),
+    )
+    watched_page = client().get(
+        reverse("companies:detail", args=(company.pk,)),
+        {"watch_after": old_run.pk},
+    )
+    assert 'data-mode="new"' in watched_page.content.decode()
+
+    new_run = create_scrape_run(
+        company,
+        status="success",
+        started_at=datetime(2026, 8, 11, 9, 1, tzinfo=UTC),
+    )
+    response = client().get(
+        reverse("scrape_runs:status"),
+        {"company_id": company.pk, "ids": old_run.pk},
+    )
+    payload = response.json()
+
+    assert payload["company_latest_run"]["id"] == new_run.pk
+    assert payload["company_latest_run"]["status"] == "success"
+    assert payload["company_latest_run"]["is_terminal"] is True
+
+
+def test_company_polling_tracks_running_to_terminal_then_stops() -> None:
+    company = create_company()
+    running = create_scrape_run(
+        company,
+        status="running",
+        started_at=datetime(2026, 8, 11, 10, tzinfo=UTC),
+    )
+
+    running_html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+    ).content.decode()
+    assert 'data-mode="running"' in running_html
+    assert f'data-baseline-run-id="{running.pk}"' in running_html
+
+    finish_scrape_run = importlib.import_module(
+        "scraping.run_lifecycle"
+    ).finish_scrape_run
+    finish_scrape_run(
+        scrape_run=running,
+        status="success",
+        finished_at=datetime(2026, 8, 11, 10, 0, 1, tzinfo=UTC),
+        jobs_found=1,
+        jobs_created=1,
+        jobs_updated=0,
+        requests_made=0,
+    )
+    endpoint_payload = client().get(
+        reverse("scrape_runs:status"),
+        {"company_id": company.pk, "ids": running.pk},
+    ).json()
+    terminal_html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+    ).content.decode()
+
+    assert endpoint_payload["company_latest_run"]["is_terminal"] is True
+    assert 'id="company-run-polling"' not in terminal_html
+    javascript = Path("static/js/company_run_polling.js").read_text(encoding="utf-8")
+    assert 'mode === "running"' in javascript
+    assert "latestRun.is_terminal" in javascript
+    assert "window.location.reload()" in javascript
+
+
+def test_other_company_run_does_not_change_company_specific_status() -> None:
+    watched_company = create_company(
+        name="Watched Company",
+        source_jobs_url="https://jobs.example.test/watched/openings",
+    )
+    other_company = create_company(
+        name="Other Company",
+        source_jobs_url="https://jobs.example.test/other/openings",
+    )
+    watched_run = create_scrape_run(
+        watched_company,
+        status="success",
+        started_at=datetime(2026, 8, 11, 8, tzinfo=UTC),
+    )
+    other_run = create_scrape_run(
+        other_company,
+        status="running",
+        started_at=datetime(2026, 8, 11, 11, tzinfo=UTC),
+    )
+
+    payload = client().get(
+        reverse("scrape_runs:status"),
+        {"company_id": watched_company.pk, "ids": watched_run.pk},
+    ).json()
+
+    assert payload["latest_run"]["id"] == other_run.pk
+    assert payload["company_latest_run"]["id"] == watched_run.pk
+    assert [run["id"] for run in payload["runs"]] == [watched_run.pk]
+
+
+def test_company_status_polling_endpoint_is_read_only_and_starts_no_work() -> None:
+    company = create_company()
+    run = create_scrape_run(
+        company,
+        status="success",
+        started_at=datetime(2026, 8, 11, 9, tzinfo=UTC),
+    )
+    before_company = model("companies.Company").objects.values().get(pk=company.pk)
+    before_run = model("scrape_runs.ScrapeRun").objects.values().get(pk=run.pk)
+
+    with (
+        patch("companies.views.background_executor.submit_pipeline") as submit,
+        patch("scraping.pipeline.run_source_pipeline") as pipeline,
+    ):
+        response = client().get(
+            reverse("scrape_runs:status"),
+            {"company_id": company.pk, "ids": run.pk},
+        )
+
+    assert response.status_code == 200
+    assert model("companies.Company").objects.values().get(pk=company.pk) == before_company
+    assert model("scrape_runs.ScrapeRun").objects.values().get(pk=run.pk) == before_run
+    submit.assert_not_called()
+    pipeline.assert_not_called()
 
 
 def test_update_jobs_rejects_inactive_company_without_submission() -> None:
