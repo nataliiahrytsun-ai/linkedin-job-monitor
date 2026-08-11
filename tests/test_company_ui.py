@@ -130,7 +130,7 @@ def valid_company_data(**overrides: str) -> dict[str, str]:
     values = {
         "name": "New Company",
         "company_type": "client",
-        "source": "fixture",
+        "source": "lever",
         "source_jobs_url": "https://jobs.example.test/new/openings",
         "is_active": "on",
     }
@@ -950,7 +950,7 @@ def test_create_get_has_csrf_labels_and_only_user_managed_fields() -> None:
     for label in (
         "Company name",
         "Company type",
-        "Vacancy source",
+        "Source",
         "Source jobs URL",
         "Monitoring active",
     ):
@@ -960,23 +960,40 @@ def test_create_get_has_csrf_labels_and_only_user_managed_fields() -> None:
     assert '<option value="client">Customer</option>' in html
     assert '<option value="supplier">Supplier</option>' in html
     assert '<option value="other" selected>Other</option>' in html
+    assert '<select name="source"' in html
+    assert 'type="text" name="source"' not in html
+    assert '<option value="lever">Lever</option>' in html
+    assert '<option value="fixture">Fixture</option>' not in html
     assert "Kunde" not in html
     assert "Sonstige" not in html
     assert html.count("<h1") == 1
     assert model("companies.Company").objects.count() == 0
 
 
+def test_create_source_options_come_from_user_selectable_registry_api() -> None:
+    response = client().get(reverse("companies:create"))
+    source_field = response.context["form"].fields["source"]
+    rendered_values = tuple(value for value, _label in source_field.choices)
+    selectable_values = importlib.import_module(
+        "scraping.sources.registry"
+    ).user_selectable_source_keys()
+
+    assert rendered_values == selectable_values
+    assert ("lever", "Lever") in tuple(source_field.choices)
+    assert all(value != "fixture" for value, _label in source_field.choices)
+
+
 def test_valid_create_uses_redirect_normalizes_source_and_refresh_does_not_duplicate() -> None:
     browser = client()
     response = browser.post(
         reverse("companies:create"),
-        valid_company_data(source="  FIXTURE  "),
+        valid_company_data(source="  LEVER  "),
     )
 
     assert response.status_code == 302
     assert response.url == reverse("companies:list")
     company = model("companies.Company").objects.get()
-    assert company.source == "fixture"
+    assert company.source == "lever"
     assert company.company_type == "client"
 
     redirected = browser.get(response.url)
@@ -987,23 +1004,45 @@ def test_valid_create_uses_redirect_normalizes_source_and_refresh_does_not_dupli
 def test_invalid_create_preserves_values_shows_errors_and_creates_nothing() -> None:
     response = client().post(
         reverse("companies:create"),
-        valid_company_data(name="", source="fixture-preserved"),
+        valid_company_data(name="", source="lever"),
     )
     html = response.content.decode()
 
     assert response.status_code == 200
     assert "This field is required" in html
-    assert 'value="fixture-preserved"' in html
+    assert '<option value="lever" selected>Lever</option>' in html
+    assert model("companies.Company").objects.count() == 0
+
+
+def test_create_rejects_unsupported_source_submitted_directly() -> None:
+    response = client().post(
+        reverse("companies:create"),
+        valid_company_data(source="https://jobs.lever.co/olo"),
+    )
+
+    assert response.status_code == 200
+    assert "Select a valid choice" in response.content.decode()
+    assert model("companies.Company").objects.count() == 0
+
+
+def test_create_rejects_internal_fixture_source_submitted_directly() -> None:
+    response = client().post(
+        reverse("companies:create"),
+        valid_company_data(source="fixture"),
+    )
+
+    assert response.status_code == 200
+    assert "Select a valid choice" in response.content.decode()
     assert model("companies.Company").objects.count() == 0
 
 
 def test_duplicate_constraint_is_displayed_as_form_error() -> None:
-    create_company()
+    create_company(source="lever")
 
     response = client().post(
         reverse("companies:create"),
         valid_company_data(
-            source="  FIXTURE  ",
+            source="  LEVER  ",
             source_jobs_url="https://jobs.example.test/example/openings",
         ),
     )
@@ -1014,7 +1053,12 @@ def test_duplicate_constraint_is_displayed_as_form_error() -> None:
 
 
 def test_edit_get_shows_current_values_without_changing_company() -> None:
-    company = create_company(name="Current Name", company_type="supplier")
+    company = create_company(
+        name="Current Name",
+        company_type="supplier",
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/olo",
+    )
     before = model("companies.Company").objects.values().get(pk=company.pk)
 
     response = client().get(reverse("companies:edit", args=(company.pk,)))
@@ -1023,10 +1067,24 @@ def test_edit_get_shows_current_values_without_changing_company() -> None:
     assert response.status_code == 200
     assert "Current Name" in html
     assert 'value="supplier" selected' in html
+    assert '<select name="source"' in html
+    assert '<option value="lever" selected>Lever</option>' in html
     assert model("companies.Company").objects.values().get(pk=company.pk) == before
 
 
-def test_valid_edit_updates_one_company_and_shows_success() -> None:
+def test_edit_get_shows_existing_internal_source_without_selecting_lever() -> None:
+    company = create_company(name="Acme GmbH", source="fixture")
+
+    response = client().get(reverse("companies:edit", args=(company.pk,)))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert '<option value="fixture" selected>Fixture (internal)</option>' in html
+    assert '<option value="lever">Lever</option>' in html
+    assert '<option value="lever" selected>' not in html
+
+
+def test_valid_edit_of_internal_company_preserves_source_and_shows_success() -> None:
     company = create_company()
     browser = client()
 
@@ -1035,6 +1093,7 @@ def test_valid_edit_updates_one_company_and_shows_success() -> None:
         valid_company_data(
             name="Updated Company",
             company_type="supplier",
+            source="fixture",
             source_jobs_url="https://jobs.example.test/updated/openings",
         ),
     )
@@ -1044,22 +1103,57 @@ def test_valid_edit_updates_one_company_and_shows_success() -> None:
     company.refresh_from_db()
     assert company.name == "Updated Company"
     assert company.company_type == "supplier"
+    assert company.source == "fixture"
     assert b"was updated" in browser.get(response.url).content
 
 
-def test_invalid_edit_does_not_save_partial_changes() -> None:
-    company = create_company(name="Original Name", source="original-source")
+def test_edit_rejects_internal_fixture_source() -> None:
+    company = create_company(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/example",
+    )
 
     response = client().post(
         reverse("companies:edit", args=(company.pk,)),
-        valid_company_data(name="", source="changed-source"),
+        valid_company_data(
+            source="fixture",
+            source_jobs_url="https://jobs.example.test/updated/openings",
+        ),
     )
 
     assert response.status_code == 200
-    assert 'value="changed-source"' in response.content.decode()
+    assert "Select a valid choice" in response.content.decode()
+    company.refresh_from_db()
+    assert company.source == "lever"
+
+
+def test_invalid_edit_does_not_save_partial_changes() -> None:
+    company = create_company(name="Original Name", source="fixture")
+
+    response = client().post(
+        reverse("companies:edit", args=(company.pk,)),
+        valid_company_data(name="", source="lever"),
+    )
+
+    assert response.status_code == 200
+    assert '<option value="lever" selected>Lever</option>' in response.content.decode()
     company.refresh_from_db()
     assert company.name == "Original Name"
-    assert company.source == "original-source"
+    assert company.source == "fixture"
+
+
+def test_edit_rejects_unsupported_source_submitted_directly() -> None:
+    company = create_company(source="lever", source_jobs_url="https://jobs.lever.co/olo")
+
+    response = client().post(
+        reverse("companies:edit", args=(company.pk,)),
+        valid_company_data(source="not-registered"),
+    )
+
+    assert response.status_code == 200
+    assert "Select a valid choice" in response.content.decode()
+    company.refresh_from_db()
+    assert company.source == "lever"
 
 
 def test_unknown_company_edit_returns_not_found() -> None:

@@ -22,6 +22,21 @@ _ADAPTER_FACTORIES: dict[str, Callable[[], SourceAdapter]] = {
     "fixture": FixtureSourceAdapter,
     "lever": LeverSourceAdapter,
 }
+_USER_SELECTABLE_SOURCE_KEYS = frozenset({"lever"})
+
+
+def registered_source_keys() -> tuple[str, ...]:
+    """Return the immutable, stable set of application-supported source keys."""
+    return tuple(sorted(_ADAPTER_FACTORIES))
+
+
+def user_selectable_source_keys() -> tuple[str, ...]:
+    """Return registered sources intended for user-managed company records."""
+    return tuple(
+        source_key
+        for source_key in registered_source_keys()
+        if source_key in _USER_SELECTABLE_SOURCE_KEYS
+    )
 
 
 def get_source_adapter(company: SourceCompany) -> SourceAdapter:

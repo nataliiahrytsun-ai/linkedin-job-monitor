@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from scraping.sources.base import SourceError
+from scraping.sources.base import SourceBatch, SourceError
 from scraping.sources.lever import (
     DEFAULT_MAX_PAGES,
     DEFAULT_PAGE_SIZE,
@@ -52,7 +52,7 @@ def fetch_json_page(
     *,
     page_size: int = 100,
     max_pages: int = 100,
-) -> tuple[FakeHttpGet, object]:
+) -> tuple[FakeHttpGet, SourceBatch]:
     http_get = fake_http(json.dumps(page))
     adapter = LeverSourceAdapter(
         http_get=http_get,

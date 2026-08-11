@@ -8,7 +8,12 @@ import pytest
 from scraping.sources.base import SourceBatch
 from scraping.sources.fixture import FixtureSourceAdapter
 from scraping.sources.lever import LeverSourceAdapter
-from scraping.sources.registry import UnknownSourceError, get_source_adapter
+from scraping.sources.registry import (
+    UnknownSourceError,
+    get_source_adapter,
+    registered_source_keys,
+    user_selectable_source_keys,
+)
 
 
 @dataclass
@@ -45,6 +50,19 @@ def test_registry_normalizes_source_and_selects_lever_adapter() -> None:
     )
 
     assert isinstance(adapter, LeverSourceAdapter)
+
+
+def test_registry_distinguishes_registered_and_user_selectable_sources() -> None:
+    registered_keys = registered_source_keys()
+    selectable_keys = user_selectable_source_keys()
+
+    assert isinstance(registered_keys, tuple)
+    assert isinstance(selectable_keys, tuple)
+    assert "fixture" in registered_keys
+    assert "fixture" not in selectable_keys
+    assert "lever" in registered_keys
+    assert "lever" in selectable_keys
+    assert set(selectable_keys) <= set(registered_keys)
 
 
 def test_registry_rejects_unknown_source_safely() -> None:
