@@ -34,6 +34,18 @@ def home(request: HttpRequest) -> HttpResponse:
         .values_list("finished_at", flat=True)
         .first()
     )
+    running_run_ids = list(
+        ScrapeRun.objects.filter(status=ScrapeRun.Status.RUNNING)
+        .order_by("-started_at", "-pk")
+        .values_list("pk", flat=True)
+    )
+    latest_run_state = None
+    if running_run_ids:
+        latest_run_state = (
+            ScrapeRun.objects.order_by("-started_at", "-pk")
+            .values("id", "status", "finished_at")
+            .first()
+        )
 
     return render(
         request,
@@ -45,9 +57,9 @@ def home(request: HttpRequest) -> HttpResponse:
             ).count(),
             "new_jobs": latest_completed_jobs_created or 0,
             "latest_successful_run": latest_successful_run,
-            "running_runs": ScrapeRun.objects.filter(
-                status=ScrapeRun.Status.RUNNING
-            ).count(),
+            "running_runs": len(running_run_ids),
+            "running_run_ids": running_run_ids,
+            "latest_run_state": latest_run_state,
             "failed_runs": ScrapeRun.objects.filter(
                 status=ScrapeRun.Status.FAILED
             ).count(),

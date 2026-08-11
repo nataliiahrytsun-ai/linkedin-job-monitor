@@ -100,7 +100,7 @@ class HomePageTests(TestCase):  # type: ignore[misc]
             "Active jobs",
             "New jobs",
             "Latest successful run",
-            "Running",
+            "Running now",
             "Failed runs",
         ):
             assert label in html
@@ -192,6 +192,7 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         scrape_run(active_company, status="failed", started_at=started_at - timedelta(days=1))
         scrape_run(active_company, status="failed", started_at=started_at - timedelta(days=2))
         scrape_run(active_company, status="partial", started_at=started_at - timedelta(days=3))
+        scrape_run(active_company, status="success", started_at=started_at - timedelta(days=4))
 
         response = self.client.get("/")
 
@@ -199,6 +200,39 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         assert response.context["active_jobs"] == 1
         assert response.context["running_runs"] == 2
         assert response.context["failed_runs"] == 2
+
+    def test_dashboard_polls_existing_running_runs_until_terminal(self) -> None:
+        employer = company(name="Polling Company")
+        running = scrape_run(
+            employer,
+            status="running",
+            started_at=datetime(2026, 8, 9, 10, tzinfo=UTC),
+        )
+
+        running_response = self.client.get("/")
+        running_html = running_response.content.decode()
+
+        assert running_response.context["running_runs"] == 1
+        assert running_response.context["running_run_ids"] == [running.pk]
+        assert 'id="scrape-run-polling"' in running_html
+        assert 'data-status-url="/scrape-runs/status/"' in running_html
+        assert 'data-interval-ms="5000"' in running_html
+        assert 'src="/static/js/scrape_run_polling.js"' in running_html
+
+        running.status = "success"
+        running.finished_at = datetime(2026, 8, 9, 10, 1, tzinfo=UTC)
+        running.duration_seconds = Decimal("60.000")
+        running.save(
+            update_fields=("status", "finished_at", "duration_seconds")
+        )
+
+        terminal_response = self.client.get("/")
+        terminal_html = terminal_response.content.decode()
+
+        assert terminal_response.context["running_runs"] == 0
+        assert terminal_response.context["running_run_ids"] == []
+        assert 'id="scrape-run-polling"' not in terminal_html
+        assert 'src="/static/js/scrape_run_polling.js"' not in terminal_html
 
     def test_new_jobs_uses_latest_completed_partial_then_failed_not_running(self) -> None:
         employer = company(name="Latest Completed")
