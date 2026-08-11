@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scraping.sources.base import SourceBatch
+from scraping.sources.darwinbox import DarwinboxSourceAdapter
 from scraping.sources.fixture import FixtureSourceAdapter
 from scraping.sources.lever import LeverSourceAdapter
 from scraping.sources.registry import (
@@ -50,6 +51,19 @@ def test_registry_normalizes_source_and_selects_lever_adapter() -> None:
     )
 
     assert isinstance(adapter, LeverSourceAdapter)
+
+
+def test_registry_selects_darwinbox_adapter_but_keeps_it_internal() -> None:
+    adapter = get_source_adapter(
+        CompanyStub(
+            source="  DaRwInBoX  ",
+            source_jobs_url="https://tenant.darwinbox.com/ms/candidate/careers",
+        )
+    )
+
+    assert isinstance(adapter, DarwinboxSourceAdapter)
+    assert "darwinbox" in registered_source_keys()
+    assert "darwinbox" not in user_selectable_source_keys()
 
 
 def test_registry_distinguishes_registered_and_user_selectable_sources() -> None:

@@ -25,9 +25,14 @@ The shared pipeline supports two deliberately different source roles:
   `https://jobs.lever.co/olo`.
 - `fixture`: registered internal/test adapter. It reads local synthetic data,
   reports `requests_made=0`, and is excluded from user-managed source creation.
+- `darwinbox`: registered executable adapter implementing the observed public
+  Acuity Darwinbox transport contract. It remains excluded from user-managed
+  source creation because production/policy approval is **INDETERMINATE**.
 
-LinkedIn has no production adapter or registry key. Darwinbox and JazzHR are
-also not implemented. Their audit artifacts are not production support.
+LinkedIn has no production adapter or registry key and remains blocked pending
+a separate feasibility/access/approval decision. JazzHR is not implemented.
+Darwinbox implementation is technical evidence, not production approval or a
+claim that every Darwinbox installation is supported.
 
 ## Source-level orchestration proof
 
@@ -81,6 +86,29 @@ a terminal SUCCESS ScrapeRun, and `requests_made=2`. A separate Olo regression
 proves that the single Lever CompanySource is submitted through
 `submit_company`. No real network request is made.
 
+## Darwinbox complete-snapshot integration proof
+
+`DarwinboxSourceAdapter` uses the observed public listing contract:
+
+```text
+POST /ms/candidateapi/job/alljobs?companyId=<companyId>
+```
+
+One `fetch()` walks page 1, page 2, and subsequent pages automatically. It
+deduplicates on Darwinbox `id` and returns `SourceBatch` only after the unique
+count reaches `job_counts`. Incomplete pagination raises `SourceError`; the
+pipeline stores a FAILED ScrapeRun and performs no reconciliation. Listing
+`jd` avoids detail work, while an empty `jd` triggers one matching public
+detail GET. `requests_made` includes listing and detail calls.
+
+Offline adapter tests cover one-, two-, and three-page completion, empty
+complete snapshots, within/across-page duplicates, malformed or inconsistent
+responses, detail fallback and ID validation, request accounting, page limits,
+and transport failures. Background integration tests prove source-owned
+persistence, SUCCESS reconciliation isolation, equal IDs in different
+CompanySources, and preservation of existing jobs after incomplete fetch. No
+real Darwinbox request is part of automated verification.
+
 ## Reproducible checks
 
 ```powershell
@@ -98,13 +126,13 @@ Bootstrap and migration tests use unique temporary SQLite paths. The working
 repository `db.sqlite3` is not opened, migrated, replaced, or removed for the
 verification gate.
 
-## Current verified Slice 4 baseline
+## Current verified Darwinbox adapter baseline
 
-- targeted Company UI tests: **73 passed**;
-- full pytest: **487 passed**, with 150 existing third-party `lxml` deprecation
+- targeted Darwinbox/registry/background tests: **79 passed**;
+- full pytest: **524 passed**, with 150 existing third-party `lxml` deprecation
   warnings;
 - Ruff: **All checks passed**;
-- MyPy: **Success — 28 source files**;
+- MyPy: **Success — 29 source files**;
 - Django system check: **0 issues**;
 - migration check: **No changes detected**;
 - `pip check`: **No broken requirements found**;
@@ -121,8 +149,9 @@ automated browser/device certification.
 
 ## Scope boundary
 
-This evidence verifies Slice 4 source management together with the existing
-Company multi-source orchestration and production Lever path. It does not
-verify or claim Source Discovery, Darwinbox/JazzHR/LinkedIn adapters, Acuity
-production integration, cross-source vacancy deduplication, hard source delete,
-run cancellation, or final legacy-schema cleanup.
+This evidence verifies the Darwinbox adapter against offline representations of
+the observed Acuity contract together with the existing source-neutral pipeline.
+It does not grant Darwinbox production approval, prove all Darwinbox tenants,
+or complete Acuity monitoring. It does not verify or claim Source Discovery,
+JazzHR/LinkedIn adapters, cross-source vacancy deduplication, hard source delete,
+run cancellation, or final legacy-schema cleanup. Lever remains unchanged.

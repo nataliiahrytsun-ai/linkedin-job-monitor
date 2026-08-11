@@ -1,0 +1,8 @@
+{
+  "status": "success",
+  "data": [
+    {"id": "darwinbox-1", "title": "Data Analyst", "jd": "Build reports."},
+    {"id": "darwinbox-3", "title": "QA Engineer", "jd": "Test releases."}
+  ],
+  "job_counts": 3
+}

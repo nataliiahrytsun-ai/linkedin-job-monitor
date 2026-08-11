@@ -1,0 +1,17 @@
+{
+  "status": "success",
+  "message": {
+    "job": [
+      {
+        "id": "darwinbox-detail",
+        "title": "Detail Analyst",
+        "locations": "Mumbai",
+        "department": "Research",
+        "emp_type": "Full time",
+        "posted_on": "2026-08-02T10:00:00Z",
+        "jd": "&lt;p&gt;Detailed description.&lt;/p&gt;"
+      }
+    ],
+    "isSaved": false
+  }
+}

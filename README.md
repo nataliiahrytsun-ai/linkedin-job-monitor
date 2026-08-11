@@ -6,15 +6,20 @@ reconciliation, run history, and the UI source-neutral.
 
 ## Current source status
 
-- **Current production source:** Lever. Users add a CompanySource through the
+- **Current production-approved source:** Lever. Users add a CompanySource through the
   source-management UI, select `Lever`, and configure a jobs URL in the form
   `https://jobs.lever.co/<site>`.
+- **Executable but not user-selectable:** Darwinbox. `DarwinboxSourceAdapter`
+  implements the public contract technically verified against the observed
+  Acuity Darwinbox tenant, but its production/policy approval remains
+  **INDETERMINATE**, so it is not offered by the normal Add Source UI. This is
+  not a claim of compatibility with every Darwinbox installation.
 - **Internal test source:** Fixture. It remains registered for deterministic
   offline pipeline tests, but is not offered for new user-managed companies.
-- **Audited/planned, not implemented:** Darwinbox and JazzHR. They motivated
-  the multi-source foundation but do not currently have production adapters.
+- **Audited/planned, not implemented:** JazzHR.
 - **LinkedIn production status:** Not implemented; feasibility/access follow-up
-  is required. The LinkedIn spike and limited pagination diagnostic are
+  and approval are blocked pending a separate decision. The LinkedIn spike and
+  limited pagination diagnostic are
   historical technical evidence, not a production adapter or authorization for
   production collection.
 

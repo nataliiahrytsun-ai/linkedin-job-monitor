@@ -1,0 +1,23 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "id": "darwinbox-1",
+      "title": "Data Analyst",
+      "country": "India",
+      "locations": "Bengaluru",
+      "department_name_only": "Analytics",
+      "emp_type_name": "Full time",
+      "posted_on": "2026-08-01T09:00:00Z",
+      "jd": "&lt;p&gt;Build trusted reports.&lt;/p&gt;"
+    },
+    {
+      "id": "darwinbox-2",
+      "designation_display_name": "Delivery Manager",
+      "officelocations_without_area": ["Gurugram", "Remote"],
+      "emp_sub_type_name": "Permanent",
+      "jd": "Lead delivery."
+    }
+  ],
+  "job_counts": 3
+}

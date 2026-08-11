@@ -29,6 +29,11 @@ Source:
   CompanySource auswählbar;
 - `fixture` bleibt als interner Offline-/Test-Adapter registriert, ist aber
   keine auswählbare Production Source;
+- `darwinbox` ist als technisch ausführbarer Adapter registriert. Er verwendet
+  den auf dem öffentlichen Acuity-Tenant beobachteten Contract, bleibt aber
+  wegen **INDETERMINATE** Production-/Policy-Freigabe aus der normalen Add
+  Source UI ausgeschlossen. Dies ist keine Aussage über alle Darwinbox-
+  Installationen und keine Freigabe des Acuity Production Monitorings;
 - Normalisierung, Persistenz, Reconciliation, `ScrapeRun`, Background
   Execution und UI sind source-neutral;
 - Company Management, Jobs UI, Dashboard, ScrapeRun History und read-only
@@ -55,7 +60,13 @@ diesen Source-Kontext. Company Update kann alle freigegebenen aktiven Sources
 unabhängig ausführen. CompanySource-Konfiguration wird getrennt von Company
 create/edit über die Source-Management-UI verwaltet; mehrere Sources können
 angezeigt, hinzugefügt, bearbeitet und unabhängig aktiviert/deaktiviert werden.
-Source Discovery und zusätzliche ATS-Adapter sind weiterhin nicht implementiert.
+Source Discovery und zusätzliche ATS-Adapter wie JazzHR sind weiterhin nicht
+implementiert. Der Darwinbox Adapter verarbeitet Listings über
+`POST /ms/candidateapi/job/alljobs?companyId=<companyId>`, paginiert innerhalb
+eines `fetch()` bis zum vollständigen Snapshot und verwendet Darwinbox `id` als
+stabile Source-ID. Unvollständige Pagination führt zu `SourceError` ohne
+Reconciliation; Detail-GETs erfolgen nur bei leerem Listing-`jd`, und
+`requests_made` zählt Listing- und Detail-Requests. Lever bleibt unverändert.
 Aktueller Contract und Grenzen stehen
 in [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 

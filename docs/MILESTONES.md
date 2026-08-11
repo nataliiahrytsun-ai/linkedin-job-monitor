@@ -114,10 +114,19 @@ slices:
   changes are enforced. Its quality gate passed with 487 tests and the existing
   150 third-party `lxml` warnings; all other checks passed.
 
-The next planned work is the Darwinbox adapter and Acuity integration. Source
-Discovery, Darwinbox/JazzHR adapters, cross-source vacancy deduplication, hard
-source deletion, run cancellation, and final legacy cleanup are not implemented
-in this completed slice. The current architecture and boundaries are documented in
+The bounded **Darwinbox adapter implementation is now completed**. It implements
+the observed public Acuity listing/detail contract, automatic page-based
+pagination, complete-snapshot enforcement, request accounting, and offline
+source-scoped pipeline/reconciliation verification. Darwinbox is registered as
+executable internally but remains hidden from Add Source because its
+production/policy approval is **INDETERMINATE**. This does not complete or
+approve Acuity monitoring and does not claim support for every Darwinbox
+installation.
+
+Source Discovery, JazzHR and LinkedIn adapters, cross-source vacancy
+deduplication, hard source deletion, run cancellation, and final legacy cleanup
+are not implemented. Lever remains the production-approved selectable source.
+The current architecture and boundaries are documented in
 [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 
 LinkedIn remains the original product target, but it is not a current

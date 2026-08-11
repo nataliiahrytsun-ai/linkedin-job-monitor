@@ -16,8 +16,11 @@ Company
 - `SourceAdapter` is the fetching and mapping implementation for one ATS or platform. One registered adapter can serve many CompanySource rows.
 
 The schema, source ownership, source-scoped persistence/reconciliation, Company
-multi-source orchestration, and source-management UI are implemented. Additional
-ATS adapters and automatic Source Discovery are not implemented.
+multi-source orchestration, and source-management UI are implemented. Lever is
+the production-approved/user-selectable adapter. Darwinbox is implemented and
+registered as executable, but remains hidden from normal source creation while
+its production/policy approval is **INDETERMINATE**. Additional ATS adapters and
+automatic Source Discovery are not implemented.
 
 ## CompanySource is not an adapter
 
@@ -158,8 +161,10 @@ user-selectable API. Lever is currently the only production/user-selectable
 adapter. A valid public jobs URL is required and checked server-side. A manually
 created source starts as `approval_status=approved` and `is_active=True`.
 Fixture remains registered for internal tests but is not offered or accepted as
-a normal user-managed source; Darwinbox and JazzHR are not selectable because
-their adapters do not exist.
+a normal user-managed source. Darwinbox is registered as an executable adapter
+but remains non-selectable because implementation does not itself grant
+production/policy approval. JazzHR is not selectable because its adapter does
+not exist.
 
 The source platform is immutable after creation because CompanySource is both a
 provenance and execution boundary. **Edit source** can update the supported
@@ -189,6 +194,35 @@ source. It does not fall back to legacy Company source fields.
   Deactivate workflows;
 - existing single-source Olo/Lever compatibility.
 
+## Darwinbox adapter boundary
+
+`DarwinboxSourceAdapter` implements the public transport contract observed on
+the Acuity Darwinbox tenant. A listing request uses:
+
+```text
+POST /ms/candidateapi/job/alljobs?companyId=<companyId>
+```
+
+One `adapter.fetch()` automatically advances the page-based API until the
+accumulated unique Darwinbox `id` values satisfy the response `job_counts`.
+That `id` is the stable source-local job ID. A `SourceBatch` is returned only
+for a complete snapshot. Empty, repeated, inconsistent, or page-limited
+pagination before completion raises `SourceError`; the pipeline records a
+FAILED source-owned ScrapeRun and does not reconcile jobs from a partial
+snapshot.
+
+Listing `jd` is used when present. The public detail GET is requested only as a
+fallback when listing `jd` is empty. `requests_made` includes every listing and
+detail request. The adapter uses the existing source-neutral persistence and
+reconciliation path and does not change Lever behavior.
+
+This is technical compatibility with the observed public Acuity Darwinbox
+contract, not a claim that all Darwinbox installations are compatible. The
+adapter is executable through the internal registry but is deliberately absent
+from normal Add Source choices while production/policy approval remains
+**INDETERMINATE**. Acuity production monitoring is not thereby complete or
+approved.
+
 ## Transitional legacy fields
 
 The staged migration still retains:
@@ -208,7 +242,7 @@ been completed.
 ## Not implemented
 
 - automatic Source Discovery or LinkedIn-to-careers discovery;
-- `DarwinboxSourceAdapter`, `JazzHRSourceAdapter`, Greenhouse/Ashby adapters, or `LinkedInSourceAdapter`;
+- `JazzHRSourceAdapter`, Greenhouse/Ashby adapters, or `LinkedInSourceAdapter`;
 - cross-source vacancy matching/deduplication or `CanonicalVacancy`;
 - final removal of legacy Company fields or final non-null ownership cleanup;
 - hard deletion of CompanySource or run cancellation;
@@ -216,7 +250,12 @@ been completed.
 
 ## Acuity reference case
 
-The architecture can now represent and orchestrate two independent sources for Acuity. This is architecture capability, not an active integration. Darwinbox and JazzHR adapters are not implemented, Acuity production monitoring is not enabled, and Source Discovery remains manual/outside the application. No vacancy-completeness claim is made.
+The architecture can represent and orchestrate two independent sources for
+Acuity. Darwinbox transport compatibility is implemented against the observed
+public Acuity contract, but the adapter is not production-approved or exposed
+through normal source creation. JazzHR is not implemented, Acuity production
+monitoring is not complete or enabled, and Source Discovery remains
+manual/outside the application. No vacancy-completeness claim is made.
 
 ## Conceptual onboarding
 
@@ -236,6 +275,8 @@ without a separately approved and implemented adapter/access path.
 
 ## Next work
 
-Slices 1-4 are complete. The next planned integration work is a Darwinbox
-adapter and the separately reviewed Acuity source configuration. JazzHR,
-Source Discovery, and other ATS integrations remain separate future work.
+Slices 1-4 and the bounded Darwinbox adapter implementation are complete. A
+separate production/policy decision and source-configuration review would be
+required before Darwinbox could be exposed to users or enabled for Acuity.
+JazzHR, Source Discovery, and other ATS integrations remain separate future
+work.

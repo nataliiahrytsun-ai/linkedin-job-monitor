@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from scraping.sources.base import SourceAdapter, SourceConfiguration, SourceError
+from scraping.sources.darwinbox import DarwinboxSourceAdapter
 from scraping.sources.fixture import FixtureSourceAdapter
 from scraping.sources.lever import LeverSourceAdapter
 
@@ -19,6 +20,7 @@ def normalize_source_key(source: str) -> str:
 
 
 _ADAPTER_FACTORIES: dict[str, Callable[[], SourceAdapter]] = {
+    "darwinbox": DarwinboxSourceAdapter,
     "fixture": FixtureSourceAdapter,
     "lever": LeverSourceAdapter,
 }

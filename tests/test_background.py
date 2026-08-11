@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import subprocess
 import sys
 import threading
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -26,11 +28,13 @@ from scraping.background import (
 )
 from scraping.pipeline import FixturePipelineError, FixturePipelineResult
 from scraping.sources.base import SourceAdapter, SourceBatch, SourceError
+from scraping.sources.darwinbox import DarwinboxMethod, DarwinboxSourceAdapter
 from scraping.sources.lever import LeverSourceAdapter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "backend"
 LEVER_FIXTURES = Path(__file__).parent / "fixtures" / "lever"
+DARWINBOX_FIXTURES = Path(__file__).parent / "fixtures" / "darwinbox"
 
 
 class IncrementingClock:
@@ -391,6 +395,196 @@ def test_lever_multi_page_submission_persists_complete_snapshot_without_network(
     assert result.reconciliation.total_company_jobs == 3
     assert result.reconciliation.seen_jobs == 3
     assert result.reconciliation.unseen_jobs == 0
+
+
+def test_darwinbox_pipeline_is_complete_source_scoped_and_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = model("companies.Company").objects.create(
+        name="Multi-source Company",
+        source="darwinbox",
+        source_jobs_url="https://tenant.darwinbox.com/ms/candidate/careers",
+    )
+    darwinbox_source = add_company_source(company_record)
+    other_source = add_company_source(
+        company_record,
+        source="other-source",
+        source_jobs_url="https://jobs.example.test/other",
+    )
+    first_responses = iter(
+        [
+            (DARWINBOX_FIXTURES / "page_1.json").read_text(encoding="utf-8"),
+            (DARWINBOX_FIXTURES / "page_2_terminal.json").read_text(encoding="utf-8"),
+        ]
+    )
+    darwinbox_calls: list[tuple[str, dict[str, object] | None]] = []
+
+    def darwinbox_request(
+        method: DarwinboxMethod,
+        url: str,
+        json_body: Mapping[str, object] | None,
+        timeout_seconds: float,
+    ) -> str:
+        del url
+        assert timeout_seconds > 0
+        darwinbox_calls.append(
+            (method, dict(json_body) if json_body is not None else None)
+        )
+        return next(first_responses)
+
+    class OtherAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            return SourceBatch(
+                records=(
+                    {
+                        "source": company.source,
+                        "source_job_id": "darwinbox-1",
+                        "title": "Independent same ID",
+                    },
+                ),
+                requests_made=0,
+            )
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(
+        registry._ADAPTER_FACTORIES,
+        "darwinbox",
+        lambda: DarwinboxSourceAdapter(request=darwinbox_request),
+    )
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "other-source", OtherAdapter)
+
+    with ControlledBackgroundExecutor(clock=IncrementingClock()) as executor:
+        darwinbox_result = executor.submit_source(
+            company_source=darwinbox_source, miss_threshold=1
+        ).future.result(timeout=10)
+        other_result = executor.submit_source(
+            company_source=other_source, miss_threshold=1
+        ).future.result(timeout=10)
+
+    darwinbox_jobs = model("jobs.JobPosting").objects.filter(
+        company_source=darwinbox_source
+    )
+    assert [call[0] for call in darwinbox_calls] == ["POST", "POST"]
+    assert [cast(dict[str, object], call[1])["page"] for call in darwinbox_calls] == [1, 2]
+    stored_darwinbox_ids = list(
+        darwinbox_jobs.order_by("source_job_id").values_list(
+            "source_job_id", flat=True
+        )
+    )
+    assert stored_darwinbox_ids == [
+        "darwinbox-1",
+        "darwinbox-2",
+        "darwinbox-3",
+    ]
+    assert darwinbox_result.jobs_found == 3
+    assert darwinbox_result.scrape_run.status == "success"
+    assert darwinbox_result.scrape_run.requests_made == 2
+    assert darwinbox_result.scrape_run.company_source_id == darwinbox_source.pk
+    assert darwinbox_jobs.filter(source="darwinbox").count() == 3
+    assert other_result.scrape_run.status == "success"
+    same_id_jobs = model("jobs.JobPosting").objects.filter(source_job_id="darwinbox-1")
+    assert same_id_jobs.count() == 2
+    assert set(same_id_jobs.values_list("company_source_id", flat=True)) == {
+        darwinbox_source.pk,
+        other_source.pk,
+    }
+
+    terminal_response = json.dumps(
+        {
+            "status": "success",
+            "data": [
+                {
+                    "id": "darwinbox-2",
+                    "title": "Delivery Manager",
+                    "jd": "Still active.",
+                }
+            ],
+            "job_counts": 1,
+        }
+    )
+    monkeypatch.setitem(
+        registry._ADAPTER_FACTORIES,
+        "darwinbox",
+        lambda: DarwinboxSourceAdapter(
+            request=lambda method, url, body, timeout: terminal_response
+        ),
+    )
+    with ControlledBackgroundExecutor(clock=IncrementingClock()) as executor:
+        second_result = executor.submit_source(
+            company_source=darwinbox_source, miss_threshold=1
+        ).future.result(timeout=10)
+
+    assert second_result.reconciliation is not None
+    assert second_result.reconciliation.jobs_marked_not_found == 2
+    assert model("jobs.JobPosting").objects.get(
+        company_source=darwinbox_source, source_job_id="darwinbox-1"
+    ).status == "not_found"
+    assert model("jobs.JobPosting").objects.get(
+        company_source=other_source, source_job_id="darwinbox-1"
+    ).status == "active"
+
+
+def test_incomplete_darwinbox_pagination_fails_without_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = model("companies.Company").objects.create(
+        name="Incomplete Darwinbox",
+        source="darwinbox",
+        source_jobs_url="https://tenant.darwinbox.com/ms/candidate/careers",
+    )
+    company_source = add_company_source(company_record)
+    registry = importlib.import_module("scraping.sources.registry")
+    complete = json.dumps(
+        {
+            "status": "success",
+            "data": [{"id": "existing", "title": "Existing", "jd": "Retain."}],
+            "job_counts": 1,
+        }
+    )
+    monkeypatch.setitem(
+        registry._ADAPTER_FACTORIES,
+        "darwinbox",
+        lambda: DarwinboxSourceAdapter(
+            request=lambda method, url, body, timeout: complete
+        ),
+    )
+    with ControlledBackgroundExecutor(clock=IncrementingClock()) as executor:
+        executor.submit_source(company_source=company_source).future.result(timeout=10)
+
+    existing = model("jobs.JobPosting").objects.get(company_source=company_source)
+    incomplete = json.dumps(
+        {
+            "status": "success",
+            "data": [{"id": "partial", "title": "Partial", "jd": "Partial."}],
+            "job_counts": 100,
+        }
+    )
+    monkeypatch.setitem(
+        registry._ADAPTER_FACTORIES,
+        "darwinbox",
+        lambda: DarwinboxSourceAdapter(
+            request=lambda method, url, body, timeout: incomplete,
+            max_pages=1,
+        ),
+    )
+
+    with (
+        ControlledBackgroundExecutor(clock=IncrementingClock()) as executor,
+        pytest.raises(FixturePipelineError) as caught,
+    ):
+        executor.submit_source(
+            company_source=company_source, miss_threshold=1
+        ).future.result(timeout=10)
+
+    caught.value.scrape_run.refresh_from_db()
+    existing.refresh_from_db()
+    assert caught.value.scrape_run.status == "failed"
+    assert caught.value.scrape_run.requests_made == 1
+    assert existing.status == "active"
+    assert existing.consecutive_successful_misses == 0
+    assert model("jobs.JobPosting").objects.filter(
+        company_source=company_source, source_job_id="partial"
+    ).exists() is False
 
 
 def test_real_success_pipeline_uses_runtime_clock_and_returns_result() -> None:
