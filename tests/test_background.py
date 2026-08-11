@@ -8,6 +8,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -27,6 +28,7 @@ from scraping.sources.lever import LeverSourceAdapter
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "backend"
+LEVER_FIXTURES = Path(__file__).parent / "fixtures" / "lever"
 
 
 class IncrementingClock:
@@ -260,6 +262,75 @@ def test_lever_submission_uses_registry_and_company_site_without_network(
     assert result.scrape_run.requests_made == 1
     assert len(requested_urls) == 1
     assert requested_urls[0].startswith("https://api.lever.co/v0/postings/olo?")
+
+
+def test_lever_multi_page_submission_persists_complete_snapshot_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = model("companies.Company").objects.create(
+        name="Olo",
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/olo",
+    )
+    responses = iter(
+        [
+            (LEVER_FIXTURES / "postings_page_1.json").read_text(encoding="utf-8"),
+            (LEVER_FIXTURES / "postings_page_2.json").read_text(encoding="utf-8"),
+        ]
+    )
+    requested_urls: list[str] = []
+    selected_adapters: list[LeverSourceAdapter] = []
+
+    def fake_http_get(url: str, timeout_seconds: float) -> str:
+        requested_urls.append(url)
+        assert timeout_seconds > 0
+        return next(responses)
+
+    def lever_factory() -> LeverSourceAdapter:
+        adapter = LeverSourceAdapter(http_get=fake_http_get, page_size=2)
+        selected_adapters.append(adapter)
+        return adapter
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "lever", lever_factory)
+
+    with ControlledBackgroundExecutor(clock=IncrementingClock()) as executor:
+        result = executor.submit_pipeline(company=company_record).future.result(timeout=10)
+
+    stored_jobs = list(
+        model("jobs.JobPosting")
+        .objects.filter(company=company_record)
+        .order_by("source_job_id")
+    )
+    result.scrape_run.refresh_from_db()
+
+    assert len(selected_adapters) == 2
+    assert all(isinstance(adapter, LeverSourceAdapter) for adapter in selected_adapters)
+    assert len(requested_urls) == 2
+    assert [parse_qs(urlsplit(url).query) for url in requested_urls] == [
+        {"mode": ["json"], "limit": ["2"], "skip": ["0"]},
+        {"mode": ["json"], "limit": ["2"], "skip": ["2"]},
+    ]
+    assert [job.source_job_id for job in stored_jobs] == [
+        "lever-1",
+        "lever-2",
+        "lever-3",
+    ]
+    assert [job.title for job in stored_jobs] == [
+        "Senior Data Engineer",
+        "Support Specialist",
+        "Office Manager",
+    ]
+    assert [job.workplace_type for job in stored_jobs] == ["hybrid", "remote", "onsite"]
+    assert all(job.source == "lever" and job.status == "active" for job in stored_jobs)
+    assert result.jobs_found == 3
+    assert result.jobs_created == 3
+    assert result.scrape_run.status == "success"
+    assert result.scrape_run.requests_made == 2
+    assert result.reconciliation is not None
+    assert result.reconciliation.total_company_jobs == 3
+    assert result.reconciliation.seen_jobs == 3
+    assert result.reconciliation.unseen_jobs == 0
 
 
 def test_real_success_pipeline_uses_runtime_clock_and_returns_result() -> None:
