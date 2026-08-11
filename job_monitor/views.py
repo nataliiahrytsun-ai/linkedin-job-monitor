@@ -9,6 +9,10 @@ from companies.models import Company
 from companies.views import background_executor
 from jobs.models import JobPosting
 from scrape_runs.models import ScrapeRun
+from scrape_runs.unread_failures import (
+    latest_failure_boundary,
+    unread_failure_count,
+)
 from scraping.background import (
     BackgroundExecutionError,
 )
@@ -45,6 +49,7 @@ def home(request: HttpRequest) -> HttpResponse:
             .values("id", "status", "finished_at")
             .first()
         )
+    latest_failure = latest_failure_boundary()
 
     return render(
         request,
@@ -59,9 +64,10 @@ def home(request: HttpRequest) -> HttpResponse:
             "running_runs": len(running_run_ids),
             "running_run_ids": running_run_ids,
             "latest_run_state": latest_run_state,
-            "failed_runs": ScrapeRun.objects.filter(
-                status=ScrapeRun.Status.FAILED
-            ).count(),
+            "failed_runs": unread_failure_count(request, through=latest_failure),
+            "latest_failed_run_id": (
+                latest_failure.run_id if latest_failure is not None else None
+            ),
         },
     )
 

@@ -67,6 +67,9 @@ repeatable checks are in
 - Company-specific **Update jobs** and global **Update all** actions using the
   controlled background executor.
 - Dashboard counters and Run Status, including **Running now**.
+- Dashboard **Failed runs** counts session-unread FAILED runs. Its link opens
+  ScrapeRun history and acknowledges only failures through the linked terminal
+  `(finished_at, id)` boundary; history records and statuses remain unchanged.
 - ScrapeRun history with desktop, tablet, and mobile presentations.
 - Lightweight read-only polling for current activity, ScrapeRun history, and
   company refresh without creating scraping work from status endpoints. The

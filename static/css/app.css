@@ -255,11 +255,15 @@ h3 {
 }
 
 .dashboard-primary-value {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.25rem;
   overflow-wrap: anywhere;
   text-align: right;
+}
+
+.dashboard-metric-link .dashboard-metric-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
 }
 
 .dashboard-primary-metric .dashboard-metric-label {
@@ -289,6 +293,10 @@ h3 {
 }
 
 .dashboard-metric-arrow {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  line-height: 1;
   color: var(--accent);
   font-size: 0.72em;
   font-weight: 400;
@@ -2095,11 +2103,8 @@ h3 {
     grid-template-columns: 1fr;
   }
 
-  .dashboard-primary-metric .dashboard-primary-value {
-    width: 3rem;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 0.65rem;
-    column-gap: 0.15rem;
+  .dashboard-metric-link .dashboard-metric-value {
+    min-width: 3rem;
   }
 
   .dashboard-run-card {

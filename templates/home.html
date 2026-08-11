@@ -59,10 +59,12 @@
           <h3 class="dashboard-metric-label">Running now</h3>
           <p class="dashboard-run-value dashboard-metric-value">{{ running_runs }}</p>
         </article>
-        <article class="card dashboard-run-metric">
+        <a class="card dashboard-run-metric dashboard-metric-link" href="{% url 'scrape_runs:list' %}{% if latest_failed_run_id %}?acknowledge_failed_through={{ latest_failed_run_id }}{% endif %}">
           <h3 class="dashboard-metric-label">Failed runs</h3>
-          <p class="dashboard-run-value dashboard-metric-value">{{ failed_runs }}</p>
-        </article>
+          <p class="dashboard-run-value dashboard-metric-value">
+            {{ failed_runs }}<span class="dashboard-metric-arrow" aria-hidden="true">›</span>
+          </p>
+        </a>
       </div>
     </section>
   </div>

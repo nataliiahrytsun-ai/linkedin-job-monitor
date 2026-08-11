@@ -150,9 +150,9 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         assert 'class="card dashboard-primary-metric dashboard-metric-link" href="/jobs/"' in html
         assert "Companies →" not in html
         assert "Jobs →" not in html
-        assert html.count("dashboard-metric-link") == 2
-        assert html.count("dashboard-metric-arrow") == 2
-        assert html.count(">\u203a</span>") == 2
+        assert html.count("dashboard-metric-link") == 3
+        assert html.count("dashboard-metric-arrow") == 3
+        assert html.count(">\u203a</span>") == 3
         assert ">→</span>" not in html
         assert html.count('class="card dashboard-run-metric') == 3
         assert 'class="card dashboard-run-card"' not in html
@@ -163,6 +163,18 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         assert f'action="{reverse("update_all")}" method="post"' in html
         assert 'type="submit">Update all</button>' in html
         assert 'href="/scrape-runs/">Scrape runs</a>' in html
+        assert (
+            'class="card dashboard-run-metric dashboard-metric-link" '
+            'href="/scrape-runs/"' in html
+        )
+        css = Path("static/css/app.css").read_text(encoding="utf-8")
+        assert ".dashboard-metric-link .dashboard-metric-value {" in css
+        assert "gap: 0.45rem;" in css
+        assert ".dashboard-metric-arrow {\n  display: inline-flex;" in css
+        assert (
+            ".dashboard-metric-link .dashboard-metric-value {\n"
+            "    min-width: 3rem;" in css
+        )
         assert "nav-placeholder" not in html
 
     def test_dashboard_messages_use_dashboard_content_width(self) -> None:
@@ -226,6 +238,109 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         assert response.context["active_jobs"] == 1
         assert response.context["running_runs"] == 2
         assert response.context["failed_runs"] == 2
+
+    def test_failed_runs_link_acknowledges_snapshot_without_changing_history(
+        self,
+    ) -> None:
+        employer = company(name="Unread Failures")
+        base_time = datetime(2026, 8, 9, 10, tzinfo=UTC)
+        older = scrape_run(employer, status="failed", started_at=base_time)
+        newer = scrape_run(
+            employer,
+            status="failed",
+            started_at=base_time + timedelta(hours=1),
+        )
+        scrape_run(
+            employer,
+            status="success",
+            started_at=base_time + timedelta(hours=2),
+        )
+
+        dashboard = self.client.get(reverse("home"))
+        expected_link = (
+            f'{reverse("scrape_runs:list")}?acknowledge_failed_through={newer.pk}'
+        )
+
+        assert dashboard.context["failed_runs"] == 2
+        assert f'href="{expected_link}"' in dashboard.content.decode()
+
+        history = self.client.get(expected_link)
+        after_acknowledgement = self.client.get(reverse("home"))
+
+        assert history.status_code == 200
+        assert history.content.decode().count(">FAILED</span>") == 4
+        assert after_acknowledgement.context["failed_runs"] == 0
+        older.refresh_from_db()
+        newer.refresh_from_db()
+        assert older.status == "failed"
+        assert newer.status == "failed"
+
+        scrape_run(
+            employer,
+            status="success",
+            started_at=base_time + timedelta(hours=3),
+        )
+        assert self.client.get(reverse("home")).context["failed_runs"] == 0
+
+        scrape_run(
+            employer,
+            status="failed",
+            started_at=base_time + timedelta(hours=4),
+        )
+        assert self.client.get(reverse("home")).context["failed_runs"] == 1
+
+    def test_direct_history_navigation_does_not_acknowledge_failed_runs(self) -> None:
+        employer = company(name="Direct History")
+        scrape_run(
+            employer,
+            status="failed",
+            started_at=datetime(2026, 8, 9, 10, tzinfo=UTC),
+        )
+        success = scrape_run(
+            employer,
+            status="success",
+            started_at=datetime(2026, 8, 9, 11, tzinfo=UTC),
+        )
+
+        self.client.get(reverse("scrape_runs:list"))
+        self.client.get(
+            reverse("scrape_runs:list"),
+            {"acknowledge_failed_through": success.pk},
+        )
+
+        assert self.client.get(reverse("home")).context["failed_runs"] == 1
+
+    def test_running_run_that_fails_after_acknowledgement_is_unread(self) -> None:
+        employer = company(name="Late Failure")
+        base_time = datetime(2026, 8, 9, 10, tzinfo=UTC)
+        running = scrape_run(employer, status="running", started_at=base_time)
+        acknowledged = scrape_run(
+            employer,
+            status="failed",
+            started_at=base_time + timedelta(minutes=1),
+        )
+        self.client.get(
+            reverse("scrape_runs:list"),
+            {"acknowledge_failed_through": acknowledged.pk},
+        )
+
+        running.status = "failed"
+        running.finished_at = base_time + timedelta(hours=1)
+        running.duration_seconds = Decimal("3600.000")
+        running.error_message = "Failed after the history acknowledgement"
+        running.save(
+            update_fields=(
+                "status",
+                "finished_at",
+                "duration_seconds",
+                "error_message",
+            )
+        )
+
+        response = self.client.get(reverse("home"))
+
+        assert response.context["running_runs"] == 0
+        assert response.context["failed_runs"] == 1
 
     def test_dashboard_polls_existing_running_runs_until_terminal(self) -> None:
         employer = company(name="Polling Company")

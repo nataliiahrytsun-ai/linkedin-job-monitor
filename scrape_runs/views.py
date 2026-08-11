@@ -9,6 +9,7 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
 from scrape_runs.models import ScrapeRun
+from scrape_runs.unread_failures import acknowledge_failure
 
 HISTORY_PAGE_SIZE = 25
 
@@ -16,6 +17,9 @@ HISTORY_PAGE_SIZE = 25
 @require_GET
 def scrape_run_list(request: HttpRequest) -> HttpResponse:
     """Show current activity and a bounded, newest-first run history."""
+    acknowledgement = request.GET.get("acknowledge_failed_through")
+    if acknowledgement is not None:
+        acknowledge_failure(request, acknowledgement)
     runs = ScrapeRun.objects.select_related("company").order_by("-started_at", "-pk")
     page_obj = Paginator(runs, HISTORY_PAGE_SIZE).get_page(request.GET.get("page"))
     page_obj.object_list = list(page_obj.object_list)
