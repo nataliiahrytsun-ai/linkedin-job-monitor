@@ -29,6 +29,14 @@ class JobPosting(models.Model):
         on_delete=models.PROTECT,
         related_name="job_postings",
     )
+    company_source = models.ForeignKey(
+        "companies.CompanySource",
+        on_delete=models.PROTECT,
+        related_name="job_postings",
+        null=True,
+        blank=True,
+        default=None,
+    )
     source = models.CharField(max_length=50)
     source_job_id = models.CharField(max_length=255, null=True, blank=True, default=None)
     title = models.CharField(max_length=512, null=True, blank=True, default=None)

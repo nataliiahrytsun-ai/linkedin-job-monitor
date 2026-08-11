@@ -57,6 +57,16 @@ def create_company(**overrides: object) -> Any:
     return model("companies.Company").objects.create(**values)
 
 
+def create_company_source(company: Any, **overrides: object) -> Any:
+    values: dict[str, object] = {
+        "company": company,
+        "source": company.source,
+        "source_jobs_url": "https://feed.example/jobs",
+    }
+    values.update(overrides)
+    return model("companies.CompanySource").objects.create(**values)
+
+
 def create_job(company: Any, **overrides: object) -> Any:
     values: dict[str, object] = {
         "company": company,
@@ -108,6 +118,60 @@ def test_company_url_uniqueness_is_conditional() -> None:
         create_company(name="URL Duplicate", source_jobs_url=url)
 
 
+def test_company_source_defaults_choices_and_source_normalization() -> None:
+    company_source = create_company_source(
+        create_company(source="lever"),
+        source="  LeVeR  ",
+    )
+
+    assert company_source.source == "lever"
+    assert company_source.approval_status == "discovered"
+    assert company_source.is_active is False
+    assert {value for value, _label in company_source.ApprovalStatus.choices} == {
+        "discovered",
+        "needs_review",
+        "approved",
+        "blocked",
+        "rejected",
+    }
+
+
+def test_active_company_source_requires_approved_status_and_nonempty_key() -> None:
+    company = create_company(source="lever")
+
+    with pytest.raises(exception("IntegrityError")), atomic():
+        create_company_source(company, approval_status="needs_review", is_active=True)
+
+    with pytest.raises(exception("IntegrityError")), atomic():
+        create_company_source(
+            company,
+            source="",
+            source_jobs_url="https://feed.example/blank",
+            approval_status="approved",
+        )
+
+    approved = create_company_source(
+        company,
+        source_jobs_url="https://feed.example/approved",
+        approval_status="approved",
+        is_active=True,
+    )
+    assert approved.is_active is True
+
+
+def test_exact_company_source_configuration_is_unique_without_global_locking() -> None:
+    first_company = create_company(name="First", source="lever")
+    second_company = create_company(name="Second", source="lever")
+    url = "https://jobs.lever.co/shared"
+    create_company_source(first_company, source_jobs_url=url)
+
+    with pytest.raises(exception("IntegrityError")), atomic():
+        create_company_source(first_company, source_jobs_url=url)
+
+    other_owner = create_company_source(second_company, source_jobs_url=url)
+    assert other_owner.pk is not None
+
+
 def test_job_nullable_fields_defaults_and_choices() -> None:
     job = create_job(create_company())
 
@@ -127,6 +191,7 @@ def test_job_nullable_fields_defaults_and_choices() -> None:
     )
     assert all(getattr(job, field) is None for field in nullable_fields)
     assert job.status == "active"
+    assert job.company_source is None
     assert job.consecutive_successful_misses == 0
     assert {value for value, _label in job.WorkplaceType.choices} == {
         "remote",
@@ -250,6 +315,7 @@ def test_scrape_run_counter_defaults() -> None:
     assert run.jobs_updated == 0
     assert run.requests_made == 0
     assert run.error_message == ""
+    assert run.company_source is None
 
 
 def test_initial_migrations_created_all_model_tables() -> None:
@@ -258,6 +324,7 @@ def test_initial_migrations_created_all_model_tables() -> None:
 
     assert {
         "companies_company",
+        "companies_companysource",
         "jobs_jobposting",
         "scrape_runs_scraperun",
     } <= tables

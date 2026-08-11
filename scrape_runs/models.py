@@ -24,6 +24,14 @@ class ScrapeRun(models.Model):
         on_delete=models.PROTECT,
         related_name="scrape_runs",
     )
+    company_source = models.ForeignKey(
+        "companies.CompanySource",
+        on_delete=models.PROTECT,
+        related_name="scrape_runs",
+        null=True,
+        blank=True,
+        default=None,
+    )
     started_at = models.DateTimeField(default=timezone.now)
     finished_at = models.DateTimeField(null=True, blank=True, default=None)
     status = models.CharField(
