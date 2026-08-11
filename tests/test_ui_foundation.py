@@ -266,8 +266,10 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         html = response.content.decode()
 
         assert response.context["latest_successful_run"] == success.finished_at
-        assert ">9 Aug 2026, 20:15</time>" in html
-        assert ">9 Aug 2026, 20:15:00</time>" not in html
+        assert 'class="dashboard-latest-time"' in html
+        assert "<span>9 Aug 2026</span>" in html
+        assert "<span>20:15</span>" in html
+        assert "<span>20:15:00</span>" not in html
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])

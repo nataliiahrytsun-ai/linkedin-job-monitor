@@ -217,42 +217,53 @@ h3 {
   gap: 0.65rem;
 }
 
-.dashboard-primary-metric {
+.dashboard-primary-metric,
+.dashboard-run-metric {
+  height: 6rem;
   min-width: 0;
+  min-height: 6rem;
   padding: 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.65rem;
+  gap: 0.75rem;
 }
 
 .dashboard-metric-label {
   margin-bottom: 0;
   color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 700;
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 750;
+  line-height: 1.3;
   letter-spacing: 0.01em;
 }
 
-.dashboard-primary-metric .dashboard-primary-value {
+.dashboard-metric-value {
   flex: none;
   margin: 0;
+  color: #101828;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.card .dashboard-metric-value {
+  color: #101828;
+}
+
+.dashboard-primary-value {
   display: inline-flex;
   align-items: baseline;
   gap: 0.25rem;
-  color: var(--text);
-  font-size: clamp(1.65rem, 3vw, 2rem);
-  font-weight: 750;
-  line-height: 1.1;
   overflow-wrap: anywhere;
   text-align: right;
-  white-space: nowrap;
 }
 
 .dashboard-primary-metric .dashboard-metric-label {
   min-width: 0;
-  font-size: 1.05rem;
-  line-height: 1.3;
 }
 
 .dashboard-metric-link {
@@ -303,32 +314,56 @@ h3 {
   gap: 0.65rem;
 }
 
-.dashboard-run-metric {
-  min-width: 0;
-  padding: 1.15rem 0.9rem;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
+.dashboard-run-latest {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .dashboard-run-metric .dashboard-metric-label {
+  white-space: nowrap;
+}
+
+.dashboard-run-latest .dashboard-metric-label {
+  white-space: normal;
+}
+
+.dashboard-run-metric.dashboard-run-latest .dashboard-run-value {
+  margin-left: 0;
+  justify-self: end;
   font-size: 1.05rem;
-  white-space: nowrap;
+  text-align: right;
 }
 
-.dashboard-run-metric .dashboard-run-value {
-  flex: none;
-  margin: 0;
-  color: var(--text);
-  font-size: 1.15rem;
-  font-weight: 750;
-  line-height: 1.2;
-  white-space: nowrap;
+.dashboard-latest-time {
+  display: grid;
+  justify-items: end;
 }
 
-.dashboard-run-latest .dashboard-run-value {
-  font-size: 1rem;
+.dashboard-latest-label-line {
+  display: block;
+}
+
+@media (min-width: 60.01rem) {
+  .dashboard-primary-metric,
+  .dashboard-run-metric {
+    height: 5.25rem;
+    min-height: 5.25rem;
+    padding: 0.75rem 1rem;
+    gap: 0.6rem;
+  }
+
+  .dashboard-metric-label {
+    font-size: 1.15rem;
+    line-height: 1.25;
+  }
+
+  .dashboard-metric-value {
+    font-size: 1.45rem;
+    line-height: 1.15;
+  }
+
 }
 
 .status-badge {
@@ -1295,21 +1330,8 @@ h3 {
 }
 
 @media (min-width: 40.01rem) and (max-width: 60rem) {
-  .dashboard-run-metric {
-    padding-inline: 0.4rem;
-    gap: 0.35rem;
-  }
-
-  .dashboard-run-metric .dashboard-metric-label {
-    font-size: clamp(0.72rem, 1.4vw, 0.84rem);
-  }
-
-  .dashboard-run-metric .dashboard-run-value {
-    font-size: 0.95rem;
-  }
-
-  .dashboard-run-latest .dashboard-run-value {
-    font-size: clamp(0.72rem, 1.4vw, 0.84rem);
+  .dashboard-run-latest {
+    gap: 0.25rem;
   }
 
   .global-jobs-table thead th {
@@ -1748,45 +1770,14 @@ h3 {
     column-gap: 0.15rem;
   }
 
-  .dashboard-primary-metric {
-    padding: 0.75rem 0.9rem;
-    gap: 0.75rem;
-  }
-
-  .dashboard-primary-metric .dashboard-metric-label {
-    font-size: 0.98rem;
-  }
-
   .dashboard-run-card {
     grid-template-columns: 1fr;
     padding: 0;
   }
 
-  .dashboard-run-metric,
-  .dashboard-run-metric:first-child,
-  .dashboard-run-metric:last-child {
-    padding: 0.65rem 1.25rem;
-    justify-content: space-between;
-    gap: 0.25rem;
-  }
-
-  .dashboard-run-metric .dashboard-metric-label {
-    font-size: 0.9rem;
-  }
-
-  .dashboard-run-metric .dashboard-run-value {
+  .dashboard-run-metric:not(.dashboard-run-latest) .dashboard-run-value {
     margin-left: auto;
-    font-size: 1.05rem;
     text-align: right;
-  }
-
-  .dashboard-run-latest .dashboard-run-value {
-    font-size: 0.95rem;
-  }
-
-  .dashboard-run-latest {
-    flex-wrap: wrap;
-    row-gap: 0.15rem;
   }
 
   .global-jobs-table-container {

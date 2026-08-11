@@ -19,19 +19,19 @@
     <section class="dashboard-primary-grid" aria-label="Primary monitoring metrics">
       <a class="card dashboard-primary-metric dashboard-metric-link" href="{% url 'companies:list' %}">
         <h2 class="dashboard-metric-label">Monitored companies</h2>
-        <p class="dashboard-primary-value">
+        <p class="dashboard-primary-value dashboard-metric-value">
           {{ monitored_companies }}<span class="dashboard-metric-arrow" aria-hidden="true">›</span>
         </p>
       </a>
       <a class="card dashboard-primary-metric dashboard-metric-link" href="{% url 'jobs:list' %}">
         <h2 class="dashboard-metric-label">Active jobs</h2>
-        <p class="dashboard-primary-value">
+        <p class="dashboard-primary-value dashboard-metric-value">
           {{ active_jobs }}<span class="dashboard-metric-arrow" aria-hidden="true">›</span>
         </p>
       </a>
       <article class="card dashboard-primary-metric">
         <h2 class="dashboard-metric-label">New jobs</h2>
-        <p class="dashboard-primary-value">{{ new_jobs }}</p>
+        <p class="dashboard-primary-value dashboard-metric-value">{{ new_jobs }}</p>
       </article>
     </section>
 
@@ -39,22 +39,28 @@
       <h2 class="dashboard-section-label" id="run-status-heading">Run status</h2>
       <div class="dashboard-run-card">
         <article class="card dashboard-run-metric dashboard-run-latest">
-          <h3 class="dashboard-metric-label">Latest successful run</h3>
+          <h3 class="dashboard-metric-label" aria-label="Latest successful run">
+            <span class="dashboard-latest-label-line">Latest</span>
+            <span class="dashboard-latest-label-line">successful run</span>
+          </h3>
           {% if latest_successful_run %}
-            <p class="dashboard-run-value">
-              <time datetime="{{ latest_successful_run|date:'c' }}">{{ latest_successful_run|date:"j M Y, H:i" }}</time>
+            <p class="dashboard-run-value dashboard-metric-value">
+              <time class="dashboard-latest-time" datetime="{{ latest_successful_run|date:'c' }}">
+                <span>{{ latest_successful_run|date:"j M Y" }}</span>
+                <span>{{ latest_successful_run|date:"H:i" }}</span>
+              </time>
             </p>
           {% else %}
-            <p class="dashboard-run-value">Never</p>
+            <p class="dashboard-run-value dashboard-metric-value">Never</p>
           {% endif %}
         </article>
         <article class="card dashboard-run-metric">
           <h3 class="dashboard-metric-label">Running</h3>
-          <p class="dashboard-run-value">{{ running_runs }}</p>
+          <p class="dashboard-run-value dashboard-metric-value">{{ running_runs }}</p>
         </article>
         <article class="card dashboard-run-metric">
           <h3 class="dashboard-metric-label">Failed runs</h3>
-          <p class="dashboard-run-value">{{ failed_runs }}</p>
+          <p class="dashboard-run-value dashboard-metric-value">{{ failed_runs }}</p>
         </article>
       </div>
     </section>
