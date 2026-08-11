@@ -18,6 +18,36 @@ https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C302429
 
 Die Implementierung darf jedoch nicht fest auf Acuity Analytics zugeschnitten sein. Weitere Kunden und Supplier müssen über ihre jeweilige LinkedIn-Job-URL ergänzt werden können.
 
+## Aktueller Implementierungsstand (2026-08-11)
+
+Diese Spezifikation bewahrt das ursprüngliche LinkedIn-Ziel und die damaligen
+Akzeptanzkriterien. Der aktuell abgeschlossene Produktionsumfang ist jedoch
+source-neutral und verwendet **Lever** als ersten freigegebenen externen
+Source:
+
+- `lever` ist als Production Adapter registriert und in den Company-Formularen
+  auswählbar;
+- `fixture` bleibt als interner Offline-/Test-Adapter registriert, ist aber
+  keine auswählbare Production Source;
+- Normalisierung, Persistenz, Reconciliation, `ScrapeRun`, Background
+  Execution und UI sind source-neutral;
+- Company Management, Jobs UI, Dashboard, ScrapeRun History und read-only
+  Status-Polling sind für den aktuellen Lever-Umfang abgeschlossen;
+- die mehrseitige Lever-Verarbeitung ist offline über den vollständigen
+  Production Flow mit zwei Requests, drei persistierten Jobs und einem
+  erfolgreichen `ScrapeRun` verifiziert.
+
+**LinkedIn ist nicht als Production Source implementiert.** Es gibt keinen
+Production Adapter, keinen Registry Key und keine auswählbare LinkedIn-Option
+im Company-Formular. Die nachfolgenden LinkedIn-Anforderungen und
+Diagnoseabschnitte bleiben als ursprüngliches Produktziel und historische
+Machbarkeitsnachweise erhalten. Eine Production Integration benötigt eine
+separate Entscheidung zu Zugriff, Zulässigkeit und technischer Machbarkeit.
+
+Der verbindliche aktuelle Status steht in
+[`docs/MILESTONES.md`](MILESTONES.md); reproduzierbare Prüfungen stehen in
+[`docs/BACKEND_VERIFICATION.md`](BACKEND_VERIFICATION.md).
+
 # Funktionale Anforderungen
 
 ## 1. Unternehmen verwalten

@@ -1,96 +1,86 @@
-# Что проверяется
+# Backend and quality verification
 
-Проверка проходит через весь source-neutral backend:
+## Verified production flow
 
-`Company` → `adapter registry` → `FixtureSourceAdapter` → `SourceBatch` →
-`normalization` → `persistence` → `ScrapeRun` →
-`SUCCESS / PARTIAL / FAILED` → `reconciliation` → `SQLite`.
+The source-neutral path is:
 
-То есть тестовые вакансии читаются из локального файла, нормализуются,
-сохраняются в базу, а результат запуска и изменения пропущенных вакансий
-проверяются так же, как это потребуется будущему разрешённому источнику.
-
-# Что такое fake source
-
-Fake source — это локальные synthetic JSON-файлы, созданные только для
-тестирования. Они не обращаются к LinkedIn или другим сайтам.
-
-Позже fixture adapter можно заменить adapter'ом разрешённого production
-source. Нормализация, persistence, статусы запусков, reconciliation и остальная
-backend-логика при этом останутся прежними.
-
-# Автоматическая проверка
-
-Выполните из корня проекта в PowerShell:
-
-```powershell
-.venv\Scripts\python.exe manage.py check
-
-.venv\Scripts\python.exe -m pytest tests/test_backend_integration.py -vv
-
-.venv\Scripts\python.exe -m pytest `
-    tests/test_fixture_pipeline.py `
-    tests/test_recoverable_pipeline.py `
-    tests/test_background.py `
-    -vv
-
-.venv\Scripts\python.exe -m pytest
+```text
+Company / UI action -> background execution -> immutable source registry
+                    -> SourceAdapter -> SourceBatch -> normalization
+                    -> persistence -> reconciliation -> ScrapeRun
+                    -> Dashboard / Company / ScrapeRun UI and status polling
 ```
 
-Ожидаемый результат: все команды успешно завершаются, integration tests и
-полный pytest проходят, сеть не используется. Общее количество тестов здесь не
-зафиксировано, потому что оно будет расти вместе с проектом.
+The shared pipeline supports two deliberately different source roles:
 
-# Какие сценарии проверены
+- `lever`: current production and user-selectable adapter. A Company stores
+  `source="lever"` and a public URL such as `https://jobs.lever.co/olo`.
+- `fixture`: registered internal/test adapter. It reads local synthetic data,
+  reports `requests_made=0`, and remains available to pipeline tests, but it is
+  excluded from Add Company and rejected as a user-assigned source.
 
-## Run 1
+LinkedIn has no production adapter or registry key. Its spike and diagnostic
+artifacts are historical feasibility evidence only.
 
-- Три вакансии создаются.
+## Lever multi-page integration proof
 
-## Run 2
+`test_lever_multi_page_submission_persists_complete_snapshot_without_network`
+in `tests/test_background.py` enters through the production background
+submission path. The registry selects `LeverSourceAdapter`; injected fake HTTP
+returns the existing two JSON fixtures:
 
-- Одна вакансия остаётся без изменений.
-- Одна вакансия обновляется.
-- Одна новая вакансия создаётся.
-- Одна отсутствующая вакансия получает первый `miss`.
+```text
+request 1: limit=2, skip=0 -> lever-1, lever-2
+request 2: limit=2, skip=2 -> lever-3
+```
 
-## Run 3
+The test verifies exactly two calls, three normalized/persisted jobs, the
+expected source IDs and titles, reconciliation of the complete snapshot, a
+terminal `SUCCESS` ScrapeRun, and `requests_made=2`. It uses the pytest
+temporary database and performs no real network request.
 
-- Повторно отсутствующая вакансия становится `NOT_FOUND`.
+Additional coverage verifies adapter URL validation and mapping, pagination
+termination and limits, duplicate IDs, timeout/error conversion, registry
+routing, fixture execution, persistence updates, partial/failed runs,
+reconciliation, background duplicate-run protection, and UI status contracts.
 
-## PARTIAL
+## Reproducible checks
 
-- Корректные вакансии сохраняются.
-- Повреждённая запись возвращает безопасную ошибку.
-- Отсутствующие вакансии не получают `miss`.
+Install the runtime and pinned development tools through the dev requirements:
 
-## FAILED
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m mypy
+.\.venv\Scripts\python.exe manage.py check
+.\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+git diff --check
+```
 
-- Запуск фиксируется как `FAILED`.
-- Существующие вакансии не деактивируются.
-- Запуск не остаётся в состоянии `RUNNING`.
+Bootstrap tests override Django's database configuration with a unique
+temporary SQLite path. The working repository `db.sqlite3` is not a test
+precondition and must not be opened, migrated, replaced, or removed for the
+verification gate.
 
-## Background
+## Current verified baseline
 
-- `submit` быстро возвращает handle.
-- Обработка выполняется в worker thread.
-- Второй активный запуск той же `Company` отклоняется.
+The closeout baseline before this documentation-only slice was:
 
-## Company isolation
+- `pytest`: **427 passed**, with 150 existing third-party `lxml` deprecation
+  warnings;
+- Ruff: **All checks passed**;
+- MyPy: **Success, no issues found**;
+- `pip check`: **No broken requirements found**;
+- Django system check: **0 issues**;
+- migration check: **No changes detected**;
+- `git diff --check`: **Pass**.
 
-- Данные разных компаний не смешиваются.
+## Scope boundary
 
-# Что эта проверка не доказывает
-
-- Получение актуальных вакансий из LinkedIn.
-- Полноту production pagination.
-- Разрешение на автоматический сбор данных.
-- Работу с будущим production source.
-- Работу пользовательского интерфейса.
-
-# Итог Milestone 2
-
-Source-neutral backend завершён и проверен на fixtures.
-
-Production source integration остаётся **Blocked** до решения команды о
-разрешённом источнике и автоматическом получении данных.
+This evidence verifies the complete current application and the production
+Lever path. It does not prove a production LinkedIn integration, authorize
+LinkedIn collection, or prove collection of every vacancy exposed by any
+external service. Live Olo verification is an already-completed manual check;
+normal automated checks stay offline.

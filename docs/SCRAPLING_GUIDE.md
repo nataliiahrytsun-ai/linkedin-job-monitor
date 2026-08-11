@@ -23,6 +23,13 @@ an offline `Selector`. The project selected it because one library can support a
 small HTTP probe now and a bounded Spider crawl later, if compliant access is
 obtained.
 
+**Current production decision (2026-08-11):** the source-neutral application
+uses `LeverSourceAdapter` as its first production adapter. It uses Scrapling
+0.4.8 `FetcherSession` for bounded plain-HTTP requests to Lever's public
+postings API. The registered fixture adapter is internal/test-only and makes no
+network requests. There is no production LinkedIn adapter; the LinkedIn
+sections below document the completed historical spike and its safety boundary.
+
 **Verified:** the original milestone used `FetcherSession` for a single public
 `robots.txt` request and `Selector` for offline fixture parsing. No target job
 page was requested during that original run because LinkedIn's current
@@ -45,13 +52,19 @@ The following are not used in this project at Milestone 1:
 
 ## 2. Installation and dependencies
 
-Scrapling 0.4.8 declares Python 3.10 through 3.13 in its package metadata. Use
-Python 3.12 for the project:
+Scrapling 0.4.8 is pinned with the `[fetchers]` extra in the production
+requirements. Create the environment and install normal application
+dependencies with:
 
 ```powershell
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements-spike.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+Install `requirements-dev.txt` instead when running tests and quality checks;
+it includes the runtime requirements and pins pytest, Ruff, and MyPy.
+`requirements-spike.txt` remains only for the historical LinkedIn diagnostic
+environment and is not the production installation path.
 
 `scrapling` alone contains parsing dependencies. The `[fetchers]` extra adds the
 HTTP engine, AnyIO/Spider support, Playwright/Patchright, and browser-related
@@ -72,10 +85,11 @@ docker pull ghcr.io/d4vinci/scrapling:latest
 Pin a digest before repeatable deployment. Docker is not used in this milestone
 and does not solve legal, robots, or permission constraints.
 
-**Environment limitation:** the repository's pre-existing `.venv` points to a
-missing Python 3.12.6 installation. Verification therefore used an ignored
-`.spike-venv` with Python 3.14.0. Installation and tests succeeded, but 3.14 is
-outside Scrapling 0.4.8's declared Python classifiers.
+The previously broken environment that referenced a missing Python 3.12.6
+interpreter was replaced during dependency maintenance. The verified local
+environment used Python 3.14.0 and successfully imported
+`scrapling.fetchers.FetcherSession`; a clean setup should still prefer a Python
+version declared compatible by the pinned dependencies.
 
 ## 3. Scrapling architecture and confirmed API
 
@@ -159,7 +173,32 @@ unique LinkedIn Job IDs.
 differences, and session reuse across multiple target requests.
 `StealthyFetcher` must not be tested for LinkedIn.
 
-## 5. LinkedIn-specific extraction design
+## 5. Lever production adapter
+
+`LeverSourceAdapter` is the current production use of Scrapling. It receives a
+source-neutral Company object, validates a URL of the form
+`https://jobs.lever.co/<site>`, derives the site slug, and requests Lever's
+public postings API with `mode=json`, a bounded `limit`, and an offset `skip`.
+It maps each response to the shared `SourceRecord` contract and returns one
+combined `SourceBatch`; normalization and persistence do not contain
+Lever-specific branches.
+
+Pagination starts at `skip=0`, advances by the page size, and deduplicates
+posting IDs. A short/empty page completes the snapshot; a page without new IDs
+or reaching the configured safety page limit fails cleanly instead of looping.
+`requests_made` counts attempted HTTP calls and is carried through successes
+and source errors into `ScrapeRun`.
+
+**Verified offline through the production flow:** with `limit=2`, fake HTTP
+served two existing Lever JSON fixtures at `skip=0` and `skip=2`. The registry,
+background executor, adapter, shared pipeline, normalization, persistence, and
+reconciliation produced three jobs and a terminal `SUCCESS` run with
+`requests_made=2`. Automated tests do not call live Lever.
+
+Historical manual verification of the Olo company established the live Lever
+path separately. It is not repeated by this documentation closeout.
+
+## 6. LinkedIn-specific extraction design (historical spike)
 
 ### Entry point and access gate
 
@@ -247,7 +286,7 @@ any of these as a structural-change signal:
 
 Do not use adaptive selection to turn such a signal into an unreviewed match.
 
-## 6. Conservative performance configuration
+## 7. Conservative performance configuration
 
 The completed 2026-07-28 robots-only preflight used this configuration; it is
 historical evidence rather than the later diagnostic configuration:
@@ -271,7 +310,7 @@ The completed post-fix validation retained the separate fixed limits of at most 
 pages and 4 target requests, concurrency 1, at least a 2-second delay, one
 attempt with no retry, and no followed technical-block continuation.
 
-## 7. Testing and diagnostics
+## 8. Testing and diagnostics
 
 Normal tests instantiate `Selector` from minimal synthetic fixtures. Pagination
 tests use an injected in-memory source backed by three synthetic HTML files; the
@@ -310,13 +349,19 @@ corrective diagnostic, the completed extraction validation, and exactly one
 completed limited post-fix continuation validation. It does not authorize an
 additional live run or production use.
 
-## 8. Extension path
+## 9. Extension path
 
-- **New company:** store a name and validated public jobs URL; run the same
-  access preflight. No selector may contain Acuity-specific IDs.
-- **Another platform:** add a platform adapter with its own URL validator,
-  robots gate, selectors, fixtures, and field mapping. Keep normalization and
-  persistence independent.
+- **New Lever company:** store `source="lever"` and a validated public URL in
+  the form `https://jobs.lever.co/<site>`. The shared pipeline uses the
+  registered production adapter; no source-specific UI or persistence branch
+  is required.
+- **Another approved platform:** implement the shared adapter contract with its
+  own URL validation, fetching policy, fixtures, and field mapping; register it
+  explicitly as user-selectable only when it is a production source. Keep
+  normalization and persistence independent.
+- **LinkedIn:** treat the current artifacts as historical spike evidence, not
+  an adapter template that authorizes production use. Resolve feasibility and
+  access first; only then can a separately reviewed adapter be considered.
 - **Selector update:** capture the smallest approved/redacted fragment, add a
   failing fixture test, update only the centralized selector module, and record
   evidence/date.
