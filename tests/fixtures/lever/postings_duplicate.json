@@ -1,0 +1,12 @@
+[
+  {
+    "id": "lever-1",
+    "hostedUrl": "https://jobs.lever.co/example/lever-1",
+    "text": "Senior Data Engineer"
+  },
+  {
+    "id": "lever-2",
+    "hostedUrl": "https://jobs.lever.co/example/lever-2",
+    "text": "Support Specialist"
+  }
+]

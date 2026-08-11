@@ -1,1 +1,2 @@
 Django==5.2.16
+scrapling[fetchers]==0.4.8

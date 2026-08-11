@@ -1,0 +1,15 @@
+[
+  {
+    "id": "lever-3",
+    "hostedUrl": "https://jobs.lever.co/example/lever-3",
+    "text": "Office Manager",
+    "categories": {
+      "location": "London, UK",
+      "commitment": "Full-time",
+      "department": "Operations"
+    },
+    "workplaceType": "on-site",
+    "createdAt": 1786438920000,
+    "descriptionPlain": "Run the London office."
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "id": "lever-1",
+    "hostedUrl": "https://jobs.lever.co/example/lever-1",
+    "text": "Senior Data Engineer",
+    "categories": {
+      "location": "Vienna, Austria",
+      "commitment": "Full-time",
+      "department": "Engineering",
+      "team": "Data"
+    },
+    "country": "Austria",
+    "workplaceType": "hybrid",
+    "createdAt": 1786435320000,
+    "descriptionPlain": "Build reliable data products.",
+    "additionalPlain": "Work with a distributed team."
+  },
+  {
+    "id": "lever-2",
+    "hostedUrl": "https://jobs.lever.co/example/lever-2",
+    "text": "Support Specialist",
+    "allLocations": ["Remote - Europe", "Remote - UK"],
+    "categories": {
+      "commitment": "Part-time",
+      "team": "Customer Success"
+    },
+    "workplaceType": "remote"
+  }
+]
