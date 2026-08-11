@@ -121,11 +121,15 @@
                 <article class="source-row">
                   <div class="source-row-identity">
                     <h3>{{ source.source|title }}</h3>
-                    <span class="status-badge">{{ source.get_approval_status_display|upper }}</span>
-                    {% if source.is_active %}
-                      <span class="status-badge status-active">ACTIVE</span>
+                    {% if row.availability_message %}
+                      <span class="source-summary-status">{{ row.availability_message }}</span>
                     {% else %}
-                      <span class="status-badge status-inactive">INACTIVE</span>
+                      <span class="status-badge">{{ source.get_approval_status_display|upper }}</span>
+                      {% if source.is_active %}
+                        <span class="status-badge status-active">ACTIVE</span>
+                      {% else %}
+                        <span class="status-badge status-inactive">INACTIVE</span>
+                      {% endif %}
                     {% endif %}
                     {% if row.has_running_run %}
                       <span class="status-badge status-running">RUNNING</span>
@@ -181,6 +185,9 @@
             <label for="{{ add_source_form.source.id_for_label }}">Source</label>
             {{ add_source_form.source }}
             {% if add_source_form.source.errors %}<div class="field-errors" role="alert">{{ add_source_form.source.errors }}</div>{% endif %}
+            {% for source_label, availability_message in add_source_form.unavailable_source_choices %}
+              <p class="help-text"><strong>{{ source_label }}</strong> — {{ availability_message }}</p>
+            {% endfor %}
           </div>
           <div class="form-field{% if add_source_form.source_jobs_url.errors %} form-field-error{% endif %}">
             <label for="{{ add_source_form.source_jobs_url.id_for_label }}">Jobs URL</label>

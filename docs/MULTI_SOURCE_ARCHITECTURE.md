@@ -18,9 +18,9 @@ Company
 The schema, source ownership, source-scoped persistence/reconciliation, Company
 multi-source orchestration, and source-management UI are implemented. Lever is
 the production-approved/user-selectable adapter. Darwinbox is implemented and
-registered as executable, but remains hidden from normal source creation while
-its production/policy approval is **INDETERMINATE**. Additional ATS adapters and
-automatic Source Discovery are not implemented.
+offline-tested, and the UI exposes its **Live access unavailable** status, but
+it is not selectable or included in Company-level execution. Additional ATS
+adapters and automatic Source Discovery are not implemented.
 
 ## CompanySource is not an adapter
 
@@ -160,11 +160,11 @@ Manual **Add source** obtains its platform choices from the registry's
 user-selectable API. Lever is currently the only production/user-selectable
 adapter. A valid public jobs URL is required and checked server-side. A manually
 created source starts as `approval_status=approved` and `is_active=True`.
-Fixture remains registered for internal tests but is not offered or accepted as
-a normal user-managed source. Darwinbox is registered as an executable adapter
-but remains non-selectable because implementation does not itself grant
-production/policy approval. JazzHR is not selectable because its adapter does
-not exist.
+Fixture remains registered and executable for internal tests but is not offered
+or accepted as a normal user-managed source. Darwinbox remains registered and
+visible in source management as **Live access unavailable**, but is neither a
+normal Add Source choice nor eligible for Company-level Update jobs/Update all
+orchestration. JazzHR is not selectable because its adapter does not exist.
 
 The source platform is immutable after creation because CompanySource is both a
 provenance and execution boundary. **Edit source** can update the supported
@@ -216,12 +216,15 @@ fallback when listing `jd` is empty. `requests_made` includes every listing and
 detail request. The adapter uses the existing source-neutral persistence and
 reconciliation path and does not change Lever behavior.
 
-This is technical compatibility with the observed public Acuity Darwinbox
-contract, not a claim that all Darwinbox installations are compatible. The
-adapter is executable through the internal registry but is deliberately absent
-from normal Add Source choices while production/policy approval remains
-**INDETERMINATE**. Acuity production monitoring is not thereby complete or
-approved.
+This is offline technical compatibility with the observed public Acuity
+Darwinbox contract, not a claim that all Darwinbox installations are compatible.
+Current automated live access is unavailable: direct listing HTTP receives a
+Cloudflare 403, while a clean plain-browser context receives an approximately
+939-byte HTML document with no SPA bootstrap assets or listing request. The UI
+therefore exposes Darwinbox only as **Live access unavailable**; normal source
+creation and Company-level orchestration exclude it. Further transport
+investigation is deferred. The adapter is not described as broken or
+permanently impossible, and Acuity production monitoring is not complete.
 
 ## Transitional legacy fields
 
@@ -275,8 +278,9 @@ without a separately approved and implemented adapter/access path.
 
 ## Next work
 
-Slices 1-4 and the bounded Darwinbox adapter implementation are complete. A
-separate production/policy decision and source-configuration review would be
-required before Darwinbox could be exposed to users or enabled for Acuity.
+Slices 1-4 and the bounded Darwinbox adapter implementation are complete.
+Darwinbox capability is visible to users with an unavailable status, but live
+transport investigation is deferred and the source is not enabled for normal
+creation or Acuity execution.
 JazzHR, Source Discovery, and other ATS integrations remain separate future
 work.

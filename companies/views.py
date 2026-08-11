@@ -19,7 +19,12 @@ from scraping.background import (
     BackgroundExecutionError,
     ControlledBackgroundExecutor,
 )
-from scraping.sources.registry import normalize_source_key, user_selectable_source_keys
+from scraping.sources.registry import (
+    executable_source_keys,
+    normalize_source_key,
+    source_unavailability_message,
+    user_selectable_source_keys,
+)
 
 background_executor = ControlledBackgroundExecutor()
 
@@ -83,6 +88,7 @@ def company_detail(
     if auto_open_source_dialog is None and request.GET.get("manage_sources") == "1":
         auto_open_source_dialog = "job-sources-dialog"
     selectable_sources = set(user_selectable_source_keys())
+    executable_sources = set(executable_source_keys())
     source_rows = []
     for source in company_sources:
         source_edit_form = (
@@ -103,11 +109,16 @@ def company_detail(
                 == f"edit-source-dialog-{source.pk}",
                 "is_manageable": normalize_source_key(source.source)
                 in selectable_sources,
+                "availability_message": source_unavailability_message(source.source),
                 "has_running_run": source.has_running_run,
             }
         )
     source_count = len(company_sources)
-    active_source_count = sum(source.is_active for source in company_sources)
+    active_source_count = sum(
+        source.is_active
+        and normalize_source_key(source.source) in executable_sources
+        for source in company_sources
+    )
     if add_source_form is None:
         add_source_form = CompanySourceForm(
             company=company,

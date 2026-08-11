@@ -24,7 +24,12 @@ _ADAPTER_FACTORIES: dict[str, Callable[[], SourceAdapter]] = {
     "fixture": FixtureSourceAdapter,
     "lever": LeverSourceAdapter,
 }
+_USER_VISIBLE_SOURCE_KEYS = frozenset({"darwinbox", "lever"})
 _USER_SELECTABLE_SOURCE_KEYS = frozenset({"lever"})
+_EXECUTION_BLOCKED_SOURCE_KEYS = frozenset({"darwinbox"})
+_SOURCE_UNAVAILABILITY_MESSAGES = {
+    "darwinbox": "Live access unavailable",
+}
 
 
 def registered_source_keys() -> tuple[str, ...]:
@@ -39,6 +44,29 @@ def user_selectable_source_keys() -> tuple[str, ...]:
         for source_key in registered_source_keys()
         if source_key in _USER_SELECTABLE_SOURCE_KEYS
     )
+
+
+def user_visible_source_keys() -> tuple[str, ...]:
+    """Return registered sources that should be explained in source-management UI."""
+    return tuple(
+        source_key
+        for source_key in registered_source_keys()
+        if source_key in _USER_VISIBLE_SOURCE_KEYS
+    )
+
+
+def executable_source_keys() -> tuple[str, ...]:
+    """Return registered sources currently permitted for application execution."""
+    return tuple(
+        source_key
+        for source_key in registered_source_keys()
+        if source_key not in _EXECUTION_BLOCKED_SOURCE_KEYS
+    )
+
+
+def source_unavailability_message(source: str) -> str | None:
+    """Return a safe UI explanation when a visible source is not selectable."""
+    return _SOURCE_UNAVAILABILITY_MESSAGES.get(normalize_source_key(source))
 
 
 def get_source_adapter(source_configuration: SourceConfiguration) -> SourceAdapter:

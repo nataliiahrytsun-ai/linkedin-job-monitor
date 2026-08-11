@@ -7,7 +7,12 @@ from django import forms
 from companies.models import Company, CompanySource
 from scraping.sources.base import SourceError
 from scraping.sources.lever import lever_site_from_url
-from scraping.sources.registry import normalize_source_key, user_selectable_source_keys
+from scraping.sources.registry import (
+    normalize_source_key,
+    source_unavailability_message,
+    user_selectable_source_keys,
+    user_visible_source_keys,
+)
 
 
 class SourceChoiceField(forms.ChoiceField):  # type: ignore[misc]
@@ -25,6 +30,17 @@ def source_label(source_key: str) -> str:
 def source_choices() -> tuple[tuple[str, str], ...]:
     """Return user-manageable choices from the immutable registry API."""
     return tuple((key, source_label(key)) for key in user_selectable_source_keys())
+
+
+def unavailable_source_choices() -> tuple[tuple[str, str], ...]:
+    """Return visible source labels that cannot currently be created by users."""
+    selectable = set(user_selectable_source_keys())
+    return tuple(
+        (source_label(key), message)
+        for key in user_visible_source_keys()
+        if key not in selectable
+        if (message := source_unavailability_message(key)) is not None
+    )
 
 
 def validate_source_configuration(*, source: str, source_jobs_url: str | None) -> None:
@@ -81,6 +97,7 @@ class CompanySourceForm(forms.ModelForm):
     )
     def __init__(self, *args: Any, company: Company, **kwargs: Any) -> None:
         self.company = company
+        self.unavailable_source_choices = unavailable_source_choices()
         super().__init__(*args, **kwargs)
         choices = list(source_choices())
         if self.instance.pk is not None:

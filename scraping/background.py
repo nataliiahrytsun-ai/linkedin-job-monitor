@@ -26,7 +26,12 @@ from scraping.pipeline import (
 )
 from scraping.reconciliation import DEFAULT_SUCCESSFUL_MISS_THRESHOLD
 from scraping.sources.base import SourceError
-from scraping.sources.registry import get_source_adapter, normalize_source_key
+from scraping.sources.registry import (
+    executable_source_keys,
+    get_source_adapter,
+    normalize_source_key,
+    registered_source_keys,
+)
 from scraping.sources.resolution import resolve_legacy_company_source
 
 
@@ -305,15 +310,22 @@ class ControlledBackgroundExecutor:
         """Independently submit every approved active source in PK order."""
         stored_company = self._validated_company(company)
         sources = tuple(stored_company.sources.select_related("company").order_by("pk"))
+        registered_keys = set(registered_source_keys())
+        executable_keys = set(executable_source_keys())
+        blocked_keys = registered_keys - executable_keys
         skipped = tuple(
             source.pk
             for source in sources
-            if not source.is_active or source.approval_status != "approved"
+            if not source.is_active
+            or source.approval_status != "approved"
+            or normalize_source_key(source.source) in blocked_keys
         )
         candidates = tuple(
             source
             for source in sources
-            if source.is_active and source.approval_status == "approved"
+            if source.is_active
+            and source.approval_status == "approved"
+            and normalize_source_key(source.source) not in blocked_keys
         )
         if not candidates:
             raise BackgroundNoExecutableSourcesError(

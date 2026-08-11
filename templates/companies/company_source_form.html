@@ -26,6 +26,11 @@
             {{ field }}
           {% endif %}
           {% if field.help_text %}<p class="help-text">{{ field.help_text }}</p>{% endif %}
+          {% if field.name == "source" %}
+            {% for source_label, availability_message in form.unavailable_source_choices %}
+              <p class="help-text"><strong>{{ source_label }}</strong> — {{ availability_message }}</p>
+            {% endfor %}
+          {% endif %}
           {% if field.errors %}<div class="field-errors" role="alert">{{ field.errors }}</div>{% endif %}
         </div>
       {% endfor %}

@@ -11,9 +11,12 @@ from scraping.sources.fixture import FixtureSourceAdapter
 from scraping.sources.lever import LeverSourceAdapter
 from scraping.sources.registry import (
     UnknownSourceError,
+    executable_source_keys,
     get_source_adapter,
     registered_source_keys,
+    source_unavailability_message,
     user_selectable_source_keys,
+    user_visible_source_keys,
 )
 
 
@@ -53,7 +56,7 @@ def test_registry_normalizes_source_and_selects_lever_adapter() -> None:
     assert isinstance(adapter, LeverSourceAdapter)
 
 
-def test_registry_selects_darwinbox_adapter_but_keeps_it_internal() -> None:
+def test_registry_keeps_darwinbox_registered_and_visible_but_unavailable() -> None:
     adapter = get_source_adapter(
         CompanyStub(
             source="  DaRwInBoX  ",
@@ -63,20 +66,36 @@ def test_registry_selects_darwinbox_adapter_but_keeps_it_internal() -> None:
 
     assert isinstance(adapter, DarwinboxSourceAdapter)
     assert "darwinbox" in registered_source_keys()
+    assert "darwinbox" in user_visible_source_keys()
     assert "darwinbox" not in user_selectable_source_keys()
+    assert "darwinbox" not in executable_source_keys()
+    assert source_unavailability_message(" DaRwInBoX ") == "Live access unavailable"
 
 
 def test_registry_distinguishes_registered_and_user_selectable_sources() -> None:
     registered_keys = registered_source_keys()
+    visible_keys = user_visible_source_keys()
     selectable_keys = user_selectable_source_keys()
+    executable_keys = executable_source_keys()
 
     assert isinstance(registered_keys, tuple)
+    assert isinstance(visible_keys, tuple)
     assert isinstance(selectable_keys, tuple)
+    assert isinstance(executable_keys, tuple)
     assert "fixture" in registered_keys
+    assert "fixture" in executable_keys
+    assert "fixture" not in visible_keys
     assert "fixture" not in selectable_keys
+    assert "darwinbox" in registered_keys
+    assert "darwinbox" in visible_keys
+    assert "darwinbox" not in selectable_keys
+    assert "darwinbox" not in executable_keys
     assert "lever" in registered_keys
+    assert "lever" in visible_keys
     assert "lever" in selectable_keys
+    assert "lever" in executable_keys
     assert set(selectable_keys) <= set(registered_keys)
+    assert set(executable_keys) <= set(registered_keys)
 
 
 def test_registry_rejects_unknown_source_safely() -> None:

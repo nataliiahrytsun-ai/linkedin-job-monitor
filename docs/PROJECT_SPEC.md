@@ -29,11 +29,14 @@ Source:
   CompanySource auswählbar;
 - `fixture` bleibt als interner Offline-/Test-Adapter registriert, ist aber
   keine auswählbare Production Source;
-- `darwinbox` ist als technisch ausführbarer Adapter registriert. Er verwendet
-  den auf dem öffentlichen Acuity-Tenant beobachteten Contract, bleibt aber
-  wegen **INDETERMINATE** Production-/Policy-Freigabe aus der normalen Add
-  Source UI ausgeschlossen. Dies ist keine Aussage über alle Darwinbox-
-  Installationen und keine Freigabe des Acuity Production Monitorings;
+- `darwinbox` ist implementiert und gegen den auf dem öffentlichen
+  Acuity-Tenant beobachteten Contract offline verifiziert. Die Source-
+  Management-UI zeigt **Live access unavailable**; normale Add-Source- und
+  Company-Level-Execution-Flows schließen Darwinbox aus. Direkter automatisierter
+  Listing-Zugriff erhält aktuell Cloudflare 403, während ein sauberer
+  Browser-Kontext minimales HTML ohne SPA-Bootstrap-Assets erhält. Weitere
+  Transport-Untersuchung ist aufgeschoben. Dies bedeutet weder, dass der
+  Adapter defekt ist, noch dass Darwinbox dauerhaft unmöglich ist;
 - Normalisierung, Persistenz, Reconciliation, `ScrapeRun`, Background
   Execution und UI sind source-neutral;
 - Company Management, Jobs UI, Dashboard, ScrapeRun History und read-only

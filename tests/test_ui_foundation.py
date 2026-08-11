@@ -18,6 +18,8 @@ from django.test.utils import (  # type: ignore[import-untyped]
 )
 from django.urls import reverse  # type: ignore[import-untyped]
 
+from scraping.background import ControlledBackgroundExecutor
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "job_monitor.settings")
 
 
@@ -389,6 +391,29 @@ class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
 
         submit.assert_called_once_with(company=company_record)
         assert b"Monitoring started for 2 sources." in self.client.get(response.url).content
+
+    def test_update_all_does_not_submit_unavailable_darwinbox_source(self) -> None:
+        company_record = company(name="Darwinbox Update All")
+        company_record.sources.all().delete()
+        darwinbox_source = model("companies.CompanySource").objects.create(
+            company=company_record,
+            source="darwinbox",
+            source_jobs_url="https://tenant.darwinbox.com/ms/candidate/careers",
+            approval_status="approved",
+            is_active=True,
+        )
+
+        with (
+            ControlledBackgroundExecutor() as executor,
+            patch("job_monitor.views.background_executor", executor),
+        ):
+            response = self.client.post(reverse("update_all"))
+
+        assert response.status_code == 302
+        assert b"1 could not be started." in self.client.get(response.url).content
+        assert model("scrape_runs.ScrapeRun").objects.count() == 0
+        darwinbox_source.refresh_from_db()
+        assert darwinbox_source.is_active is True
 
     def test_running_company_is_skipped_without_blocking_other_companies(self) -> None:
         running_company = company(name="Already Running")

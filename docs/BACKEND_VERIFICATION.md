@@ -25,21 +25,29 @@ The shared pipeline supports two deliberately different source roles:
   `https://jobs.lever.co/olo`.
 - `fixture`: registered internal/test adapter. It reads local synthetic data,
   reports `requests_made=0`, and is excluded from user-managed source creation.
-- `darwinbox`: registered executable adapter implementing the observed public
-  Acuity Darwinbox transport contract. It remains excluded from user-managed
-  source creation because production/policy approval is **INDETERMINATE**.
+- `darwinbox`: registered adapter implementing the observed public Acuity
+  Darwinbox transport contract. It is visible as **Live access unavailable**,
+  but excluded from user-managed source creation and Company-level
+  orchestration while the current automated transport remains unavailable.
 
 LinkedIn has no production adapter or registry key and remains blocked pending
 a separate feasibility/access/approval decision. JazzHR is not implemented.
 Darwinbox implementation is technical evidence, not production approval or a
-claim that every Darwinbox installation is supported.
+claim that every Darwinbox installation is supported. Direct automated HTTP
+listing access currently receives Cloudflare 403, while a clean plain-browser
+context receives a minimal HTML document with no application scripts, styles,
+root container, XHR/fetch, or listing request. Further transport investigation
+is deferred; no bypass was attempted.
 
 ## Source-level orchestration proof
 
 `submit_source(company_source)` owns one explicit source execution. Active
 tasks are keyed by `company_source_id`. `submit_company(company)` evaluates all
 CompanySource rows in deterministic order and independently reports submitted,
-already-running, skipped, and failed source IDs. It does not use legacy
+already-running, skipped, and failed source IDs. Registry execution availability
+excludes Darwinbox from this Company-level path, so Update jobs and Update all
+cannot submit it even if a historical local row still has approved/active
+database flags. It does not use legacy
 Company fields to select one source.
 
 The regression suite proves:
@@ -126,10 +134,10 @@ Bootstrap and migration tests use unique temporary SQLite paths. The working
 repository `db.sqlite3` is not opened, migrated, replaced, or removed for the
 verification gate.
 
-## Current verified Darwinbox adapter baseline
+## Current verified Darwinbox adapter and unavailable-UI baseline
 
-- targeted Darwinbox/registry/background tests: **79 passed**;
-- full pytest: **524 passed**, with 150 existing third-party `lxml` deprecation
+- targeted source/UI/background tests: **140 passed**;
+- full pytest: **530 passed**, with 150 existing third-party `lxml` deprecation
   warnings;
 - Ruff: **All checks passed**;
 - MyPy: **Success — 29 source files**;

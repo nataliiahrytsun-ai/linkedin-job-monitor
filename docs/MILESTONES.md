@@ -117,11 +117,13 @@ slices:
 The bounded **Darwinbox adapter implementation is now completed**. It implements
 the observed public Acuity listing/detail contract, automatic page-based
 pagination, complete-snapshot enforcement, request accounting, and offline
-source-scoped pipeline/reconciliation verification. Darwinbox is registered as
-executable internally but remains hidden from Add Source because its
-production/policy approval is **INDETERMINATE**. This does not complete or
-approve Acuity monitoring and does not claim support for every Darwinbox
-installation.
+source-scoped pipeline/reconciliation verification. Darwinbox is registered and
+visible in source management as **Live access unavailable**, but is not an Add
+Source choice and is excluded from Update jobs/Update all. Direct automated
+HTTP listing access currently receives Cloudflare 403; a clean browser context
+receives minimal non-bootstrapping HTML. Further transport investigation is
+deferred. This does not complete Acuity monitoring or claim support for every
+Darwinbox installation.
 
 Source Discovery, JazzHR and LinkedIn adapters, cross-source vacancy
 deduplication, hard source deletion, run cancellation, and final legacy cleanup

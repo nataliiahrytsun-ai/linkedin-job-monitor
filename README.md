@@ -9,11 +9,14 @@ reconciliation, run history, and the UI source-neutral.
 - **Current production-approved source:** Lever. Users add a CompanySource through the
   source-management UI, select `Lever`, and configure a jobs URL in the form
   `https://jobs.lever.co/<site>`.
-- **Executable but not user-selectable:** Darwinbox. `DarwinboxSourceAdapter`
-  implements the public contract technically verified against the observed
-  Acuity Darwinbox tenant, but its production/policy approval remains
-  **INDETERMINATE**, so it is not offered by the normal Add Source UI. This is
-  not a claim of compatibility with every Darwinbox installation.
+- **Implemented and visible, but live access unavailable:** Darwinbox.
+  `DarwinboxSourceAdapter` is offline-tested against the observed Acuity
+  contract. Source management explains its current status, but normal Add
+  Source and Company-level execution exclude it. Direct automated HTTP listing
+  access currently receives Cloudflare 403; a clean browser context receives a
+  minimal HTML document without SPA bootstrap assets. Further transport
+  investigation is deferred. This does not mean the adapter is broken or that
+  Darwinbox is permanently unavailable.
 - **Internal test source:** Fixture. It remains registered for deterministic
   offline pipeline tests, but is not offered for new user-managed companies.
 - **Audited/planned, not implemented:** JazzHR.

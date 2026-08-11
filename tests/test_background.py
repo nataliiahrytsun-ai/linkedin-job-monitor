@@ -912,6 +912,26 @@ def test_company_submission_skips_inactive_approved_source() -> None:
     assert result.skipped_source_ids == (inactive_source.pk,)
 
 
+def test_company_submission_skips_registered_but_unavailable_darwinbox() -> None:
+    company_record = company()
+    darwinbox_source = add_company_source(
+        company_record,
+        source="darwinbox",
+        source_jobs_url="https://tenant.darwinbox.com/ms/candidate/careers",
+    )
+
+    with ControlledBackgroundExecutor() as executor:
+        result = executor.submit_company(company=company_record)
+        for handle in result.submitted:
+            handle.future.result(timeout=10)
+
+    assert result.submitted_source_ids == (company_record.sources.get(source="fixture").pk,)
+    assert result.skipped_source_ids == (darwinbox_source.pk,)
+    assert not model("scrape_runs.ScrapeRun").objects.filter(
+        company_source=darwinbox_source
+    ).exists()
+
+
 def test_inactive_company_and_zero_executable_sources_fail_closed() -> None:
     inactive_company = company(name="Inactive Company")
     inactive_company.is_active = False
