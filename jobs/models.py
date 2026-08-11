@@ -82,12 +82,31 @@ class JobPosting(models.Model):
         constraints: ClassVar[list[Any]] = [
             models.UniqueConstraint(
                 fields=("company", "source", "dedupe_key"),
+                condition=Q(company_source__isnull=True),
                 name="uniq_job_dedupe_key",
             ),
             models.UniqueConstraint(
                 fields=("company", "source", "source_job_id"),
-                condition=Q(source_job_id__isnull=False) & ~Q(source_job_id=""),
+                condition=(
+                    Q(company_source__isnull=True)
+                    & Q(source_job_id__isnull=False)
+                    & ~Q(source_job_id="")
+                ),
                 name="uniq_job_source_id",
+            ),
+            models.UniqueConstraint(
+                fields=("company_source", "dedupe_key"),
+                condition=Q(company_source__isnull=False),
+                name="uniq_source_job_dedupe_key",
+            ),
+            models.UniqueConstraint(
+                fields=("company_source", "source_job_id"),
+                condition=(
+                    Q(company_source__isnull=False)
+                    & Q(source_job_id__isnull=False)
+                    & ~Q(source_job_id="")
+                ),
+                name="uniq_source_job_source_id",
             ),
             models.CheckConstraint(
                 condition=(
@@ -110,11 +129,32 @@ class JobPosting(models.Model):
         if not normalized_source:
             raise ValidationError({"source": "Source must not be empty."})
 
-        if self.pk is not None and not self._state.adding:
-            original_source = type(self).objects.only("source").get(pk=self.pk).source
-            if normalized_source != original_source:
+        if self.company_source_id is not None:
+            company_source = (
+                type(self).company_source.field.related_model.objects.only(
+                    "company_id", "source"
+                ).get(pk=self.company_source_id)
+            )
+            if self.company_id != company_source.company_id:
                 raise ValidationError(
-                    {"source": "Source provenance cannot be changed after creation."}
+                    {"company_source": "Company source must belong to the job company."}
+                )
+            if normalized_source != company_source.source.strip().lower():
+                raise ValidationError(
+                    {"source": "Source must match the selected company source."}
+                )
+
+        if self.pk is not None and not self._state.adding:
+            original = type(self).objects.only(
+                "source", "company_id", "company_source_id"
+            ).get(pk=self.pk)
+            if (
+                normalized_source != original.source
+                or self.company_id != original.company_id
+                or self.company_source_id != original.company_source_id
+            ):
+                raise ValidationError(
+                    "Job source provenance cannot be changed after creation."
                 )
 
         self.source = normalized_source

@@ -70,10 +70,22 @@ def model(name: str) -> Any:
 
 def company(*, name: str = "Background Company") -> Any:
     slug = name.lower().replace(" ", "-")
-    return model("companies.Company").objects.create(
+    company_record = model("companies.Company").objects.create(
         name=name,
         source="fixture",
         source_jobs_url=f"https://jobs.example.test/{slug}/openings",
+    )
+    add_company_source(company_record)
+    return company_record
+
+
+def add_company_source(company_record: Any) -> Any:
+    return model("companies.CompanySource").objects.create(
+        company=company_record,
+        source=company_record.source,
+        source_jobs_url=company_record.source_jobs_url,
+        approval_status="approved",
+        is_active=True,
     )
 
 
@@ -157,14 +169,14 @@ def test_worker_reloads_company_and_closes_thread_local_connections(
     submitted_company = company()
     main_thread_id = threading.get_ident()
     close_calls: list[int] = []
-    worker_companies: list[Any] = []
+    worker_sources: list[Any] = []
     sentinel = cast(FixturePipelineResult, object())
 
     def record_close() -> None:
         close_calls.append(threading.get_ident())
 
     def inspect_pipeline(**kwargs: object) -> FixturePipelineResult:
-        worker_companies.append(kwargs["company"])
+        worker_sources.append(kwargs["company_source"])
         return sentinel
 
     monkeypatch.setattr("scraping.background.close_old_connections", record_close)
@@ -180,21 +192,21 @@ def test_worker_reloads_company_and_closes_thread_local_connections(
     assert len(close_calls) == 2
     assert close_calls[0] == close_calls[1]
     assert close_calls[0] != main_thread_id
-    assert worker_companies[0].pk == submitted_company.pk
-    assert worker_companies[0] is not submitted_company
+    assert worker_sources[0].company_id == submitted_company.pk
+    assert worker_sources[0].pk == submitted_company.sources.get().pk
 
 
 def test_source_neutral_submission_selects_adapter_from_reloaded_company(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     submitted_company = company()
-    selected_companies: list[Any] = []
+    selected_sources: list[Any] = []
     pipeline_calls: list[dict[str, object]] = []
     adapter = cast(SourceAdapter, object())
     sentinel = cast(FixturePipelineResult, object())
 
-    def select_adapter(company_record: Any) -> SourceAdapter:
-        selected_companies.append(company_record)
+    def select_adapter(company_source: Any) -> SourceAdapter:
+        selected_sources.append(company_source)
         return adapter
 
     def inspect_pipeline(**kwargs: object) -> FixturePipelineResult:
@@ -210,11 +222,11 @@ def test_source_neutral_submission_selects_adapter_from_reloaded_company(
         )
 
     assert result is sentinel
-    assert len(selected_companies) == 2
-    assert selected_companies[0] is submitted_company
-    assert selected_companies[1].pk == submitted_company.pk
-    assert selected_companies[1] is not submitted_company
-    assert pipeline_calls[0]["company"] is selected_companies[1]
+    assert len(selected_sources) == 2
+    assert selected_sources[0].pk == submitted_company.sources.get().pk
+    assert selected_sources[1].pk == selected_sources[0].pk
+    assert selected_sources[1] is not selected_sources[0]
+    assert pipeline_calls[0]["company_source"] is selected_sources[1]
     assert pipeline_calls[0]["adapter"] is adapter
 
 
@@ -222,10 +234,45 @@ def test_source_neutral_submission_rejects_unknown_source() -> None:
     company_record = company()
     company_record.source = "unknown"
     company_record.save(update_fields=("source",))
+    company_source = company_record.sources.get()
+    company_source.source = "unknown"
+    company_source.save(update_fields=("source", "updated_at"))
 
     with (
         ControlledBackgroundExecutor() as executor,
         pytest.raises(BackgroundSourceError, match="unknown"),
+    ):
+        executor.submit_pipeline(company=company_record)
+
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
+
+
+def test_legacy_submission_without_executable_source_fails_closed() -> None:
+    company_record = company()
+    company_record.sources.update(is_active=False)
+
+    with (
+        ControlledBackgroundExecutor() as executor,
+        pytest.raises(BackgroundSourceError, match="exactly one"),
+    ):
+        executor.submit_pipeline(company=company_record)
+
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
+
+
+def test_legacy_submission_with_two_executable_sources_fails_closed() -> None:
+    company_record = company()
+    model("companies.CompanySource").objects.create(
+        company=company_record,
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/example",
+        approval_status="approved",
+        is_active=True,
+    )
+
+    with (
+        ControlledBackgroundExecutor() as executor,
+        pytest.raises(BackgroundSourceError, match="exactly one"),
     ):
         executor.submit_pipeline(company=company_record)
 
@@ -240,6 +287,7 @@ def test_lever_submission_uses_registry_and_company_site_without_network(
         source="lever",
         source_jobs_url="https://jobs.lever.co/olo",
     )
+    add_company_source(company_record)
     requested_urls: list[str] = []
 
     def fake_http_get(url: str, timeout_seconds: float) -> str:
@@ -259,6 +307,7 @@ def test_lever_submission_uses_registry_and_company_site_without_network(
 
     result.scrape_run.refresh_from_db()
     assert result.scrape_run.status == "success"
+    assert result.scrape_run.company_source_id == company_record.sources.get().pk
     assert result.scrape_run.requests_made == 1
     assert len(requested_urls) == 1
     assert requested_urls[0].startswith("https://api.lever.co/v0/postings/olo?")
@@ -272,6 +321,7 @@ def test_lever_multi_page_submission_persists_complete_snapshot_without_network(
         source="lever",
         source_jobs_url="https://jobs.lever.co/olo",
     )
+    add_company_source(company_record)
     responses = iter(
         [
             (LEVER_FIXTURES / "postings_page_1.json").read_text(encoding="utf-8"),
@@ -323,6 +373,9 @@ def test_lever_multi_page_submission_persists_complete_snapshot_without_network(
     ]
     assert [job.workplace_type for job in stored_jobs] == ["hybrid", "remote", "onsite"]
     assert all(job.source == "lever" and job.status == "active" for job in stored_jobs)
+    assert all(
+        job.company_source_id == company_record.sources.get().pk for job in stored_jobs
+    )
     assert result.jobs_found == 3
     assert result.jobs_created == 3
     assert result.scrape_run.status == "success"
@@ -487,8 +540,8 @@ def test_different_companies_can_be_queued_in_one_executor(
     sentinel = cast(FixturePipelineResult, object())
 
     def first_blocks(**kwargs: object) -> FixturePipelineResult:
-        worker_company = cast(Any, kwargs["company"])
-        calls.append(worker_company.pk)
+        worker_source = cast(Any, kwargs["company_source"])
+        calls.append(worker_source.company_id)
         if len(calls) == 1 and not release.wait(timeout=5):
             raise TimeoutError("test did not release worker")
         return sentinel

@@ -48,6 +48,13 @@ Der verbindliche aktuelle Status steht in
 [`docs/MILESTONES.md`](MILESTONES.md); reproduzierbare Prüfungen stehen in
 [`docs/BACKEND_VERIFICATION.md`](BACKEND_VERIFICATION.md).
 
+Die nachträglich ergänzte Multi-Source-Architektur ist bis Slice 2 umgesetzt:
+`CompanySource` repräsentiert einen konkreten Job-Feed einer Company; Pipeline,
+Persistenz, `ScrapeRun` und Reconciliation verwenden diesen Source-Kontext.
+Die Ausführung aller Sources einer Company, Source-Management-UI und Source
+Discovery sind noch nicht implementiert. Aktueller Contract und Grenzen stehen
+in [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
+
 # Funktionale Anforderungen
 
 ## 1. Unternehmen verwalten

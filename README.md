@@ -11,6 +11,8 @@ reconciliation, run history, and the UI source-neutral.
   `https://jobs.lever.co/<site>`.
 - **Internal test source:** Fixture. It remains registered for deterministic
   offline pipeline tests, but is not offered for new user-managed companies.
+- **Audited/planned, not implemented:** Darwinbox and JazzHR. They motivated
+  the multi-source foundation but do not currently have production adapters.
 - **LinkedIn production status:** Not implemented; feasibility/access follow-up
   is required. The LinkedIn spike and limited pagination diagnostic are
   historical technical evidence, not a production adapter or authorization for
@@ -47,24 +49,27 @@ requests.
 
 ## Architecture
 
-The production flow is:
+The source-owned production flow is:
 
 ```text
-Company / UI action -> background execution -> source registry -> SourceAdapter
-                    -> SourceBatch -> normalization -> persistence
-                    -> reconciliation -> ScrapeRun -> UI / status polling
+Company / UI action -> one resolved CompanySource -> source registry
+                    -> SourceAdapter -> SourceBatch -> normalization
+                    -> source-scoped persistence and reconciliation
+                    -> source-owned ScrapeRun -> UI / status polling
 ```
 
-Lever is integrated only at the adapter/registry seam. The shared pipeline is
-also exercised by the internal fixture adapter. To add another approved
-production source, implement the existing `SourceAdapter` contract, test it
-offline, register it with the appropriate user-selectable metadata, and keep
-source-specific fetching and mapping out of the shared pipeline.
+One Company can own multiple CompanySource configurations, and one platform
+adapter can serve many companies. Source-scoped ownership is implemented;
+running all sources for one Company and managing them in the UI are not yet
+implemented. See the
+[multi-source architecture](docs/MULTI_SOURCE_ARCHITECTURE.md) for the exact
+current and future boundaries.
 
 ## Documentation
 
 - [Milestones and current status](docs/MILESTONES.md)
 - [Backend and quality verification](docs/BACKEND_VERIFICATION.md)
+- [Multi-source architecture](docs/MULTI_SOURCE_ARCHITECTURE.md)
 - [Project specification](docs/PROJECT_SPEC.md)
 - [Scrapling guide and evidence](docs/SCRAPLING_GUIDE.md)
 - [Canonical historical LinkedIn pagination diagnostic](docs/diagnostics/linkedin-pagination-2026-08-05.md)

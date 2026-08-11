@@ -18,6 +18,7 @@ class ScrapeRunRecord(Protocol):
 
     pk: int | None
     company_id: int
+    company_source_id: int | None
     status: str
     finished_at: object | None
 
@@ -33,13 +34,18 @@ class ReconciliationResult:
     was reset.
     """
 
-    total_company_jobs: int
+    total_source_jobs: int
     seen_jobs: int
     unseen_jobs: int
     miss_counters_reset: int
     miss_counters_incremented: int
     jobs_marked_not_found: int
     closed_jobs_unchanged: int
+
+    @property
+    def total_company_jobs(self) -> int:
+        """Compatibility alias; the count is now scoped to one CompanySource."""
+        return self.total_source_jobs
 
 
 class ReconciliationError(Exception):
@@ -103,7 +109,11 @@ def _validated_stored_run(scrape_run: ScrapeRunRecord) -> Any:
     ):
         raise RunNotSavedError("scrape_run must already be saved")
 
-    stored_run = model.objects.select_for_update().get(pk=run_pk)
+    stored_run = (
+        model.objects.select_for_update()
+        .select_related("company_source")
+        .get(pk=run_pk)
+    )
     if stored_run.status != "success" or stored_run.finished_at is None:
         raise InvalidReconciliationRunError(
             "reconciliation requires a finished SUCCESS scrape run"
@@ -112,20 +122,30 @@ def _validated_stored_run(scrape_run: ScrapeRunRecord) -> Any:
         raise InvalidReconciliationRunError(
             "scrape_run must belong to a saved company"
         )
+    if stored_run.company_source_id is None:
+        raise InvalidReconciliationRunError(
+            "scrape_run must belong to a saved company source"
+        )
+    if stored_run.company_source.company_id != stored_run.company_id:
+        raise InvalidReconciliationRunError(
+            "scrape_run company source must belong to its company"
+        )
     return stored_run
 
 
-def _validated_company_jobs(
-    *, company_id: int, seen_ids: set[int]
+def _validated_source_jobs(
+    *, company_source_id: int, seen_ids: set[int]
 ) -> list[Any]:
     model = _job_posting_model()
-    company_jobs = list(
-        model.objects.select_for_update().filter(company_id=company_id).order_by("pk")
+    source_jobs = list(
+        model.objects.select_for_update()
+        .filter(company_source_id=company_source_id)
+        .order_by("pk")
     )
-    company_job_ids = {job.pk for job in company_jobs}
-    unknown_ids = seen_ids - company_job_ids
+    source_job_ids = {job.pk for job in source_jobs}
+    unknown_ids = seen_ids - source_job_ids
     if not unknown_ids:
-        return company_jobs
+        return source_jobs
 
     existing_unknown_ids = set(
         model.objects.filter(pk__in=unknown_ids).values_list("pk", flat=True)
@@ -133,7 +153,7 @@ def _validated_company_jobs(
     foreign_ids = unknown_ids & existing_unknown_ids
     if foreign_ids:
         raise InvalidSeenJobError(
-            "seen job PKs belong to another company: "
+            "seen job PKs belong to another company source: "
             + ", ".join(str(pk) for pk in sorted(foreign_ids))
         )
     raise InvalidSeenJobError(
@@ -148,7 +168,7 @@ def reconcile_jobs_after_successful_run(
     seen_job_posting_ids: Iterable[int],
     miss_threshold: int = DEFAULT_SUCCESSFUL_MISS_THRESHOLD,
 ) -> ReconciliationResult:
-    """Reconcile one company's jobs after a finished SUCCESS run.
+    """Reconcile one CompanySource snapshot after a finished SUCCESS run.
 
     Seen rows have stale successful-miss counters reset without changing their
     status. Unseen ACTIVE rows accumulate successful misses and become
@@ -165,8 +185,8 @@ def reconcile_jobs_after_successful_run(
 
     with transaction.atomic():
         stored_run = _validated_stored_run(scrape_run)
-        company_jobs = _validated_company_jobs(
-            company_id=stored_run.company_id,
+        source_jobs = _validated_source_jobs(
+            company_source_id=stored_run.company_source_id,
             seen_ids=seen_ids,
         )
 
@@ -178,7 +198,7 @@ def reconcile_jobs_after_successful_run(
         status_changed_jobs: list[Any] = []
         changed_at = timezone.now()
 
-        for job in company_jobs:
+        for job in source_jobs:
             changed = False
             status_changed = False
             if job.status == "closed":
@@ -229,9 +249,9 @@ def reconcile_jobs_after_successful_run(
             )
 
         return ReconciliationResult(
-            total_company_jobs=len(company_jobs),
+            total_source_jobs=len(source_jobs),
             seen_jobs=len(seen_ids),
-            unseen_jobs=len(company_jobs) - len(seen_ids),
+            unseen_jobs=len(source_jobs) - len(seen_ids),
             miss_counters_reset=reset_count,
             miss_counters_incremented=incremented_count,
             jobs_marked_not_found=marked_not_found_count,

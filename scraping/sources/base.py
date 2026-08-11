@@ -8,11 +8,14 @@ from typing import Protocol
 type SourceRecord = dict[str, object]
 
 
-class SourceCompany(Protocol):
-    """Company attributes available to every source adapter."""
+class SourceConfiguration(Protocol):
+    """Persisted source configuration attributes available to every adapter."""
 
     source: str
     source_jobs_url: str | None
+
+
+SourceCompany = SourceConfiguration
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +45,6 @@ class SourceError(Exception):
 
 
 class SourceAdapter(Protocol):
-    """Load one source batch for a persisted company."""
+    """Load one batch for a persisted source configuration."""
 
-    def fetch(self, *, company: SourceCompany) -> SourceBatch: ...
+    def fetch(self, *, company: SourceConfiguration) -> SourceBatch: ...

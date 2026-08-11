@@ -54,13 +54,22 @@ def create_company(**overrides: object) -> Any:
         "source_jobs_url": "https://jobs.example.test/example/openings",
     }
     values.update(overrides)
-    return model("companies.Company").objects.create(**values)
+    company_record = model("companies.Company").objects.create(**values)
+    model("companies.CompanySource").objects.create(
+        company=company_record,
+        source=company_record.source,
+        source_jobs_url=company_record.source_jobs_url,
+        approval_status="approved",
+        is_active=True,
+    )
+    return company_record
 
 
 def create_job(company: Any, **overrides: object) -> Any:
     sequence = model("jobs.JobPosting").objects.count() + 1
     values: dict[str, object] = {
         "company": company,
+        "company_source": company.sources.get(),
         "source": company.source,
         "source_job_id": f"job-{sequence}",
         "title": f"Role {sequence}",
@@ -81,6 +90,7 @@ def create_scrape_run(
     terminal = status != "running"
     return model("scrape_runs.ScrapeRun").objects.create(
         company=company,
+        company_source=company.sources.get(),
         status=status,
         started_at=started_at,
         finished_at=started_at + timedelta(seconds=1) if terminal else None,

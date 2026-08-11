@@ -49,11 +49,19 @@ def model(name: str) -> Any:
 
 def company(*, name: str = "Recoverable Fixture Company") -> Any:
     slug = name.lower().replace(" ", "-")
-    return model("companies.Company").objects.create(
+    company_record = model("companies.Company").objects.create(
         name=name,
         source="fixture",
         source_jobs_url=f"https://jobs.example.test/{slug}/openings",
     )
+    model("companies.CompanySource").objects.create(
+        company=company_record,
+        source=company_record.source,
+        source_jobs_url=company_record.source_jobs_url,
+        approval_status="approved",
+        is_active=True,
+    )
+    return company_record
 
 
 def run_times(number: int) -> tuple[datetime, datetime]:

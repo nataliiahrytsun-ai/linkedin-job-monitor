@@ -10,17 +10,34 @@ from typing import Any, Protocol, cast
 from django.apps import apps  # type: ignore[import-untyped]
 from django.db import IntegrityError, transaction  # type: ignore[import-untyped]
 
+from scraping.sources.base import SourceError
+from scraping.sources.resolution import resolve_legacy_company_source
+
 
 class CompanyRecord(Protocol):
     pk: int | None
+    source: str
+    source_jobs_url: str | None
     is_active: bool
     last_scraped_at: datetime | None
     last_scrape_status: str
 
 
+class CompanySourceRecord(Protocol):
+    pk: int | None
+    company_id: int
+    approval_status: str
+    is_active: bool
+
+    @property
+    def company(self) -> CompanyRecord: ...
+
+
 class ScrapeRunRecord(Protocol):
     pk: int | None
     company: CompanyRecord
+    company_source: CompanySourceRecord
+    company_source_id: int | None
     started_at: datetime
     finished_at: datetime | None
     status: str
@@ -50,6 +67,10 @@ class CompanyNotSavedError(RunLifecycleError):
 
 class InactiveCompanyError(RunLifecycleError):
     """An inactive company cannot start a new run."""
+
+
+class InactiveCompanySourceError(RunLifecycleError):
+    """Only an approved active CompanySource can start a new run."""
 
 
 class RunNotSavedError(RunLifecycleError):
@@ -84,6 +105,10 @@ def _company_model() -> Any:
     return apps.get_model("companies", "Company")
 
 
+def _company_source_model() -> Any:
+    return apps.get_model("companies", "CompanySource")
+
+
 def _scrape_run_model() -> Any:
     return apps.get_model("scrape_runs", "ScrapeRun")
 
@@ -92,17 +117,26 @@ def _is_aware(value: datetime) -> bool:
     return value.tzinfo is not None and value.utcoffset() is not None
 
 
-def _validated_company(company: CompanyRecord) -> Any:
-    model = _company_model()
-    company_pk = getattr(company, "pk", None)
+def _validated_company_source(company_source: CompanySourceRecord) -> Any:
+    model = _company_source_model()
+    source_pk = getattr(company_source, "pk", None)
     if (
-        not isinstance(company, model)
-        or company_pk is None
-        or getattr(getattr(company, "_state", None), "adding", True)
-        or not model.objects.filter(pk=company_pk).exists()
+        not isinstance(company_source, model)
+        or source_pk is None
+        or getattr(getattr(company_source, "_state", None), "adding", True)
+        or not model.objects.filter(pk=source_pk).exists()
     ):
-        raise CompanyNotSavedError("company must already be saved")
-    return model.objects.select_for_update().get(pk=company_pk)
+        raise CompanyNotSavedError("company source must already be saved")
+    stored_source = (
+        model.objects.select_for_update()
+        .select_related("company")
+        .get(pk=source_pk)
+    )
+    if company_source.company_id != stored_source.company_id:
+        raise CompanyNotSavedError(
+            "company source company does not match its persisted ownership"
+        )
+    return stored_source
 
 
 def _is_duplicate_running_constraint(error: IntegrityError) -> bool:
@@ -114,20 +148,46 @@ def _is_duplicate_running_constraint(error: IntegrityError) -> bool:
 
 
 def start_scrape_run(
-    *, company: CompanyRecord, started_at: datetime
+    *,
+    company_source: CompanySourceRecord | None = None,
+    company: CompanyRecord | None = None,
+    started_at: datetime,
 ) -> ScrapeRunRecord:
-    """Atomically create one RUNNING run and mark its company RUNNING."""
+    """Create one source-owned RUNNING run and mark its Company RUNNING."""
     if not _is_aware(started_at):
         raise InvalidRunTimestampError("started_at must be timezone-aware")
+    if company_source is None:
+        if company is None:
+            raise CompanyNotSavedError("company source is required")
+        try:
+            company_source = cast(
+                CompanySourceRecord,
+                resolve_legacy_company_source(company),
+            )
+        except SourceError as error:
+            raise CompanyNotSavedError(str(error)) from error
+    elif company is not None:
+        raise CompanyNotSavedError(
+            "provide company_source or legacy company, not both"
+        )
 
     try:
         with transaction.atomic():
-            stored_company = _validated_company(company)
+            stored_source = _validated_company_source(company_source)
+            stored_company = stored_source.company
             if not stored_company.is_active:
                 raise InactiveCompanyError("inactive company cannot start a run")
+            if (
+                stored_source.approval_status != "approved"
+                or not stored_source.is_active
+            ):
+                raise InactiveCompanySourceError(
+                    "company source must be approved and active"
+                )
 
             run = _scrape_run_model().objects.create(
                 company=stored_company,
+                company_source=stored_source,
                 started_at=started_at,
                 status="running",
                 finished_at=None,
@@ -140,7 +200,7 @@ def start_scrape_run(
             )
             stored_company.last_scrape_status = "running"
             stored_company.save(update_fields=("last_scrape_status",))
-            company.last_scrape_status = "running"
+            company_source.company.last_scrape_status = "running"
             return cast(ScrapeRunRecord, run)
     except IntegrityError as error:
         if _is_duplicate_running_constraint(error):
@@ -216,7 +276,11 @@ def _validated_stored_run(scrape_run: ScrapeRunRecord) -> Any:
         or not model.objects.filter(pk=run_pk).exists()
     ):
         raise RunNotSavedError("scrape_run must already be saved")
-    return model.objects.select_for_update().select_related("company").get(pk=run_pk)
+    return (
+        model.objects.select_for_update()
+        .select_related("company", "company_source")
+        .get(pk=run_pk)
+    )
 
 
 def finish_scrape_run(
@@ -252,6 +316,13 @@ def finish_scrape_run(
             if stored_run.status != "running":
                 raise InvalidRunTransitionError(
                     "only a RUNNING scrape run can be finished"
+                )
+            if (
+                stored_run.company_source_id is None
+                or stored_run.company_source.company_id != stored_run.company_id
+            ):
+                raise InvalidRunTransitionError(
+                    "RUNNING scrape run must have consistent company source ownership"
                 )
             if not _is_aware(stored_run.started_at):
                 raise InvalidRunTimestampError(

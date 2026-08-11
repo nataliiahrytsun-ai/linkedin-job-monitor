@@ -34,6 +34,7 @@ from scraping.run_lifecycle import (
 )
 from scraping.sources.base import SourceAdapter, SourceError, SourceRecord
 from scraping.sources.fixture import FixtureSourceAdapter
+from scraping.sources.resolution import resolve_legacy_company_source
 
 _NORMALIZATION_FIELDS = frozenset(
     {
@@ -56,7 +57,7 @@ _NORMALIZATION_FIELDS = frozenset(
 
 
 class CompanyRecord(Protocol):
-    """Persisted company attributes required by the composed services."""
+    """Persisted company attributes retained for transitional background APIs."""
 
     pk: int | None
     source: str
@@ -64,6 +65,20 @@ class CompanyRecord(Protocol):
     is_active: bool
     last_scraped_at: datetime | None
     last_scrape_status: str
+
+
+class CompanySourceRecord(Protocol):
+    """Explicit source ownership required by the production pipeline."""
+
+    pk: int | None
+    company_id: int
+    source: str
+    source_jobs_url: str | None
+    approval_status: str
+    is_active: bool
+
+    @property
+    def company(self) -> CompanyRecord: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +225,7 @@ def _safe_failure_message(error: Exception) -> str:
 
 def _process_record(
     *,
-    company: CompanyRecord,
+    company_source: CompanySourceRecord,
     record: SourceRecord,
     record_index: int,
     seen_at: datetime,
@@ -225,7 +240,7 @@ def _process_record(
 
     try:
         return persist_job_posting(
-            company=company,
+            company_source=company_source,
             job=normalized,
             seen_at=seen_at,
         )
@@ -249,7 +264,8 @@ def _safe_job_error(
 
 def run_source_pipeline(
     *,
-    company: CompanyRecord,
+    company_source: CompanySourceRecord | None = None,
+    company: CompanyRecord | None = None,
     adapter: SourceAdapter,
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
@@ -270,6 +286,19 @@ def run_source_pipeline(
         )
     if not callable(clock):
         raise InvalidPipelineConfigurationError("clock must be callable")
+    if company_source is None:
+        if company is None:
+            raise InvalidPipelineConfigurationError(
+                "company_source or legacy company is required"
+            )
+        company_source = cast(
+            CompanySourceRecord,
+            resolve_legacy_company_source(company),
+        )
+    elif company is not None:
+        raise InvalidPipelineConfigurationError(
+            "provide company_source or legacy company, not both"
+        )
 
     resolved_started_at = started_at or _clock_timestamp(
         clock=clock,
@@ -285,11 +314,14 @@ def run_source_pipeline(
     ):
         raise InvalidPipelineTimestampError("started_at must be timezone-aware")
 
-    scrape_run = start_scrape_run(company=company, started_at=resolved_started_at)
+    scrape_run = start_scrape_run(
+        company_source=company_source,
+        started_at=resolved_started_at,
+    )
 
     requests_made = 0
     try:
-        batch = adapter.fetch(company=company)
+        batch = adapter.fetch(company=company_source)
         requests_made = batch.requests_made
         records = batch.records
         with transaction.atomic():
@@ -308,7 +340,7 @@ def run_source_pipeline(
                 try:
                     with transaction.atomic():
                         persisted = _process_record(
-                            company=company,
+                            company_source=company_source,
                             record=record,
                             record_index=index,
                             seen_at=observed_at,
@@ -411,7 +443,8 @@ def run_source_pipeline(
 
 def run_fixture_pipeline(
     *,
-    company: CompanyRecord,
+    company_source: CompanySourceRecord | None = None,
+    company: CompanyRecord | None = None,
     fixture_path: Path,
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
@@ -421,6 +454,7 @@ def run_fixture_pipeline(
 ) -> PipelineResult:
     """Backward-compatible wrapper for explicit local fixture runs."""
     return run_source_pipeline(
+        company_source=company_source,
         company=company,
         adapter=FixtureSourceAdapter(fixture_path),
         started_at=started_at,

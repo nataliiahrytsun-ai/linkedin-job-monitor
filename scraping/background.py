@@ -9,7 +9,7 @@ from datetime import datetime
 from functools import partial
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from django.apps import apps  # type: ignore[import-untyped]
@@ -18,6 +18,7 @@ from django.utils import timezone  # type: ignore[import-untyped]
 
 from scraping.pipeline import (
     CompanyRecord,
+    CompanySourceRecord,
     FixturePipelineResult,
     PipelineResult,
     run_fixture_pipeline,
@@ -25,7 +26,8 @@ from scraping.pipeline import (
 )
 from scraping.reconciliation import DEFAULT_SUCCESSFUL_MISS_THRESHOLD
 from scraping.sources.base import SourceError
-from scraping.sources.registry import get_source_adapter
+from scraping.sources.registry import get_source_adapter, normalize_source_key
+from scraping.sources.resolution import resolve_legacy_company_source
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,8 +129,15 @@ class ControlledBackgroundExecutor:
         try:
             company_model = apps.get_model("companies", "Company")
             worker_company = company_model.objects.get(pk=company_id)
+            try:
+                company_source = cast(
+                    CompanySourceRecord,
+                    resolve_legacy_company_source(worker_company),
+                )
+            except SourceError as error:
+                raise BackgroundSourceError(str(error)) from error
             return run_fixture_pipeline(
-                company=worker_company,
+                company_source=company_source,
                 fixture_path=fixture_path,
                 miss_threshold=miss_threshold,
                 recover_job_errors=recover_job_errors,
@@ -149,11 +158,15 @@ class ControlledBackgroundExecutor:
             company_model = apps.get_model("companies", "Company")
             worker_company = company_model.objects.get(pk=company_id)
             try:
-                adapter = get_source_adapter(worker_company)
+                company_source = cast(
+                    CompanySourceRecord,
+                    resolve_legacy_company_source(worker_company),
+                )
+                adapter = get_source_adapter(company_source)
             except SourceError as error:
                 raise BackgroundSourceError(str(error)) from error
             return run_source_pipeline(
-                company=worker_company,
+                company_source=company_source,
                 adapter=adapter,
                 miss_threshold=miss_threshold,
                 recover_job_errors=recover_job_errors,
@@ -179,6 +192,14 @@ class ControlledBackgroundExecutor:
     ) -> BackgroundRunHandle:
         """Queue one company fixture run and return without waiting for it."""
         company_id = self._validated_company_id(company)
+        try:
+            company_source = resolve_legacy_company_source(company)
+        except SourceError as error:
+            raise BackgroundSourceError(str(error)) from error
+        if normalize_source_key(company_source.source) != "fixture":
+            raise BackgroundSourceError(
+                "explicit fixture execution requires a fixture CompanySource"
+            )
         task_id = uuid4().hex
 
         with self._lock:
@@ -229,7 +250,8 @@ class ControlledBackgroundExecutor:
         """Queue a source-neutral company update and return without waiting."""
         company_id = self._validated_company_id(company)
         try:
-            get_source_adapter(company)
+            company_source = resolve_legacy_company_source(company)
+            get_source_adapter(company_source)
         except SourceError as error:
             raise BackgroundSourceError(str(error)) from error
         task_id = uuid4().hex

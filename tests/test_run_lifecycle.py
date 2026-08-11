@@ -12,6 +12,7 @@ from scraping.run_lifecycle import (
     CompanyNotSavedError,
     DuplicateRunningRunError,
     InactiveCompanyError,
+    InactiveCompanySourceError,
     InvalidRunCountersError,
     InvalidRunErrorMessageError,
     InvalidRunTimestampError,
@@ -49,11 +50,18 @@ def model(name: str) -> Any:
 
 
 def company(*, name: str = "Example", active: bool = True) -> Any:
-    return model("companies.Company").objects.create(
+    company_record = model("companies.Company").objects.create(
         name=name,
         source="feed",
         is_active=active,
     )
+    model("companies.CompanySource").objects.create(
+        company=company_record,
+        source="feed",
+        approval_status="approved",
+        is_active=True,
+    )
+    return company_record
 
 
 def started_at() -> datetime:
@@ -86,6 +94,7 @@ def finish(
 def create_job(company_record: Any, *, status: str, misses: int) -> Any:
     return model("jobs.JobPosting").objects.create(
         company=company_record,
+        company_source=company_record.sources.get(),
         source="feed",
         source_job_id=f"job-{status}",
         content_hash="a" * 64,
@@ -105,6 +114,7 @@ def test_start_creates_default_running_run_and_updates_only_company_status() -> 
     company_record.refresh_from_db()
 
     assert run.status == "running"
+    assert run.company_source_id == company_record.sources.get().pk
     assert run.started_at == started_at()
     assert run.finished_at is None
     assert run.duration_seconds is None
@@ -153,6 +163,34 @@ def test_inactive_unsaved_and_naive_start_inputs_are_rejected() -> None:
     assert model("scrape_runs.ScrapeRun").objects.count() == 0
     inactive.refresh_from_db()
     assert inactive.last_scrape_status == "never"
+
+
+def test_inactive_company_source_is_rejected() -> None:
+    company_record = company()
+    source = company_record.sources.get()
+    source.is_active = False
+    source.save(update_fields=("is_active", "updated_at"))
+
+    with pytest.raises(InactiveCompanySourceError):
+        start_scrape_run(company_source=source, started_at=started_at())
+
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
+
+
+def test_scrape_run_rejects_company_source_from_another_company() -> None:
+    first_company = company(name="First")
+    second_company = company(name="Second")
+
+    with pytest.raises(
+        importlib.import_module("django.core.exceptions").ValidationError,
+        match="belong to the run company",
+    ):
+        model("scrape_runs.ScrapeRun").objects.create(
+            company=first_company,
+            company_source=second_company.sources.get(),
+        )
+
+    assert model("scrape_runs.ScrapeRun").objects.count() == 0
 
 
 def test_aware_non_utc_started_at_is_accepted() -> None:

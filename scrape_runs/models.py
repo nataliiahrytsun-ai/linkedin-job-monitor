@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
@@ -86,3 +87,17 @@ class ScrapeRun(models.Model):
                 name="run_status_started_idx",
             ),
         ]
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        """Reject contradictory transitional Company and CompanySource ownership."""
+        if self.company_source_id is not None:
+            source_company_id = (
+                type(self).company_source.field.related_model.objects.only("company_id")
+                .get(pk=self.company_source_id)
+                .company_id
+            )
+            if self.company_id != source_company_id:
+                raise ValidationError(
+                    {"company_source": "Company source must belong to the run company."}
+                )
+        super().save(*args, **kwargs)

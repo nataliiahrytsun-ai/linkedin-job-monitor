@@ -30,17 +30,27 @@ _CONTENT_FIELDS = (
 
 
 class CompanyRecord(Protocol):
-    """The persisted Company attributes required by this service."""
+    pk: int | None
+
+
+class CompanySourceRecord(Protocol):
+    """The persisted source ownership required by this service."""
 
     pk: int | None
+    company_id: int
     source: str
+
+    @property
+    def company(self) -> CompanyRecord: ...
 
 
 class JobPostingRecord(Protocol):
     """The JobPosting attributes exposed in a persistence result."""
 
     pk: int
+    company_id: int
     company: CompanyRecord
+    company_source: CompanySourceRecord
     source: str
     source_job_id: str | None
     title: str | None
@@ -61,6 +71,8 @@ class JobPostingRecord(Protocol):
     last_seen_at: datetime
     dedupe_key: str
     consecutive_successful_misses: int
+
+    def refresh_from_db(self) -> None: ...
 
 
 class PersistenceOutcome(StrEnum):
@@ -101,30 +113,39 @@ def _job_posting_model() -> Any:
     return apps.get_model("jobs", "JobPosting")
 
 
-def _company_model() -> Any:
-    return apps.get_model("companies", "Company")
+def _company_source_model() -> Any:
+    return apps.get_model("companies", "CompanySource")
 
 
 def _validate_inputs(
-    *, company: CompanyRecord, job: NormalizedJobPosting, seen_at: datetime
-) -> tuple[str, str]:
-    company_model = _company_model()
-    company_pk = getattr(company, "pk", None)
+    *,
+    company_source: CompanySourceRecord,
+    job: NormalizedJobPosting,
+    seen_at: datetime,
+) -> tuple[Any, str, str]:
+    source_model = _company_source_model()
+    source_pk = getattr(company_source, "pk", None)
     if (
-        not isinstance(company, company_model)
-        or company_pk is None
-        or getattr(getattr(company, "_state", None), "adding", True)
-        or not company_model.objects.filter(pk=company_pk).exists()
+        not isinstance(company_source, source_model)
+        or source_pk is None
+        or getattr(getattr(company_source, "_state", None), "adding", True)
+        or not source_model.objects.filter(pk=source_pk).exists()
     ):
-        raise PersistenceValidationError("company must already be saved")
+        raise PersistenceValidationError("company_source must already be saved")
 
-    normalized_company_source = company.source.strip().lower()
+    stored_source = source_model.objects.select_related("company").get(pk=source_pk)
+    if company_source.company_id != stored_source.company_id:
+        raise PersistenceValidationError(
+            "company_source company does not match its persisted ownership"
+        )
+
+    normalized_company_source = stored_source.source.strip().lower()
     if not job.source:
         raise PersistenceValidationError("job.source must not be empty")
     if job.source != job.source.strip().lower():
         raise PersistenceValidationError("job.source must already be normalized")
     if job.source != normalized_company_source:
-        raise PersistenceValidationError("job.source must match company.source")
+        raise PersistenceValidationError("job.source must match company_source.source")
     if job.source_job_id is not None and not job.source_job_id.strip():
         raise PersistenceValidationError("source_job_id must not be blank")
     if job.source_job_url is not None and not job.source_job_url.strip():
@@ -137,21 +158,20 @@ def _validate_inputs(
         raise PersistenceValidationError("seen_at must be timezone-aware")
 
     try:
-        return compute_content_hash(job), compute_dedupe_key(job)
+        return stored_source, compute_content_hash(job), compute_dedupe_key(job)
     except ValueError as error:
         raise PersistenceValidationError(str(error)) from error
 
 
 def _single_url_fallback(
-    *, model: Any, company: CompanyRecord, job: NormalizedJobPosting
+    *, model: Any, company_source: CompanySourceRecord, job: NormalizedJobPosting
 ) -> Any | None:
     if job.source_job_url is None:
         return None
     matches = list(
         model.objects.select_for_update()
         .filter(
-            company=company,
-            source=job.source,
+            company_source=company_source,
             source_job_id__isnull=True,
             source_job_url=job.source_job_url,
         )
@@ -165,12 +185,16 @@ def _single_url_fallback(
 
 
 def _find_existing(
-    *, model: Any, company: CompanyRecord, job: NormalizedJobPosting, dedupe_key: str
+    *,
+    model: Any,
+    company_source: CompanySourceRecord,
+    job: NormalizedJobPosting,
+    dedupe_key: str,
 ) -> tuple[Any | None, bool]:
     if job.source_job_id is None:
         existing = (
             model.objects.select_for_update()
-            .filter(company=company, source=job.source, dedupe_key=dedupe_key)
+            .filter(company_source=company_source, dedupe_key=dedupe_key)
             .first()
         )
         return existing, False
@@ -178,13 +202,16 @@ def _find_existing(
     id_record = (
         model.objects.select_for_update()
         .filter(
-            company=company,
-            source=job.source,
+            company_source=company_source,
             source_job_id=job.source_job_id,
         )
         .first()
     )
-    url_record = _single_url_fallback(model=model, company=company, job=job)
+    url_record = _single_url_fallback(
+        model=model,
+        company_source=company_source,
+        job=job,
+    )
     if id_record is not None and url_record is not None and id_record.pk != url_record.pk:
         raise IdentityConflictError(
             "separate rows match the incoming source_job_id and source_job_url"
@@ -199,7 +226,7 @@ def _find_existing(
 def _create_job_posting(
     *,
     model: Any,
-    company: CompanyRecord,
+    company_source: CompanySourceRecord,
     job: NormalizedJobPosting,
     seen_at: datetime,
     content_hash: str,
@@ -207,7 +234,8 @@ def _create_job_posting(
 ) -> Any:
     content = {field: getattr(job, field) for field in _CONTENT_FIELDS}
     return model.objects.create(
-        company=company,
+        company=company_source.company,
+        company_source=company_source,
         source=job.source,
         source_job_id=job.source_job_id,
         content_hash=content_hash,
@@ -263,22 +291,27 @@ def _update_existing(
 
 
 def _persist_job_posting(
-    *, company: CompanyRecord, job: NormalizedJobPosting, seen_at: datetime
+    *,
+    company_source: CompanySourceRecord,
+    job: NormalizedJobPosting,
+    seen_at: datetime,
 ) -> PersistenceResult:
-    content_hash, dedupe_key = _validate_inputs(
-        company=company, job=job, seen_at=seen_at
+    stored_source, content_hash, dedupe_key = _validate_inputs(
+        company_source=company_source,
+        job=job,
+        seen_at=seen_at,
     )
     model = _job_posting_model()
     existing, identity_upgrade = _find_existing(
         model=model,
-        company=company,
+        company_source=stored_source,
         job=job,
         dedupe_key=dedupe_key,
     )
     if existing is None:
         created = _create_job_posting(
             model=model,
-            company=company,
+            company_source=stored_source,
             job=job,
             seen_at=seen_at,
             content_hash=content_hash,
@@ -304,12 +337,19 @@ def _persist_job_posting(
 
 
 def persist_job_posting(
-    *, company: CompanyRecord, job: NormalizedJobPosting, seen_at: datetime
+    *,
+    company_source: CompanySourceRecord,
+    job: NormalizedJobPosting,
+    seen_at: datetime,
 ) -> PersistenceResult:
-    """Atomically create, update, or observe one normalized job posting."""
+    """Persist one posting within an explicit CompanySource identity scope."""
     try:
         with transaction.atomic():
-            return _persist_job_posting(company=company, job=job, seen_at=seen_at)
+            return _persist_job_posting(
+                company_source=company_source,
+                job=job,
+                seen_at=seen_at,
+            )
     except IntegrityError as error:
         raise PersistenceConstraintError(
             "job persistence violated a database constraint"

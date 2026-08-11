@@ -83,6 +83,31 @@ HTTP responses; documentation closeout does not repeat live requests.
 
 # Follow-up scope
 
+## Staged multi-source architecture extension
+
+The original Lever Milestone 3 scope remains completed. A later Acuity source
+audit showed that one monitored Company can have multiple independent ATS
+feeds, so the additional architecture extension is being delivered in staged
+slices:
+
+- **Slice 1 — schema foundation: Completed.** Added `CompanySource`, nullable
+  ownership links on `JobPosting` and `ScrapeRun`, and deterministic backfill of
+  legacy source configurations.
+- **Slice 2 — source ownership: Completed.** Pipeline context, registry
+  selection, persistence identity, ScrapeRun ownership, and successful-snapshot
+  reconciliation are scoped to one CompanySource. The transitional Company
+  entry point resolves exactly one approved/active source and fails closed when
+  resolution is ambiguous. Its quality gate passed with 444 tests and the
+  existing 150 third-party `lxml` deprecation warnings; Ruff, MyPy, Django,
+  migration, dependency, and diff checks passed.
+- **Slice 3 — lifecycle/background orchestration: Next.** Source-level
+  scheduling and Company multi-source execution have not been implemented.
+
+Multi-source UI, Source Discovery, Darwinbox/JazzHR adapters, and cross-source
+vacancy deduplication are also not implemented. The current architecture and
+boundaries are documented in
+[`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
+
 LinkedIn remains the original product target, but it is not a current
 production source: there is no production LinkedIn adapter, registry key, or
 Company dropdown option. Feasibility, access, and authorization must be decided

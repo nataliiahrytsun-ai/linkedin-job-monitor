@@ -2,19 +2,29 @@
 
 ## Verified production flow
 
-The source-neutral path is:
+The current source-owned path is:
 
 ```text
-Company / UI action -> background execution -> immutable source registry
+Company / UI action -> exactly one resolved CompanySource
+                    -> background execution -> immutable source registry
                     -> SourceAdapter -> SourceBatch -> normalization
-                    -> persistence -> reconciliation -> ScrapeRun
+                    -> source-scoped persistence -> source-scoped reconciliation
+                    -> source-owned ScrapeRun
                     -> Dashboard / Company / ScrapeRun UI and status polling
 ```
 
+`JobPosting` identity and successful-snapshot reconciliation are isolated by
+`CompanySource`. Tests cover equal external IDs in two sources of one Company,
+empty-snapshot isolation in both source directions, foreign-source seen-ID
+rejection, explicit source URL delivery to the adapter, and fail-closed legacy
+resolution with zero or multiple executable sources.
+
 The shared pipeline supports two deliberately different source roles:
 
-- `lever`: current production and user-selectable adapter. A Company stores
-  `source="lever"` and a public URL such as `https://jobs.lever.co/olo`.
+- `lever`: current production and user-selectable adapter. The executable
+  CompanySource stores `source="lever"` and a public URL such as
+  `https://jobs.lever.co/olo`; matching legacy Company fields remain during the
+  staged migration.
 - `fixture`: registered internal/test adapter. It reads local synthetic data,
   reports `requests_made=0`, and remains available to pipeline tests, but it is
   excluded from Add Company and rejected as a user-assigned source.
@@ -66,9 +76,9 @@ verification gate.
 
 ## Current verified baseline
 
-The closeout baseline before this documentation-only slice was:
+The verified Slice 2 ownership baseline is:
 
-- `pytest`: **427 passed**, with 150 existing third-party `lxml` deprecation
+- `pytest`: **444 passed**, with 150 existing third-party `lxml` deprecation
   warnings;
 - Ruff: **All checks passed**;
 - MyPy: **Success, no issues found**;
@@ -79,8 +89,10 @@ The closeout baseline before this documentation-only slice was:
 
 ## Scope boundary
 
-This evidence verifies the complete current application and the production
-Lever path. It does not prove a production LinkedIn integration, authorize
-LinkedIn collection, or prove collection of every vacancy exposed by any
-external service. Live Olo verification is an already-completed manual check;
-normal automated checks stay offline.
+This evidence verifies the current application, the production Lever path, and
+Slice 2 source ownership. It does not verify future Company-wide multi-source
+orchestration, Source Discovery, Darwinbox/JazzHR adapters, or a production
+LinkedIn integration. It does not authorize LinkedIn collection or prove
+collection of every vacancy exposed by an external service. Live Olo
+verification is an already-completed manual check; normal automated checks stay
+offline.

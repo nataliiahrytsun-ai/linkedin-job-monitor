@@ -60,12 +60,20 @@ def model(name: str) -> Any:
 
 def company(*, name: str = "Fictional Company", active: bool = True) -> Any:
     company_slug = name.lower().replace(" ", "-")
-    return model("companies.Company").objects.create(
+    company_record = model("companies.Company").objects.create(
         name=name,
         source="fixture",
         source_jobs_url=f"https://jobs.example.test/{company_slug}/openings",
         is_active=active,
     )
+    model("companies.CompanySource").objects.create(
+        company=company_record,
+        source=company_record.source,
+        source_jobs_url=company_record.source_jobs_url,
+        approval_status="approved",
+        is_active=True,
+    )
+    return company_record
 
 
 def run_times(number: int) -> tuple[datetime, datetime]:
@@ -467,6 +475,33 @@ def test_source_batch_requests_made_is_saved_on_scrape_run() -> None:
 
     result.scrape_run.refresh_from_db()
     assert result.scrape_run.requests_made == 3
+
+
+def test_explicit_pipeline_passes_company_source_url_to_adapter() -> None:
+    observed_urls: list[str | None] = []
+
+    class InspectingAdapter:
+        def fetch(self, *, company: SourceCompany) -> SourceBatch:
+            observed_urls.append(company.source_jobs_url)
+            return SourceBatch(records=(), requests_made=1)
+
+    company_record = company()
+    source = company_record.sources.get()
+    source.source_jobs_url = "https://source.example.test/current"
+    source.save(update_fields=("source_jobs_url", "updated_at"))
+    company_record.source_jobs_url = "https://legacy.example.test/stale"
+    company_record.save(update_fields=("source_jobs_url",))
+    started_at, finished_at = run_times(1)
+
+    result = run_source_pipeline(
+        company_source=source,
+        adapter=InspectingAdapter(),
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+
+    assert observed_urls == ["https://source.example.test/current"]
+    assert result.scrape_run.company_source_id == source.pk
 
 
 def test_source_error_requests_made_is_saved_on_failed_scrape_run() -> None:

@@ -46,13 +46,30 @@ def model(name: str) -> Any:
 
 
 def company(*, name: str = "Example") -> Any:
-    return model("companies.Company").objects.create(name=name, source="feed")
+    company_record = model("companies.Company").objects.create(name=name, source="feed")
+    model("companies.CompanySource").objects.create(
+        company=company_record,
+        source="feed",
+        approval_status="approved",
+        is_active=True,
+    )
+    return company_record
 
 
-def terminal_run(company_record: Any, *, status: str = "success") -> Any:
+def company_source(company_record: Any) -> Any:
+    return company_record.sources.get(source="feed")
+
+
+def terminal_run(
+    company_record: Any,
+    *,
+    status: str = "success",
+    source_record: Any | None = None,
+) -> Any:
     finished_at = datetime(2026, 8, 6, 11, tzinfo=UTC)
     return model("scrape_runs.ScrapeRun").objects.create(
         company=company_record,
+        company_source=source_record or company_source(company_record),
         started_at=finished_at - timedelta(seconds=2),
         finished_at=finished_at,
         status=status,
@@ -71,10 +88,13 @@ def job(
     *,
     status: str = "active",
     misses: int = 0,
+    source_record: Any | None = None,
 ) -> Any:
+    resolved_source = source_record or company_source(company_record)
     return model("jobs.JobPosting").objects.create(
         company=company_record,
-        source="feed",
+        company_source=resolved_source,
+        source=resolved_source.source,
         source_job_id=f"job-{sequence}",
         title=f"Job {sequence}",
         description=f"Description {sequence}",
@@ -114,7 +134,7 @@ def test_default_threshold_and_immutable_result() -> None:
     assert DEFAULT_SUCCESSFUL_MISS_THRESHOLD == 2
     result = ReconciliationResult(0, 0, 0, 0, 0, 0, 0)
     with pytest.raises(FrozenInstanceError):
-        result.total_company_jobs = 1  # type: ignore[misc]
+        result.total_source_jobs = 1  # type: ignore[misc]
 
 
 @pytest.mark.parametrize("status", ["running", "partial", "failed"])
@@ -122,7 +142,10 @@ def test_only_finished_success_run_is_accepted_without_job_changes(status: str) 
     company_record = company()
     job_record = job(company_record, 1, misses=1)
     if status == "running":
-        run = model("scrape_runs.ScrapeRun").objects.create(company=company_record)
+        run = model("scrape_runs.ScrapeRun").objects.create(
+            company=company_record,
+            company_source=company_source(company_record),
+        )
     else:
         run = terminal_run(company_record, status=status)
     before = snapshot(job_record)
@@ -138,6 +161,7 @@ def test_unsaved_run_is_rejected_without_job_changes() -> None:
     job_record = job(company_record, 1, misses=1)
     unsaved = model("scrape_runs.ScrapeRun")(
         company=company_record,
+        company_source=company_source(company_record),
         status="success",
         finished_at=datetime(2026, 8, 6, 11, tzinfo=UTC),
     )
@@ -334,7 +358,7 @@ def test_empty_seen_set_reconciles_all_company_jobs_and_result_counts_changes() 
     result = reconcile(terminal_run(company_record), [])
 
     assert result == ReconciliationResult(
-        total_company_jobs=3,
+        total_source_jobs=3,
         seen_jobs=0,
         unseen_jobs=3,
         miss_counters_reset=0,
@@ -356,6 +380,97 @@ def test_other_company_jobs_are_never_changed() -> None:
     assert snapshot(local)[0:2] == ("active", 1)
     assert snapshot(foreign) == before
     assert result.total_company_jobs == 1
+
+
+def test_reconciliation_is_scoped_to_the_run_company_source() -> None:
+    company_record = company()
+    first_source = company_source(company_record)
+    second_source = model("companies.CompanySource").objects.create(
+        company=company_record,
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/example",
+        approval_status="approved",
+        is_active=True,
+    )
+    first_job = job(company_record, 1)
+    second_job = model("jobs.JobPosting").objects.create(
+        company=company_record,
+        company_source=second_source,
+        source="lever",
+        source_job_id="job-1",
+        title="Lever Job",
+        content_hash="f" * 64,
+        dedupe_key="e" * 64,
+        status="active",
+        consecutive_successful_misses=0,
+        first_seen_at=datetime(2026, 8, 1, 9, tzinfo=UTC),
+        last_seen_at=datetime(2026, 8, 5, 9, tzinfo=UTC),
+    )
+    run = terminal_run(company_record)
+    assert run.company_source_id == first_source.pk
+
+    result = reconcile(run, [], threshold=1)
+
+    assert snapshot(first_job)[0:2] == ("not_found", 1)
+    assert snapshot(second_job)[0:2] == ("active", 0)
+    assert result.total_source_jobs == 1
+
+
+def test_reconciliation_of_second_source_does_not_change_first_source() -> None:
+    company_record = company()
+    first_job = job(company_record, 1, misses=1)
+    second_source = model("companies.CompanySource").objects.create(
+        company=company_record,
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/example",
+        approval_status="approved",
+        is_active=True,
+    )
+    second_job = job(
+        company_record,
+        2,
+        source_record=second_source,
+    )
+
+    result = reconcile(
+        terminal_run(company_record, source_record=second_source),
+        [],
+        threshold=1,
+    )
+
+    assert snapshot(first_job)[0:2] == ("active", 1)
+    assert snapshot(second_job)[0:2] == ("not_found", 1)
+    assert result.total_source_jobs == 1
+
+
+def test_seen_job_from_another_source_of_same_company_is_rejected() -> None:
+    company_record = company()
+    local = job(company_record, 1, misses=1)
+    second_source = model("companies.CompanySource").objects.create(
+        company=company_record,
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/example",
+        approval_status="approved",
+        is_active=True,
+    )
+    foreign = model("jobs.JobPosting").objects.create(
+        company=company_record,
+        company_source=second_source,
+        source="lever",
+        source_job_id="lever-job",
+        title="Lever Job",
+        content_hash="d" * 64,
+        dedupe_key="c" * 64,
+        first_seen_at=datetime(2026, 8, 1, 9, tzinfo=UTC),
+        last_seen_at=datetime(2026, 8, 5, 9, tzinfo=UTC),
+    )
+    run = terminal_run(company_record)
+
+    with pytest.raises(InvalidSeenJobError, match="another company source"):
+        reconcile(run, [local.pk, foreign.pk])
+
+    assert snapshot(local)[0:2] == ("active", 1)
+    assert snapshot(foreign)[0:2] == ("active", 0)
 
 
 def test_company_and_run_lifecycle_fields_are_not_changed() -> None:

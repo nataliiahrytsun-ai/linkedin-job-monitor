@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from scraping.sources.base import SourceAdapter, SourceCompany, SourceError
+from scraping.sources.base import SourceAdapter, SourceConfiguration, SourceError
 from scraping.sources.fixture import FixtureSourceAdapter
 from scraping.sources.lever import LeverSourceAdapter
 
@@ -39,9 +39,9 @@ def user_selectable_source_keys() -> tuple[str, ...]:
     )
 
 
-def get_source_adapter(company: SourceCompany) -> SourceAdapter:
-    """Return the registered adapter for ``company.source``."""
-    source_key = normalize_source_key(company.source)
+def get_source_adapter(source_configuration: SourceConfiguration) -> SourceAdapter:
+    """Return the registered adapter for a persisted source configuration."""
+    source_key = normalize_source_key(source_configuration.source)
     try:
         factory = _ADAPTER_FACTORIES[source_key]
     except KeyError as error:

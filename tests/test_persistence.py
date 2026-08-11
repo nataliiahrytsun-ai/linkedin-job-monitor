@@ -14,8 +14,11 @@ from scraping.persistence import (
     IdentityConflictError,
     PersistenceConstraintError,
     PersistenceOutcome,
+    PersistenceResult,
     PersistenceValidationError,
-    persist_job_posting,
+)
+from scraping.persistence import (
+    persist_job_posting as persist_source_job,
 )
 
 
@@ -43,7 +46,33 @@ def model(name: str) -> Any:
 
 
 def create_company(*, name: str = "Example", source: str = "feed") -> Any:
-    return model("companies.Company").objects.create(name=name, source=source)
+    company = model("companies.Company").objects.create(name=name, source=source)
+    model("companies.CompanySource").objects.create(
+        company=company,
+        source=source,
+        approval_status="approved",
+        is_active=True,
+    )
+    return company
+
+
+def persist_job_posting(
+    *, company: Any, job: NormalizedJobPosting, seen_at: datetime
+) -> PersistenceResult:
+    if company.pk is None:
+        company_source = model("companies.CompanySource")(
+            company=company,
+            source=company.source,
+            approval_status="approved",
+            is_active=True,
+        )
+    else:
+        company_source = company.sources.get()
+    return persist_source_job(
+        company_source=company_source,
+        job=job,
+        seen_at=seen_at,
+    )
 
 
 def normalized_job(**overrides: object) -> NormalizedJobPosting:
@@ -81,6 +110,7 @@ def test_create_new_job_sets_identity_content_and_seen_timestamps() -> None:
     assert result.outcome is PersistenceOutcome.CREATED
     assert model("jobs.JobPosting").objects.count() == 1
     assert stored.company.pk == company.pk
+    assert stored.company_source.pk == company.sources.get().pk
     assert stored.source == "feed"
     assert stored.source_job_id == "job-1"
     assert stored.title == "Delivery Manager"
@@ -287,6 +317,116 @@ def test_same_source_job_id_is_independent_between_companies() -> None:
     assert model("jobs.JobPosting").objects.count() == 2
 
 
+def test_same_source_job_id_is_independent_between_sources_of_one_company() -> None:
+    company = create_company(source="feed")
+    first_source = company.sources.get()
+    second_source = model("companies.CompanySource").objects.create(
+        company=company,
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/example",
+        approval_status="approved",
+        is_active=True,
+    )
+
+    first = persist_source_job(
+        company_source=first_source,
+        job=normalized_job(source="feed", source_job_id="shared-id"),
+        seen_at=observed_at(),
+    )
+    second = persist_source_job(
+        company_source=second_source,
+        job=normalized_job(source="lever", source_job_id="shared-id"),
+        seen_at=observed_at(),
+    )
+
+    assert first.job_posting.pk != second.job_posting.pk
+    assert first.job_posting.company_id == second.job_posting.company_id == company.pk
+    assert first.job_posting.company_source.pk == first_source.pk
+    assert second.job_posting.company_source.pk == second_source.pk
+    assert model("jobs.JobPosting").objects.count() == 2
+
+
+def test_same_title_and_url_are_not_deduplicated_across_company_sources() -> None:
+    company = create_company(source="feed")
+    first_source = company.sources.get()
+    second_source = model("companies.CompanySource").objects.create(
+        company=company,
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/example",
+        approval_status="approved",
+        is_active=True,
+    )
+
+    first = persist_source_job(
+        company_source=first_source,
+        job=normalized_job(source="feed", source_job_id=None),
+        seen_at=observed_at(),
+    )
+    second = persist_source_job(
+        company_source=second_source,
+        job=normalized_job(source="lever", source_job_id=None),
+        seen_at=observed_at(),
+    )
+
+    assert first.job_posting.pk != second.job_posting.pk
+    assert model("jobs.JobPosting").objects.count() == 2
+
+
+def test_update_in_one_company_source_does_not_modify_the_other_source() -> None:
+    company = create_company(source="feed")
+    first_source = company.sources.get()
+    second_source = model("companies.CompanySource").objects.create(
+        company=company,
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/example",
+        approval_status="approved",
+        is_active=True,
+    )
+    first = persist_source_job(
+        company_source=first_source,
+        job=normalized_job(source="feed", source_job_id="shared-id"),
+        seen_at=observed_at(),
+    ).job_posting
+    second = persist_source_job(
+        company_source=second_source,
+        job=normalized_job(source="lever", source_job_id="shared-id"),
+        seen_at=observed_at(),
+    ).job_posting
+
+    result = persist_source_job(
+        company_source=first_source,
+        job=normalized_job(
+            source="feed",
+            source_job_id="shared-id",
+            title="Updated only in feed",
+        ),
+        seen_at=observed_at(11),
+    )
+
+    second.refresh_from_db()
+    assert result.outcome is PersistenceOutcome.UPDATED
+    assert result.job_posting.pk == first.pk
+    assert result.job_posting.title == "Updated only in feed"
+    assert second.title == "Delivery Manager"
+    assert second.last_seen_at == observed_at()
+
+
+def test_in_memory_company_source_ownership_mismatch_is_rejected() -> None:
+    first_company = create_company(name="First")
+    second_company = create_company(name="Second")
+    source = first_company.sources.get()
+    source.company = second_company
+
+    with pytest.raises(PersistenceValidationError, match="persisted ownership"):
+        persist_source_job(
+            company_source=source,
+            job=normalized_job(),
+            seen_at=observed_at(),
+        )
+
+    assert model("jobs.JobPosting").objects.count() == 0
+
+
 def test_different_sources_are_not_mixed() -> None:
     first_company = create_company(name="One", source="feed_one")
     second_company = create_company(name="Two", source="feed_two")
@@ -309,7 +449,7 @@ def test_different_sources_are_not_mixed() -> None:
 def test_company_source_mismatch_is_rejected() -> None:
     company = create_company(source="feed")
 
-    with pytest.raises(PersistenceValidationError, match="match company.source"):
+    with pytest.raises(PersistenceValidationError, match="match company_source.source"):
         persist_job_posting(
             company=company,
             job=normalized_job(source="other"),
@@ -349,6 +489,7 @@ def test_constraint_error_rolls_back_identity_upgrade() -> None:
     colliding_key = compute_dedupe_key(incoming)
     model("jobs.JobPosting").objects.create(
         company=company,
+        company_source=company.sources.get(),
         source="feed",
         source_job_id="other-id",
         source_job_url="https://jobs.example.com/other",

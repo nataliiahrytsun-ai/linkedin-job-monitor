@@ -176,7 +176,7 @@ differences, and session reuse across multiple target requests.
 ## 5. Lever production adapter
 
 `LeverSourceAdapter` is the current production use of Scrapling. It receives a
-source-neutral Company object, validates a URL of the form
+CompanySource configuration, validates a URL of the form
 `https://jobs.lever.co/<site>`, derives the site slug, and requests Lever's
 public postings API with `mode=json`, a bounded `limit`, and an offset `skip`.
 It maps each response to the shared `SourceRecord` contract and returns one
@@ -351,10 +351,10 @@ additional live run or production use.
 
 ## 9. Extension path
 
-- **New Lever company:** store `source="lever"` and a validated public URL in
-  the form `https://jobs.lever.co/<site>`. The shared pipeline uses the
-  registered production adapter; no source-specific UI or persistence branch
-  is required.
+- **New Lever company:** configure a CompanySource with `source="lever"` and a
+  validated public URL in the form `https://jobs.lever.co/<site>`. The shared
+  pipeline uses the one registered production adapter; a separate adapter per
+  Company is not required.
 - **Another approved platform:** implement the shared adapter contract with its
   own URL validation, fetching policy, fixtures, and field mapping; register it
   explicitly as user-selectable only when it is a production source. Keep

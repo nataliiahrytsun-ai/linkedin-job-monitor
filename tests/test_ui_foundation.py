@@ -40,17 +40,26 @@ def model(name: str) -> Any:
 
 def company(*, name: str, is_active: bool = True) -> Any:
     slug = name.casefold().replace(" ", "-")
-    return model("companies.Company").objects.create(
+    company_record = model("companies.Company").objects.create(
         name=name,
         source="fixture",
         source_jobs_url=f"https://jobs.example.test/{slug}/openings",
         is_active=is_active,
     )
+    model("companies.CompanySource").objects.create(
+        company=company_record,
+        source=company_record.source,
+        source_jobs_url=company_record.source_jobs_url,
+        approval_status="approved",
+        is_active=True,
+    )
+    return company_record
 
 
 def job(company_record: Any, *, sequence: int, status: str) -> Any:
     return model("jobs.JobPosting").objects.create(
         company=company_record,
+        company_source=company_record.sources.get(),
         source="fixture",
         source_job_id=f"dashboard-job-{sequence}",
         title=f"Dashboard job {sequence}",
@@ -74,6 +83,7 @@ def scrape_run(
     )
     return model("scrape_runs.ScrapeRun").objects.create(
         company=company_record,
+        company_source=company_record.sources.get(),
         status=status,
         started_at=started_at,
         finished_at=resolved_finished_at,
