@@ -13,6 +13,7 @@ from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from django.db import OperationalError  # type: ignore[import-untyped]
 
 from scraping.background import (
     BackgroundCompanyNotSavedError,
@@ -122,9 +123,11 @@ def test_import_does_not_start_worker_thread() -> None:
 
 def test_default_and_explicit_worker_limits_are_accepted() -> None:
     default_executor = ControlledBackgroundExecutor()
-    explicit_executor = ControlledBackgroundExecutor(max_workers=2)
+    explicit_executor = ControlledBackgroundExecutor(max_workers=1)
     try:
         assert default_executor is not explicit_executor
+        assert default_executor.max_workers == 2
+        assert explicit_executor.max_workers == 1
     finally:
         default_executor.shutdown()
         explicit_executor.shutdown()
@@ -1084,3 +1087,276 @@ def test_source_failure_does_not_rollback_other_source_success(
     assert model("jobs.JobPosting").objects.get().company_source_id == success_source.pk
     company_record.refresh_from_db()
     assert company_record.last_scrape_status == "failed"
+
+
+def test_two_source_runs_overlap_with_two_running_dashboard_runs_and_reconcile_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company(name="Concurrent Source Company")
+    company_record.sources.all().delete()
+    first_source = add_company_source(
+        company_record,
+        source="concurrent-one",
+        source_jobs_url="https://jobs.example.test/concurrent/one",
+    )
+    second_source = add_company_source(
+        company_record,
+        source="concurrent-two",
+        source_jobs_url="https://jobs.example.test/concurrent/two",
+    )
+    phase = 1
+    reached_fetch = threading.Barrier(3)
+    release_fetch = threading.Event()
+
+    class ConcurrentAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            reached_fetch.wait(timeout=5)
+            if not release_fetch.wait(timeout=5):
+                raise TimeoutError("test did not release concurrent fetches")
+            if phase == 2 and company.pk == first_source.pk:
+                return SourceBatch(records=(), requests_made=1)
+            return SourceBatch(
+                records=(
+                    {
+                        "source": company.source,
+                        "source_job_id": f"job-{company.pk}",
+                        "title": f"Job for {company.source}",
+                    },
+                ),
+                requests_made=1,
+            )
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "concurrent-one", ConcurrentAdapter)
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "concurrent-two", ConcurrentAdapter)
+
+    executor = ControlledBackgroundExecutor(max_workers=2, clock=IncrementingClock())
+    try:
+        first_submission = executor.submit_company(company=company_record)
+        reached_fetch.wait(timeout=5)
+        assert model("scrape_runs.ScrapeRun").objects.filter(status="running").count() == 2
+
+        client = importlib.import_module("django.test").Client()
+        dashboard = client.get("/", HTTP_HOST="localhost")
+        assert dashboard.status_code == 200
+        dashboard_html = dashboard.content.decode()
+        assert "Running now" in dashboard_html
+        assert (
+            '<p class="dashboard-run-value dashboard-metric-value">2</p>'
+            in dashboard_html
+        )
+
+        release_fetch.set()
+        first_results = [
+            handle.future.result(timeout=10) for handle in first_submission.submitted
+        ]
+        assert [result.jobs_created for result in first_results] == [1, 1]
+
+        phase = 2
+        reached_fetch = threading.Barrier(3)
+        release_fetch = threading.Event()
+        second_submission = executor.submit_company(company=company_record)
+        reached_fetch.wait(timeout=5)
+        release_fetch.set()
+        second_results = [
+            handle.future.result(timeout=10) for handle in second_submission.submitted
+        ]
+    finally:
+        release_fetch.set()
+        executor.shutdown()
+
+    jobs = {
+        job.company_source_id: job
+        for job in model("jobs.JobPosting").objects.filter(company=company_record)
+    }
+    assert set(jobs) == {first_source.pk, second_source.pk}
+    assert jobs[first_source.pk].consecutive_successful_misses == 1
+    assert jobs[second_source.pk].consecutive_successful_misses == 0
+    assert [result.scrape_run.status for result in second_results] == ["success", "success"]
+    company_record.refresh_from_db()
+    assert company_record.last_scrape_status == "success"
+    finished_times = [result.scrape_run.finished_at for result in second_results]
+    assert all(finished_time is not None for finished_time in finished_times)
+    assert company_record.last_scraped_at == max(
+        cast(datetime, finished_time) for finished_time in finished_times
+    )
+
+
+def test_one_failed_concurrent_run_does_not_break_the_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company(name="Concurrent Failure Company")
+    company_record.sources.all().delete()
+    good_source = add_company_source(
+        company_record,
+        source="concurrent-good",
+        source_jobs_url="https://jobs.example.test/concurrent/good",
+    )
+    bad_source = add_company_source(
+        company_record,
+        source="concurrent-bad",
+        source_jobs_url="https://jobs.example.test/concurrent/bad",
+    )
+    reached_fetch = threading.Barrier(2)
+
+    class GoodAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            reached_fetch.wait(timeout=5)
+            return SourceBatch(
+                records=(
+                    {
+                        "source": company.source,
+                        "source_job_id": "good-job",
+                        "title": "Good job",
+                    },
+                ),
+                requests_made=1,
+            )
+
+    class BadAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            del company
+            reached_fetch.wait(timeout=5)
+            raise SourceError("synthetic concurrent failure", requests_made=2)
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "concurrent-good", GoodAdapter)
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "concurrent-bad", BadAdapter)
+
+    with ControlledBackgroundExecutor(max_workers=2, clock=IncrementingClock()) as executor:
+        submission = executor.submit_company(company=company_record)
+        outcomes: dict[int, str] = {}
+        for handle in submission.submitted:
+            try:
+                handle.future.result(timeout=10)
+            except FixturePipelineError:
+                outcomes[handle.company_source_id] = "failed"
+            else:
+                outcomes[handle.company_source_id] = "success"
+
+    assert outcomes == {good_source.pk: "success", bad_source.pk: "failed"}
+    assert model("jobs.JobPosting").objects.get().company_source_id == good_source.pk
+
+
+def test_sqlite_lock_error_finalizes_the_affected_run_as_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company(name="SQLite Lock Company")
+    source = company_record.sources.get()
+    pipeline = importlib.import_module("scraping.pipeline")
+    original_finish = pipeline.finish_scrape_run
+    failed_finalization_attempts = 0
+
+    def locked_persistence(**kwargs: object) -> object:
+        del kwargs
+        raise OperationalError("database is locked")
+
+    def transiently_locked_finish(**kwargs: Any) -> Any:
+        nonlocal failed_finalization_attempts
+        if kwargs["status"] == "failed":
+            failed_finalization_attempts += 1
+            if failed_finalization_attempts == 1:
+                raise OperationalError("database is locked")
+        return original_finish(**kwargs)
+
+    monkeypatch.setattr("scraping.pipeline.persist_job_posting", locked_persistence)
+    monkeypatch.setattr("scraping.pipeline.finish_scrape_run", transiently_locked_finish)
+
+    with ControlledBackgroundExecutor(max_workers=2, clock=IncrementingClock()) as executor:
+        handle = executor.submit_source(company_source=source)
+        with pytest.raises(FixturePipelineError) as captured:
+            handle.future.result(timeout=10)
+
+    failed_run = model("scrape_runs.ScrapeRun").objects.get(pk=captured.value.scrape_run.pk)
+    assert failed_run.status == "failed"
+    assert failed_run.finished_at is not None
+    assert failed_run.error_message == "Source pipeline failed: OperationalError"
+    assert failed_finalization_attempts == 2
+    assert not model("scrape_runs.ScrapeRun").objects.filter(status="running").exists()
+
+
+def test_two_workers_each_close_their_own_old_connections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company(name="Connection Lifecycle Company")
+    first_source = company_record.sources.get()
+    second_source = add_company_source(
+        company_record,
+        source_jobs_url="https://jobs.example.test/connection/second",
+    )
+    reached_worker = threading.Barrier(2)
+    close_calls: list[int] = []
+    close_calls_lock = threading.Lock()
+    sentinel = cast(FixturePipelineResult, object())
+
+    def record_close() -> None:
+        with close_calls_lock:
+            close_calls.append(threading.get_ident())
+
+    def overlap_worker(**kwargs: object) -> FixturePipelineResult:
+        del kwargs
+        reached_worker.wait(timeout=5)
+        return sentinel
+
+    monkeypatch.setattr("scraping.background.close_old_connections", record_close)
+    monkeypatch.setattr("scraping.background.run_source_pipeline", overlap_worker)
+
+    with ControlledBackgroundExecutor(max_workers=2) as executor:
+        handles = (
+            executor.submit_source(company_source=first_source),
+            executor.submit_source(company_source=second_source),
+        )
+        assert [handle.future.result(timeout=5) for handle in handles] == [sentinel, sentinel]
+
+    main_thread_id = threading.get_ident()
+    worker_thread_ids = set(close_calls)
+    assert main_thread_id not in worker_thread_ids
+    assert len(worker_thread_ids) == 2
+    assert all(close_calls.count(thread_id) == 2 for thread_id in worker_thread_ids)
+
+
+def test_offline_darwinbox_and_http_sources_can_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company(name="Darwinbox Coexistence Company")
+    company_record.sources.all().delete()
+    darwinbox_source = add_company_source(
+        company_record,
+        source="darwinbox",
+        source_jobs_url="https://tenant.darwinbox.com/ms/candidate/careers",
+    )
+    http_source = add_company_source(
+        company_record,
+        source="offline-http",
+        source_jobs_url="https://jobs.example.test/offline-http",
+    )
+    reached_fetch = threading.Barrier(3)
+    release_fetch = threading.Event()
+
+    class OfflineAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            reached_fetch.wait(timeout=5)
+            if not release_fetch.wait(timeout=5):
+                raise TimeoutError("test did not release offline adapters")
+            return SourceBatch(records=(), requests_made=1)
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "darwinbox", OfflineAdapter)
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "offline-http", OfflineAdapter)
+
+    executor = ControlledBackgroundExecutor(max_workers=2, clock=IncrementingClock())
+    try:
+        submission = executor.submit_company(company=company_record)
+        reached_fetch.wait(timeout=5)
+        assert set(submission.submitted_source_ids) == {
+            darwinbox_source.pk,
+            http_source.pk,
+        }
+        release_fetch.set()
+        assert all(
+            handle.future.result(timeout=10).scrape_run.status == "success"
+            for handle in submission.submitted
+        )
+    finally:
+        release_fetch.set()
+        executor.shutdown()

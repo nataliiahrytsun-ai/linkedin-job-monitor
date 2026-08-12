@@ -1,5 +1,6 @@
 """Server-rendered company management views."""
 
+from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
@@ -26,7 +27,9 @@ from scraping.sources.registry import (
     user_selectable_source_keys,
 )
 
-background_executor = ControlledBackgroundExecutor()
+background_executor = ControlledBackgroundExecutor(
+    max_workers=settings.JOB_MONITOR_BACKGROUND_MAX_WORKERS
+)
 
 
 def _manage_sources_url(company_pk: int) -> str:

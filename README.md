@@ -60,6 +60,16 @@ Tests use an isolated temporary database and offline HTTP fakes/fixtures. They
 must not use the repository's working `db.sqlite3` or make live job-board
 requests.
 
+### Background concurrency
+
+`JOB_MONITOR_BACKGROUND_MAX_WORKERS` controls source-run concurrency and
+defaults to the SQLite-safe project limit of `2`; set it to `1` for sequential
+execution. Values above `2` are rejected. `JOB_MONITOR_SQLITE_TIMEOUT_SECONDS`
+controls SQLite's busy timeout and defaults to `30`. Fetch work may overlap,
+while the short persistence/reconciliation write phase is serialized in the
+process. Each worker closes stale Django connections before and after its task;
+SQLite WAL mode is not enabled.
+
 ## Architecture
 
 The source-owned production flow is:

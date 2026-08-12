@@ -3,7 +3,40 @@
 from __future__ import annotations
 
 import os
+from math import isfinite
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
+
+
+def _bounded_int_setting(
+    name: str,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw_value = os.environ.get(name, str(default))
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise ImproperlyConfigured(f"{name} must be an integer") from error
+    if not minimum <= value <= maximum:
+        raise ImproperlyConfigured(
+            f"{name} must be between {minimum} and {maximum}"
+        )
+    return value
+
+
+def _positive_float_setting(name: str, *, default: float) -> float:
+    raw_value = os.environ.get(name, str(default))
+    try:
+        value = float(raw_value)
+    except ValueError as error:
+        raise ImproperlyConfigured(f"{name} must be a number") from error
+    if not isfinite(value) or value <= 0:
+        raise ImproperlyConfigured(f"{name} must be greater than zero")
+    return value
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -56,11 +89,24 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        "OPTIONS": {
+            "timeout": _positive_float_setting(
+                "JOB_MONITOR_SQLITE_TIMEOUT_SECONDS",
+                default=30.0,
+            ),
+        },
     }
 }
 database_override = os.environ.get("JOB_MONITOR_SQLITE_PATH")
 if database_override:
     DATABASES["default"]["NAME"] = Path(database_override)
+
+JOB_MONITOR_BACKGROUND_MAX_WORKERS = _bounded_int_setting(
+    "JOB_MONITOR_BACKGROUND_MAX_WORKERS",
+    default=2,
+    minimum=1,
+    maximum=2,
+)
 
 fixture_path_override = os.environ.get("JOB_MONITOR_FIXTURE_PATH")
 JOB_MONITOR_FIXTURE_PATH = (

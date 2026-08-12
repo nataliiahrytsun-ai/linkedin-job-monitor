@@ -10,6 +10,7 @@ from typing import Any, Protocol, cast
 from django.apps import apps  # type: ignore[import-untyped]
 from django.db import IntegrityError, transaction  # type: ignore[import-untyped]
 
+from scraping.db_concurrency import database_write_guard
 from scraping.sources.base import SourceError
 from scraping.sources.resolution import resolve_legacy_company_source
 
@@ -203,7 +204,7 @@ def recompute_company_scrape_state(*, company_id: int) -> None:
     """Race-safely refresh Company status/timestamp from source-level runs."""
     if type(company_id) is not int or company_id < 1:
         raise CompanyNotSavedError("company_id must identify a saved company")
-    with transaction.atomic():
+    with database_write_guard(), transaction.atomic():
         try:
             stored_company = _company_model().objects.select_for_update().get(pk=company_id)
         except _company_model().DoesNotExist as error:
@@ -234,7 +235,7 @@ def start_scrape_run(
         raise CompanyNotSavedError("provide company_source or legacy company, not both")
 
     try:
-        with transaction.atomic():
+        with database_write_guard(), transaction.atomic():
             stored_source = _validated_company_source(company_source)
             stored_company = (
                 _company_model().objects.select_for_update().get(pk=stored_source.company_id)
@@ -363,7 +364,7 @@ def finish_scrape_run(
     normalized_error = _validated_error_message(terminal_status, error_message)
 
     try:
-        with transaction.atomic():
+        with database_write_guard(), transaction.atomic():
             stored_run = _validated_stored_run(scrape_run)
             if stored_run.status != "running":
                 raise InvalidRunTransitionError("only a RUNNING scrape run can be finished")

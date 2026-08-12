@@ -106,7 +106,7 @@ class ControlledBackgroundExecutor:
     def __init__(
         self,
         *,
-        max_workers: int = 1,
+        max_workers: int = 2,
         clock: Callable[[], datetime] = timezone.now,
     ) -> None:
         if type(max_workers) is not int or max_workers < 1:
@@ -119,6 +119,7 @@ class ControlledBackgroundExecutor:
             max_workers=max_workers,
             thread_name_prefix="source-pipeline",
         )
+        self.max_workers = max_workers
         self._clock = clock
         self._lock = Lock()
         self._active: dict[int, Future[PipelineResult] | None] = {}

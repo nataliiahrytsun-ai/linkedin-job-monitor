@@ -6,11 +6,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from time import sleep
 from typing import Literal, Protocol, cast
 
-from django.db import transaction  # type: ignore[import-untyped]
+from django.db import (  # type: ignore[import-untyped]
+    OperationalError,
+    close_old_connections,
+    connection,
+    transaction,
+)
 from django.utils import timezone  # type: ignore[import-untyped]
 
+from scraping.db_concurrency import database_write_guard
 from scraping.normalization import NormalizedJobPosting, normalize_job_posting
 from scraping.persistence import (
     JobPersistenceError,
@@ -54,6 +61,8 @@ _NORMALIZATION_FIELDS = frozenset(
         "source_job_url",
     }
 )
+_SQLITE_FAILED_RUN_FINALIZATION_ATTEMPTS = 3
+_SQLITE_FAILED_RUN_RETRY_DELAY_SECONDS = 0.05
 
 
 class CompanyRecord(Protocol):
@@ -223,6 +232,42 @@ def _safe_failure_message(error: Exception) -> str:
     return f"Source pipeline failed: {type(error).__name__}"
 
 
+def _is_sqlite_lock_error(error: OperationalError) -> bool:
+    message = str(error).lower()
+    return connection.vendor == "sqlite" and (
+        "database is locked" in message or "database table is locked" in message
+    )
+
+
+def _finish_failed_run(
+    *,
+    scrape_run: ScrapeRunRecord,
+    finished_at: datetime,
+    requests_made: int,
+    error_message: str,
+) -> ScrapeRunRecord:
+    """Retry only terminal FAILED persistence after transient SQLite locks."""
+    for attempt in range(_SQLITE_FAILED_RUN_FINALIZATION_ATTEMPTS):
+        try:
+            return finish_scrape_run(
+                scrape_run=scrape_run,
+                status=TerminalRunStatus.FAILED,
+                finished_at=finished_at,
+                jobs_found=0,
+                jobs_created=0,
+                jobs_updated=0,
+                requests_made=requests_made,
+                error_message=error_message,
+            )
+        except OperationalError as finalization_error:
+            final_attempt = attempt + 1 == _SQLITE_FAILED_RUN_FINALIZATION_ATTEMPTS
+            if final_attempt or not _is_sqlite_lock_error(finalization_error):
+                raise
+            close_old_connections()
+            sleep(_SQLITE_FAILED_RUN_RETRY_DELAY_SECONDS)
+    raise AssertionError("unreachable failed-run finalization state")
+
+
 def _process_record(
     *,
     company_source: CompanySourceRecord,
@@ -324,7 +369,9 @@ def run_source_pipeline(
         batch = adapter.fetch(company=company_source)
         requests_made = batch.requests_made
         records = batch.records
-        with transaction.atomic():
+        # Fetching is deliberately complete before this short, SQLite-serialized
+        # persistence/reconciliation phase.
+        with database_write_guard(), transaction.atomic():
             seen_job_ids: list[int] = []
             jobs_created = 0
             jobs_updated = 0
@@ -425,13 +472,9 @@ def run_source_pipeline(
             name="finished_at",
             started_at=resolved_started_at,
         )
-        failed_run = finish_scrape_run(
+        failed_run = _finish_failed_run(
             scrape_run=scrape_run,
-            status=TerminalRunStatus.FAILED,
             finished_at=failure_finished_at,
-            jobs_found=0,
-            jobs_created=0,
-            jobs_updated=0,
             requests_made=requests_made,
             error_message=_safe_failure_message(error),
         )

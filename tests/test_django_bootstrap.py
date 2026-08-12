@@ -53,6 +53,8 @@ def test_django_settings_import_and_configuration(tmp_path: Path) -> None:
         "assert set(settings.INSTALLED_APPS) >= expected; "
         "assert settings.DATABASES['default']['ENGINE'] == "
         "'django.db.backends.sqlite3'; "
+        "assert settings.DATABASES['default']['OPTIONS']['timeout'] == 30.0; "
+        "assert settings.JOB_MONITOR_BACKGROUND_MAX_WORKERS == 2; "
         "configured=Path(settings.DATABASES['default']['NAME']).resolve(); "
         f"temporary=Path({str(database_path)!r}).resolve(); "
         f"working=Path({str(WORKING_DATABASE_PATH)!r}).resolve(); "
@@ -63,6 +65,46 @@ def test_django_settings_import_and_configuration(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert not database_path.exists()
+
+
+def test_concurrency_settings_accept_safe_overrides(tmp_path: Path) -> None:
+    environment = _isolated_environment(tmp_path / "settings-overrides.sqlite3")
+    environment["JOB_MONITOR_BACKGROUND_MAX_WORKERS"] = "1"
+    environment["JOB_MONITOR_SQLITE_TIMEOUT_SECONDS"] = "12.5"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from django.conf import settings; "
+                "assert settings.JOB_MONITOR_BACKGROUND_MAX_WORKERS == 1; "
+                "assert settings.DATABASES['default']['OPTIONS']['timeout'] == 12.5"
+            ),
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_worker_setting_rejects_more_than_two(tmp_path: Path) -> None:
+    environment = _isolated_environment(tmp_path / "settings-invalid.sqlite3")
+    environment["JOB_MONITOR_BACKGROUND_MAX_WORKERS"] = "3"
+    result = subprocess.run(
+        [sys.executable, "-c", "from django.conf import settings; settings.DATABASES"],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "JOB_MONITOR_BACKGROUND_MAX_WORKERS must be between 1 and 2" in result.stderr
 
 
 def test_django_setup_succeeds(tmp_path: Path) -> None:
