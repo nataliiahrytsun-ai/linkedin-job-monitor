@@ -1,6 +1,7 @@
 """Server-rendered project-level pages and dashboard actions."""
 
 from django.contrib import messages
+from django.db.models import Count, F, Q
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
@@ -69,17 +70,21 @@ def _monitoring_batch_banner(request: HttpRequest) -> dict[str, str] | None:
 
 def home(request: HttpRequest) -> HttpResponse:
     """Render the monitoring dashboard from persisted aggregate data."""
-    completed_statuses = (
-        ScrapeRun.Status.SUCCESS,
-        ScrapeRun.Status.PARTIAL,
-        ScrapeRun.Status.FAILED,
+    review_counts = JobPosting.objects.aggregate(
+        new_jobs=Count(
+            "pk",
+            filter=Q(last_reviewed_content_hash__isnull=True),
+        ),
+        updated_jobs=Count(
+            "pk",
+            filter=(
+                Q(last_reviewed_content_hash__isnull=False)
+                & ~Q(last_reviewed_content_hash=F("content_hash"))
+            ),
+        ),
     )
-    latest_completed_jobs_created = (
-        ScrapeRun.objects.filter(status__in=completed_statuses)
-        .order_by("-finished_at", "-pk")
-        .values_list("jobs_created", flat=True)
-        .first()
-    )
+    new_jobs = review_counts["new_jobs"]
+    updated_jobs = review_counts["updated_jobs"]
     latest_successful_run = (
         ScrapeRun.objects.filter(status=ScrapeRun.Status.SUCCESS)
         .order_by("-finished_at", "-pk")
@@ -108,7 +113,9 @@ def home(request: HttpRequest) -> HttpResponse:
             "active_jobs": JobPosting.objects.filter(
                 status=JobPosting.Status.ACTIVE
             ).count(),
-            "new_jobs": latest_completed_jobs_created or 0,
+            "new_jobs": new_jobs,
+            "updated_jobs": updated_jobs,
+            "unreviewed_jobs": new_jobs + updated_jobs,
             "latest_successful_run": latest_successful_run,
             "running_runs": len(running_run_ids),
             "running_run_ids": running_run_ids,

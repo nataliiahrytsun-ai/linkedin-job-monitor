@@ -115,6 +115,7 @@ def test_create_new_job_sets_identity_content_and_seen_timestamps() -> None:
     assert stored.source_job_id == "job-1"
     assert stored.title == "Delivery Manager"
     assert stored.content_hash == compute_content_hash(job)
+    assert stored.last_reviewed_content_hash is None
     assert stored.dedupe_key == compute_dedupe_key(job)
     assert stored.status == "active"
     assert stored.first_seen_at == observed_at()
@@ -134,6 +135,93 @@ def test_repeated_identical_job_is_unchanged_without_duplicate() -> None:
     assert second.job_posting.first_seen_at == observed_at()
     assert second.job_posting.last_seen_at == observed_at(11)
     assert model("jobs.JobPosting").objects.count() == 1
+
+
+def test_review_hash_tracks_meaningful_changes_but_not_unchanged_scrapes() -> None:
+    company = create_company()
+    original_job = normalized_job()
+    created = persist_job_posting(
+        company=company,
+        job=original_job,
+        seen_at=observed_at(),
+    ).job_posting
+    model("jobs.JobPosting").objects.filter(pk=created.pk).update(
+        last_reviewed_content_hash=created.content_hash
+    )
+
+    unchanged = persist_job_posting(
+        company=company,
+        job=original_job,
+        seen_at=observed_at(11),
+    )
+    unchanged.job_posting.refresh_from_db()
+
+    assert unchanged.outcome is PersistenceOutcome.UNCHANGED
+    assert (
+        unchanged.job_posting.last_reviewed_content_hash
+        == unchanged.job_posting.content_hash
+    )
+
+    changed = persist_job_posting(
+        company=company,
+        job=normalized_job(description="Meaningfully changed responsibilities."),
+        seen_at=observed_at(12),
+    )
+    changed.job_posting.refresh_from_db()
+
+    assert changed.outcome is PersistenceOutcome.UPDATED
+    assert changed.job_posting.last_reviewed_content_hash == created.content_hash
+    assert changed.job_posting.last_reviewed_content_hash != changed.job_posting.content_hash
+
+
+def test_unreviewed_new_job_remains_new_after_content_change() -> None:
+    company = create_company()
+    created = persist_job_posting(
+        company=company,
+        job=normalized_job(),
+        seen_at=observed_at(),
+    )
+    changed = persist_job_posting(
+        company=company,
+        job=normalized_job(title="Changed before review"),
+        seen_at=observed_at(11),
+    )
+
+    assert created.outcome is PersistenceOutcome.CREATED
+    assert changed.outcome is PersistenceOutcome.UPDATED
+    assert changed.job_posting.last_reviewed_content_hash is None
+
+
+def test_review_state_is_independent_for_two_company_sources() -> None:
+    company = create_company()
+    first_source = company.sources.get()
+    second_source = model("companies.CompanySource").objects.create(
+        company=company,
+        source="feed",
+        source_jobs_url="https://jobs.example.test/second-source",
+        approval_status="approved",
+        is_active=True,
+    )
+    normalized = normalized_job()
+    first = persist_source_job(
+        company_source=first_source,
+        job=normalized,
+        seen_at=observed_at(),
+    ).job_posting
+    second = persist_source_job(
+        company_source=second_source,
+        job=normalized,
+        seen_at=observed_at(),
+    ).job_posting
+
+    model("jobs.JobPosting").objects.filter(pk=first.pk).update(
+        last_reviewed_content_hash=first.content_hash
+    )
+    first.refresh_from_db()
+    second.refresh_from_db()
+
+    assert first.last_reviewed_content_hash == first.content_hash
+    assert second.last_reviewed_content_hash is None
 
 
 def test_meaningful_content_change_updates_all_content_but_not_first_seen() -> None:

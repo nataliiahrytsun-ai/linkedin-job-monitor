@@ -65,6 +65,12 @@ class JobPosting(models.Model):
     description = models.TextField(null=True, blank=True, default=None)
     source_job_url = models.URLField(max_length=2048, null=True, blank=True, default=None)
     content_hash = models.CharField(max_length=64)
+    last_reviewed_content_hash = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        default=None,
+    )
     status = models.CharField(
         max_length=16,
         choices=Status,

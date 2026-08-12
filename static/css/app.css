@@ -259,6 +259,20 @@ h3 {
   text-align: right;
 }
 
+.dashboard-review-metric {
+  flex: none;
+  text-align: right;
+}
+
+.dashboard-review-breakdown {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .dashboard-metric-link .dashboard-metric-value {
   display: inline-flex;
   align-items: center;
@@ -383,6 +397,34 @@ h3 {
   color: #475467;
   font-size: 0.75rem;
   font-weight: 700;
+}
+
+.job-title-with-review {
+  display: contents;
+}
+
+.review-badge {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.12rem 0.42rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  vertical-align: 0.08em;
+}
+
+.review-new {
+  background: #ecfdf3;
+  border-color: #abefc6;
+  color: #067647;
+}
+
+.review-updated {
+  background: #eff8ff;
+  border-color: #b2ddff;
+  color: #175cd3;
 }
 
 .messages {
@@ -1448,7 +1490,6 @@ h3 {
 }
 
 .job-position-cell {
-  max-width: 22rem;
   overflow-wrap: anywhere;
 }
 
@@ -1577,7 +1618,6 @@ h3 {
 
 .global-jobs-table {
   min-width: 0;
-  table-layout: fixed;
   font-size: 0.9rem;
 }
 
@@ -1610,23 +1650,48 @@ h3 {
 }
 
 @media (min-width: 40.01rem) {
-  .global-jobs-table thead th:first-child {
-    width: 22%;
+  .jobs-table,
+  .global-jobs-table {
+    table-layout: fixed;
   }
 
-  .global-jobs-table thead th:nth-child(2),
-  .global-jobs-table thead th:nth-child(3),
-  .global-jobs-table thead th:nth-child(5),
-  .global-jobs-table thead th:nth-child(6) {
+  .company-job-col-position {
+    width: 31%;
+  }
+
+  .company-job-col-location {
+    width: 23%;
+  }
+
+  .company-job-col-country,
+  .company-job-col-published {
+    width: 16%;
+  }
+
+  .company-job-col-status {
     width: 14%;
   }
 
-  .global-jobs-table thead th:nth-child(4) {
-    width: 11.5%;
+  .global-job-col-position {
+    width: 28%;
   }
 
-  .global-jobs-table thead th:last-child {
-    width: 10.5%;
+  .global-job-col-company {
+    width: 16%;
+  }
+
+  .global-job-col-location {
+    width: 18%;
+  }
+
+  .global-job-col-country,
+  .global-job-col-published,
+  .global-job-col-first-seen {
+    width: 10%;
+  }
+
+  .global-job-col-status {
+    width: 8%;
   }
 
   .global-jobs-table .column-header {
@@ -1642,22 +1707,23 @@ h3 {
   .global-job-position {
     min-width: 0;
     max-width: none;
-    overflow: hidden;
-    overflow-wrap: normal;
+    overflow-wrap: anywhere;
   }
 
   .global-job-title {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
   }
 
-  .global-job-company,
+  .job-location-cell,
   .global-job-location {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .global-job-company {
+    overflow: hidden;
+    overflow-wrap: anywhere;
   }
 }
 

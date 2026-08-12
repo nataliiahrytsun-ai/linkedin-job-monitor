@@ -481,6 +481,10 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
     jobs_table_start = html.index('<table class="data-table jobs-table">')
     jobs_table_end = html.index("</table>", jobs_table_start)
     jobs_html = html[jobs_table_start:jobs_table_end]
+    assert '<colgroup class="company-jobs-columns">' in jobs_html
+    for column in ("position", "location", "country", "published", "status"):
+        assert f'class="company-job-col-{column}"' in jobs_html
+    assert 'class="job-location-cell" title="Vienna">Vienna</td>' in jobs_html
     assert jobs_html.count('<th scope="col">') == 5
     assert "Original job link" not in jobs_html
     assert ">Open</a>" not in jobs_html
@@ -493,6 +497,26 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
     assert 'class="status-badge">CLOSED</span>' in jobs_html
     assert 'class="status-badge status-active">NOT_FOUND</span>' not in jobs_html
     assert 'class="status-badge status-active">CLOSED</span>' not in jobs_html
+
+
+def test_company_jobs_table_has_stable_desktop_column_proportions() -> None:
+    stylesheet = (
+        Path(__file__).resolve().parents[1] / "static" / "css" / "app.css"
+    ).read_text(encoding="utf-8")
+
+    assert """.company-job-col-position {
+    width: 31%;
+  }""" in stylesheet
+    assert """.company-job-col-location {
+    width: 23%;
+  }""" in stylesheet
+    assert """.company-job-col-country,
+  .company-job-col-published {
+    width: 16%;
+  }""" in stylesheet
+    assert """.company-job-col-status {
+    width: 14%;
+  }""" in stylesheet
 
 
 @pytest.mark.parametrize(
@@ -517,6 +541,36 @@ def test_company_detail_filters_jobs_by_supported_fields(
 
     assert response.status_code == 200
     assert list(response.context["jobs"]) == [postings[expected_key]]
+
+
+def test_company_detail_shows_review_badges_and_filters_review_state() -> None:
+    company = create_company(name="Company Review State")
+    new_job = create_job(company, title="Company New")
+    updated_job = create_job(
+        company,
+        title="Company Updated",
+        last_reviewed_content_hash="f" * 64,
+    )
+    reviewed_job = create_job(company, title="Company Reviewed")
+    reviewed_job.last_reviewed_content_hash = reviewed_job.content_hash
+    reviewed_job.save(update_fields=("last_reviewed_content_hash",))
+
+    all_html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+    ).content.decode()
+    updated_html = client().get(
+        reverse("companies:detail", args=(company.pk,)),
+        {"review_state": "updated"},
+    ).content.decode()
+
+    assert '<span class="review-badge review-new">NEW</span>' in all_html
+    assert '<span class="review-badge review-updated">UPDATED</span>' in all_html
+    assert "Company New" in all_html
+    assert "Company Updated" in updated_html
+    assert "Company New" not in updated_html
+    assert "Company Reviewed" not in updated_html
+    assert new_job.last_reviewed_content_hash is None
+    assert updated_job.last_reviewed_content_hash != updated_job.content_hash
 
 
 def test_company_detail_combines_filters_without_leaking_other_company_jobs() -> None:
@@ -603,6 +657,7 @@ def test_company_detail_filter_ui_reuses_column_popovers_and_clean_company_url()
         "published_from",
         "published_to",
         "status",
+        "review_state",
     ):
         assert filter_form.count(f'name="{field_name}"') == 1
     for excluded_name in (

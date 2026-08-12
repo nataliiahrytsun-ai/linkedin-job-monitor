@@ -46,6 +46,16 @@ class JobFilterForm(forms.Form):
             (JobPosting.Status.CLOSED.value, "Closed"),
         ),
     )
+    review_state = forms.ChoiceField(
+        label="Review state",
+        required=False,
+        choices=(
+            ("", "All"),
+            ("unreviewed", "Unreviewed"),
+            ("new", "New"),
+            ("updated", "Updated"),
+        ),
+    )
     workplace_type = forms.ChoiceField(
         label="Workplace",
         required=False,

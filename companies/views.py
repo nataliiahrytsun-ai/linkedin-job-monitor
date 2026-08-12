@@ -14,6 +14,7 @@ from companies.forms import CompanyForm, CompanySourceForm, validate_source_conf
 from companies.models import Company, CompanySource
 from jobs.forms import CompanyJobFilterForm
 from jobs.models import JobPosting
+from jobs.review import annotate_review_state
 from jobs.views import _apply_filters
 from scrape_runs.models import ScrapeRun
 from scraping.background import (
@@ -75,7 +76,7 @@ def company_detail(
     if filter_form.is_bound:
         filter_form.is_valid()
         jobs = _apply_filters(jobs, filter_form.cleaned_data)
-    jobs = jobs.order_by("-last_seen_at", "-pk")
+    jobs = annotate_review_state(jobs).order_by("-last_seen_at", "-pk")
     active_job_count = company.job_postings.filter(
         status=JobPosting.Status.ACTIVE
     ).count()

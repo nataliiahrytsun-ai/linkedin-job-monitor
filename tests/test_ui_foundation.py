@@ -126,7 +126,7 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         for label in (
             "Monitored companies",
             "Active jobs",
-            "New jobs",
+            "New &amp; updated",
             "Latest successful run",
             "Running now",
             "Failed runs",
@@ -149,18 +149,20 @@ class HomePageTests(TestCase):  # type: ignore[misc]
             'class="card dashboard-primary-metric dashboard-metric-link" href="/companies/"' in html
         )
         assert 'class="card dashboard-primary-metric dashboard-metric-link" href="/jobs/"' in html
+        assert (
+            'class="card dashboard-primary-metric dashboard-metric-link" '
+            'href="/jobs/?review_state=unreviewed"' in html
+        )
         assert "Companies →" not in html
         assert "Jobs →" not in html
-        assert html.count("dashboard-metric-link") == 3
-        assert html.count("dashboard-metric-arrow") == 3
-        assert html.count(">\u203a</span>") == 3
+        assert html.count("dashboard-metric-link") == 4
+        assert html.count("dashboard-metric-arrow") == 4
+        assert html.count(">\u203a</span>") == 4
         assert ">→</span>" not in html
         assert html.count('class="card dashboard-run-metric') == 3
         assert 'class="card dashboard-run-card"' not in html
-        assert (
-            '<article class="card dashboard-primary-metric">\n'
-            '        <h2 class="dashboard-metric-label">New jobs</h2>' in html
-        )
+        assert '<h2 class="dashboard-metric-label">New &amp; updated</h2>' in html
+        assert '<p class="dashboard-review-breakdown">0 new · 0 updated</p>' in html
         assert f'action="{reverse("update_all")}" method="post"' in html
         assert 'type="submit">Update all</button>' in html
         assert 'href="/scrape-runs/">Scrape runs</a>' in html
@@ -211,6 +213,8 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         assert response.context["monitored_companies"] == 0
         assert response.context["active_jobs"] == 0
         assert response.context["new_jobs"] == 0
+        assert response.context["updated_jobs"] == 0
+        assert response.context["unreviewed_jobs"] == 0
         assert response.context["latest_successful_run"] is None
         assert response.context["running_runs"] == 0
         assert response.context["failed_runs"] == 0
@@ -374,41 +378,35 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         assert 'id="scrape-run-polling"' not in terminal_html
         assert 'src="/static/js/scrape_run_polling.js"' not in terminal_html
 
-    def test_new_jobs_uses_latest_completed_partial_then_failed_not_running(self) -> None:
-        employer = company(name="Latest Completed")
-        base_time = datetime(2026, 8, 9, 8, tzinfo=UTC)
-        scrape_run(
-            employer,
-            status="success",
-            started_at=base_time,
-            jobs_created=2,
+    def test_new_and_updated_card_counts_current_unreviewed_jobs_and_links_filter(
+        self,
+    ) -> None:
+        employer = company(name="Review Dashboard")
+        new_job = job(employer, sequence=1, status="active")
+        updated_job = job(employer, sequence=2, status="active")
+        updated_job.last_reviewed_content_hash = "f" * 64
+        updated_job.save(update_fields=("last_reviewed_content_hash",))
+        reviewed_job = job(employer, sequence=3, status="active")
+        reviewed_job.last_reviewed_content_hash = reviewed_job.content_hash
+        reviewed_job.save(update_fields=("last_reviewed_content_hash",))
+
+        response = self.client.get("/")
+        html = response.content.decode()
+
+        assert response.context["new_jobs"] == 1
+        assert response.context["updated_jobs"] == 1
+        assert response.context["unreviewed_jobs"] == 2
+        assert "New &amp; updated" in html
+        assert '<p class="dashboard-review-breakdown">1 new · 1 updated</p>' in html
+        assert 'href="/jobs/?review_state=unreviewed"' in html
+        filtered = self.client.get(
+            reverse("jobs:list"),
+            {"review_state": "unreviewed"},
         )
-        scrape_run(
-            employer,
-            status="partial",
-            started_at=base_time + timedelta(hours=1),
-            jobs_created=4,
-        )
-        scrape_run(
-            employer,
-            status="running",
-            started_at=base_time + timedelta(hours=3),
-        )
-
-        partial_latest = self.client.get("/")
-
-        assert partial_latest.context["new_jobs"] == 4
-
-        scrape_run(
-            employer,
-            status="failed",
-            started_at=base_time + timedelta(hours=2),
-            jobs_created=1,
-        )
-
-        failed_latest = self.client.get("/")
-
-        assert failed_latest.context["new_jobs"] == 1
+        assert {stored.pk for stored in filtered.context["jobs"]} == {
+            new_job.pk,
+            updated_job.pk,
+        }
 
     def test_latest_success_ignores_newer_partial_failed_and_running_runs(self) -> None:
         successful_company = company(name="Successful Company")

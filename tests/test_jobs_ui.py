@@ -152,6 +152,45 @@ def test_single_value_filters(
     assert rendered_titles(response) == [expected_title]
 
 
+def test_review_badges_and_all_unreviewed_new_updated_filters() -> None:
+    employer = company(name="Review Filters", sequence=1)
+    new_job = job(employer, sequence=1, title="New Role")
+    updated_job = job(
+        employer,
+        sequence=2,
+        title="Updated Role",
+        last_reviewed_content_hash="f" * 64,
+    )
+    reviewed_job = job(employer, sequence=3, title="Reviewed Role")
+    reviewed_job.last_reviewed_content_hash = reviewed_job.content_hash
+    reviewed_job.save(update_fields=("last_reviewed_content_hash",))
+
+    all_response = client().get(reverse("jobs:list"))
+    unreviewed = client().get(reverse("jobs:list"), {"review_state": "unreviewed"})
+    new_only = client().get(reverse("jobs:list"), {"review_state": "new"})
+    updated_only = client().get(reverse("jobs:list"), {"review_state": "updated"})
+    html = all_response.content.decode()
+
+    assert rendered_titles(all_response) == ["Reviewed Role", "Updated Role", "New Role"]
+    assert rendered_titles(unreviewed) == ["Updated Role", "New Role"]
+    assert rendered_titles(new_only) == ["New Role"]
+    assert rendered_titles(updated_only) == ["Updated Role"]
+    assert '<span class="review-badge review-new">NEW</span>' in html
+    assert '<span class="review-badge review-updated">UPDATED</span>' in html
+    assert html.count('class="review-badge') == 2
+    assert new_job.last_reviewed_content_hash is None
+    assert updated_job.last_reviewed_content_hash != updated_job.content_hash
+    for value, label in (
+        ("", "All"),
+        ("unreviewed", "Unreviewed"),
+        ("new", "New"),
+        ("updated", "Updated"),
+    ):
+        assert f'<option value="{value}">{label}</option>' in html or (
+            value == "" and f'<option value="" selected>{label}</option>' in html
+        )
+
+
 def test_publication_date_from_and_to_filters() -> None:
     employer = company(name="Dates", sequence=1)
     job(employer, sequence=1, title="Early")
@@ -284,6 +323,7 @@ def test_per_column_filters_share_one_form_and_clear_targets_clean_url() -> None
         "first_seen_from",
         "first_seen_to",
         "status",
+        "review_state",
     ):
         assert filter_form.count(f'name="{field_name}"') == 1
     assert filter_form.count(">Apply</button>") == 2
@@ -504,6 +544,52 @@ def test_job_detail_displays_stored_fields_and_related_links() -> None:
     assert f'href="{reverse("jobs:list")}">← Back to jobs</a>' in html
 
 
+def test_opening_job_detail_clears_new_then_updated_badges() -> None:
+    employer = company(name="Review Detail", sequence=1)
+    posting = job(employer, sequence=1, title="Review Me")
+    list_url = reverse("jobs:list")
+    detail_url = reverse("jobs:detail", kwargs={"pk": posting.pk})
+
+    assert '<span class="review-badge review-new">NEW</span>' in (
+        client().get(list_url).content.decode()
+    )
+
+    assert client().get(detail_url).status_code == 200
+    posting.refresh_from_db()
+    assert posting.last_reviewed_content_hash == posting.content_hash
+    reviewed_html = client().get(list_url).content.decode()
+    assert "review-new" not in reviewed_html
+    assert "review-updated" not in reviewed_html
+
+    previous_hash = posting.content_hash
+    model("jobs.JobPosting").objects.filter(pk=posting.pk).update(
+        content_hash="e" * 64
+    )
+    updated_html = client().get(list_url).content.decode()
+    assert '<span class="review-badge review-updated">UPDATED</span>' in updated_html
+
+    assert client().get(detail_url).status_code == 200
+    posting.refresh_from_db()
+    assert posting.last_reviewed_content_hash == posting.content_hash
+    assert posting.last_reviewed_content_hash != previous_hash
+    assert "review-updated" not in client().get(list_url).content.decode()
+
+
+def test_conditional_review_does_not_acknowledge_concurrent_content_change() -> None:
+    review = importlib.import_module("jobs.review")
+    employer = company(name="Concurrent Review", sequence=1)
+    stale_job = job(employer, sequence=1)
+    new_hash = "d" * 64
+    model("jobs.JobPosting").objects.filter(pk=stale_job.pk).update(
+        content_hash=new_hash
+    )
+
+    assert review.mark_job_reviewed(stale_job) is False
+    stale_job.refresh_from_db()
+    assert stale_job.content_hash == new_hash
+    assert stale_job.last_reviewed_content_hash is None
+
+
 def test_job_detail_handles_null_values_and_empty_description() -> None:
     employer = company(name="Optional Detail", sequence=1)
     posting = job(
@@ -660,7 +746,7 @@ def test_job_detail_returns_404_for_unknown_pk() -> None:
     assert response.status_code == 404
 
 
-def test_job_detail_fetches_job_and_company_in_one_query() -> None:
+def test_job_detail_fetches_job_and_marks_exact_content_reviewed_in_two_queries() -> None:
     employer = company(name="Query Detail", sequence=1)
     posting = job(employer, sequence=1)
     connection = importlib.import_module("django.db").connection
@@ -672,31 +758,62 @@ def test_job_detail_fetches_job_and_company_in_one_query() -> None:
         response = client().get(reverse("jobs:detail", kwargs={"pk": posting.pk}))
 
     assert response.status_code == 200
-    assert len(queries) == 1
+    assert len(queries) == 2
 
 
-def test_desktop_jobs_table_gives_position_space_from_status_column() -> None:
+def test_global_jobs_table_has_stable_desktop_columns_and_location_tooltip() -> None:
+    employer = company(name="Stable Columns", sequence=1)
+    posting = job(
+        employer,
+        sequence=1,
+        location="Vienna, Lower Austria, Austria",
+    )
+    html = client().get(reverse("jobs:list")).content.decode()
     stylesheet = (
         Path(__file__).resolve().parents[1] / "static" / "css" / "app.css"
     ).read_text(encoding="utf-8")
 
-    assert """.global-jobs-table thead th:first-child {
-    width: 22%;
+    assert '<colgroup class="global-jobs-columns">' in html
+    for column in (
+        "position",
+        "company",
+        "location",
+        "country",
+        "published",
+        "first-seen",
+        "status",
+    ):
+        assert f'class="global-job-col-{column}"' in html
+    assert (
+        f'class="global-job-location" title="{posting.location}">{posting.location}</td>'
+        in html
+    )
+    assert """.jobs-table,
+  .global-jobs-table {
+    table-layout: fixed;
   }""" in stylesheet
-    assert """.global-jobs-table thead th:nth-child(2),
-  .global-jobs-table thead th:nth-child(3),
-  .global-jobs-table thead th:nth-child(5),
-  .global-jobs-table thead th:nth-child(6) {
-    width: 14%;
+    assert """.global-job-col-position {
+    width: 28%;
   }""" in stylesheet
-    assert """.global-jobs-table thead th:nth-child(4) {
-    width: 11.5%;
+    assert """.global-job-col-company {
+    width: 16%;
   }""" in stylesheet
-    assert """.global-jobs-table thead th:last-child {
-    width: 10.5%;
+    assert """.global-job-col-location {
+    width: 18%;
+  }""" in stylesheet
+    assert """.global-job-col-country,
+  .global-job-col-published,
+  .global-job-col-first-seen {
+    width: 10%;
+  }""" in stylesheet
+    assert """.global-job-col-status {
+    width: 8%;
   }""" in stylesheet
     assert """.global-job-title {
-    display: block;
+    white-space: normal;
+  }""" in stylesheet
+    assert """.job-location-cell,
+  .global-job-location {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -705,6 +822,18 @@ def test_desktop_jobs_table_gives_position_space_from_status_column() -> None:
     min-width: 0;
     white-space: nowrap;
   }""" in stylesheet
+
+
+def test_review_badge_does_not_make_job_title_a_shrinkable_flex_item() -> None:
+    stylesheet = (
+        Path(__file__).resolve().parents[1] / "static" / "css" / "app.css"
+    ).read_text(encoding="utf-8")
+
+    assert ".job-title-with-review {\n  display: contents;\n}" in stylesheet
+    assert ".job-title-with-review a {" not in stylesheet
+    assert ".review-badge {\n  display: inline-block;" in stylesheet
+    assert ".job-title-with-review {\n  min-width: 0;" not in stylesheet
+    assert "display: flex;\n  align-items: center;\n  gap: 0.45rem;" not in stylesheet
 
 
 def test_jobs_overview_uses_bounded_queries_without_company_n_plus_one() -> None:

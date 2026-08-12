@@ -284,10 +284,15 @@ def test_first_successful_miss_keeps_active_job_active() -> None:
 def test_second_successful_miss_marks_active_job_not_found() -> None:
     company_record = company()
     unseen = job(company_record, 1, misses=1)
+    model("jobs.JobPosting").objects.filter(pk=unseen.pk).update(
+        last_reviewed_content_hash=unseen.content_hash
+    )
 
     result = reconcile(terminal_run(company_record), [])
 
     assert snapshot(unseen)[0:2] == ("not_found", 2)
+    unseen.refresh_from_db()
+    assert unseen.last_reviewed_content_hash == unseen.content_hash
     assert result.jobs_marked_not_found == 1
 
 

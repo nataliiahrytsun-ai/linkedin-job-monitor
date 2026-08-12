@@ -12,6 +12,7 @@ from companies.models import Company
 from jobs.description import sanitize_job_description
 from jobs.forms import JobFilterForm
 from jobs.models import JobPosting
+from jobs.review import annotate_review_state, filter_by_review_state, mark_job_reviewed
 
 
 def _apply_filters(
@@ -31,6 +32,7 @@ def _apply_filters(
         jobs = jobs.filter(status=status)
     if workplace_type := cleaned_data.get("workplace_type"):
         jobs = jobs.filter(workplace_type=workplace_type)
+    jobs = filter_by_review_state(jobs, cleaned_data.get("review_state"))
     if published_from := cleaned_data.get("published_from"):
         jobs = jobs.filter(published_at__date__gte=published_from)
     if published_to := cleaned_data.get("published_to"):
@@ -70,7 +72,9 @@ def job_list(request: HttpRequest) -> HttpResponse:
     if form.is_bound:
         form.is_valid()
         jobs = _apply_filters(jobs, form.cleaned_data)
-    jobs = jobs.order_by("-published_at", "-first_seen_at", "-pk")
+    jobs = annotate_review_state(jobs).order_by(
+        "-published_at", "-first_seen_at", "-pk"
+    )
 
     return render(
         request,
@@ -89,7 +93,7 @@ def job_detail(request: HttpRequest, pk: int) -> HttpResponse:
         JobPosting.objects.select_related("company"),
         pk=pk,
     )
-    return render(
+    response = render(
         request,
         "jobs/job_detail.html",
         {
@@ -97,3 +101,5 @@ def job_detail(request: HttpRequest, pk: int) -> HttpResponse:
             "job_description_html": sanitize_job_description(job.description),
         },
     )
+    mark_job_reviewed(job)
+    return response

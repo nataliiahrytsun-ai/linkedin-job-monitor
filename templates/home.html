@@ -35,10 +35,15 @@
           {{ active_jobs }}<span class="dashboard-metric-arrow" aria-hidden="true">›</span>
         </p>
       </a>
-      <article class="card dashboard-primary-metric">
-        <h2 class="dashboard-metric-label">New jobs</h2>
-        <p class="dashboard-primary-value dashboard-metric-value">{{ new_jobs }}</p>
-      </article>
+      <a class="card dashboard-primary-metric dashboard-metric-link" href="{% url 'jobs:list' %}?review_state=unreviewed">
+        <h2 class="dashboard-metric-label">New &amp; updated</h2>
+        <div class="dashboard-review-metric">
+          <p class="dashboard-primary-value dashboard-metric-value">
+            {{ unreviewed_jobs }}<span class="dashboard-metric-arrow" aria-hidden="true">›</span>
+          </p>
+          <p class="dashboard-review-breakdown">{{ new_jobs }} new · {{ updated_jobs }} updated</p>
+        </div>
+      </a>
     </section>
 
     <section class="dashboard-run-section" aria-labelledby="run-status-heading">

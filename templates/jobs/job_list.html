@@ -26,17 +26,28 @@
       {% if jobs or has_any_jobs %}
         <div class="table-scroll global-jobs-table-container">
           <table class="data-table global-jobs-table">
+            <colgroup class="global-jobs-columns">
+              <col class="global-job-col-position">
+              <col class="global-job-col-company">
+              <col class="global-job-col-location">
+              <col class="global-job-col-country">
+              <col class="global-job-col-published">
+              <col class="global-job-col-first-seen">
+              <col class="global-job-col-status">
+            </colgroup>
             <thead>
               <tr>
                 <th scope="col">
                   <div class="column-header">
                     <span>Position</span>
-                    <details class="column-filter{% if filter_form.q.value %} column-filter-active{% endif %}">
+                    <details class="column-filter{% if filter_form.q.value or filter_form.review_state.value %} column-filter-active{% endif %}">
                       <summary aria-label="Filter position">▾</summary>
                       <div class="column-filter-popover">
                         <label for="{{ filter_form.q.id_for_label }}">{{ filter_form.q.label }}</label>
                         {{ filter_form.q }}
                         {% if filter_form.q.errors %}<div class="field-errors">{{ filter_form.q.errors }}</div>{% endif %}
+                        <label for="{{ filter_form.review_state.id_for_label }}">{{ filter_form.review_state.label }}</label>
+                        {{ filter_form.review_state }}
                         <div class="column-filter-actions">
                           <button class="button button-primary column-filter-apply" type="submit">Apply</button>
                         </div>
@@ -137,10 +148,17 @@
               {% for job in jobs %}
                 <tr>
                   <th class="global-job-position" scope="row">
-                    <a class="global-job-title" href="{% url 'jobs:detail' job.pk %}" title="{{ job.title|default:'—' }}">{{ job.title|default:"—" }}</a>
+                    <div class="job-title-with-review">
+                      <a class="global-job-title" href="{% url 'jobs:detail' job.pk %}" title="{{ job.title|default:'—' }}">{{ job.title|default:"—" }}</a>
+                      {% if job.review_state == "new" %}
+                        <span class="review-badge review-new">NEW</span>
+                      {% elif job.review_state == "updated" %}
+                        <span class="review-badge review-updated">UPDATED</span>
+                      {% endif %}
+                    </div>
                   </th>
                   <td class="global-job-company">{{ job.company.name }}</td>
-                  <td class="global-job-location">{{ job.location|default:"—" }}</td>
+                  <td class="global-job-location" title="{{ job.location|default:'—' }}">{{ job.location|default:"—" }}</td>
                   <td class="global-job-country">{{ job.country|default:"—" }}</td>
                   <td class="global-job-published">
                     {% if job.published_at %}{{ job.published_at|date:"Y-m-d" }}{% else %}—{% endif %}

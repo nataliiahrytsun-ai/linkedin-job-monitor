@@ -66,6 +66,7 @@ class JobPostingRecord(Protocol):
     description: str | None
     source_job_url: str | None
     content_hash: str
+    last_reviewed_content_hash: str | None
     status: str
     first_seen_at: datetime
     last_seen_at: datetime
