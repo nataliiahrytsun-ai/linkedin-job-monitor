@@ -1128,7 +1128,13 @@ def test_create_source_options_come_from_user_selectable_registry_api() -> None:
     assert ("darwinbox", "Darwinbox") in tuple(source_field.choices)
     assert ("jazzhr", "JazzHR") in tuple(source_field.choices)
     assert all(value != "fixture" for value, _label in source_field.choices)
-    assert response.context["form"].unavailable_source_choices == ()
+    assert response.context["form"].unavailable_source_choices == (
+        (
+            "LinkedIn",
+            "Technical adapter ready · Production disabled · "
+            "Requires approved LinkedIn access",
+        ),
+    )
     assert "is_active" not in response.context["form"].fields
 
 
@@ -1342,8 +1348,18 @@ def test_company_detail_add_source_dialog_is_compact_and_registry_driven() -> No
     assert '<option value="darwinbox">Darwinbox</option>' in add_dialog
     assert '<option value="jazzhr">JazzHR</option>' in add_dialog
     assert '<option value="lever">Lever</option>' in add_dialog
+    assert (
+        '<option value="linkedin" disabled>LinkedIn — Production disabled</option>'
+        in add_dialog
+    )
     assert "Fixture" not in add_dialog
     assert "JazzHR" in add_dialog
+    assert "LinkedIn" in add_dialog
+    assert "Technical adapter ready" in add_dialog
+    assert "Production disabled" in add_dialog
+    assert "Requires approved LinkedIn access" in add_dialog
+    assert "Unsupported" not in add_dialog
+    assert 'class="help-text source-option-disabled" aria-disabled="true"' in add_dialog
     assert 'name="source"' in add_dialog
     assert 'name="source_jobs_url"' in add_dialog
     assert "Jobs URL" in add_dialog
@@ -1395,10 +1411,20 @@ def test_add_source_uses_registry_choices_and_creates_approved_active_lever() ->
     assert '<option value="lever">Lever</option>' in html
     assert '<option value="darwinbox">Darwinbox</option>' in html
     assert '<option value="jazzhr">JazzHR</option>' in html
+    assert (
+        '<option value="linkedin" disabled>LinkedIn — Production disabled</option>'
+        in html
+    )
     assert "Darwinbox" in html
     assert "Live access unavailable" not in html
     assert "Fixture" not in html
     assert "JazzHR" in html
+    assert "LinkedIn" in html
+    assert "Technical adapter ready" in html
+    assert "Production disabled" in html
+    assert "Requires approved LinkedIn access" in html
+    assert "Unsupported" not in html
+    assert 'class="help-text source-option-disabled" aria-disabled="true"' in html
     response = client().post(add_url, valid_source_data())
 
     assert response.status_code == 302
@@ -1690,6 +1716,37 @@ def test_unregistered_approved_source_cannot_be_activated() -> None:
     )
 
     assert response.status_code == 302
+    source.refresh_from_db()
+    assert source.is_active is False
+
+
+def test_linkedin_cannot_be_created_or_activated_by_crafted_post() -> None:
+    company = model("companies.Company").objects.create(name="LinkedIn Disabled")
+    add_url = reverse("companies:source_create", args=(company.pk,))
+
+    create_response = client().post(
+        add_url,
+        valid_source_data(
+            source="linkedin",
+            source_jobs_url="https://www.linkedin.com/jobs/example-jobs?f_C=16691",
+        ),
+    )
+
+    assert create_response.status_code == 200
+    assert "source" in create_response.context["form"].errors
+    assert company.sources.count() == 0
+
+    source = company.sources.create(
+        source="linkedin",
+        source_jobs_url="https://www.linkedin.com/jobs/example-jobs?f_C=16691",
+        approval_status="approved",
+        is_active=False,
+    )
+    activate_response = client().post(
+        reverse("companies:source_toggle_active", args=(company.pk, source.pk))
+    )
+
+    assert activate_response.status_code == 302
     source.refresh_from_db()
     assert source.is_active is False
 

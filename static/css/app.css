@@ -1769,6 +1769,14 @@ h3 {
   font-size: 0.9rem;
 }
 
+.source-option-disabled {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: #f2f4f7;
+  opacity: 0.78;
+}
+
 .field-errors,
 .form-errors {
   margin-top: 0.4rem;

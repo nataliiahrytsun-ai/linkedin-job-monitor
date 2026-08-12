@@ -24,10 +24,35 @@ class SourceChoiceField(forms.ChoiceField):  # type: ignore[misc]
         return normalize_source_key(super().to_python(value))
 
 
+class SourceSelect(forms.Select):  # type: ignore[misc]
+    """Render catalog-only sources without making them valid field choices."""
+
+    def optgroups(
+        self,
+        name: str,
+        value: list[str],
+        attrs: dict[str, Any] | None = None,
+    ) -> list[tuple[str | None, list[dict[str, Any]], int]]:
+        groups = super().optgroups(name, value, attrs)
+        index = len(groups)
+        linkedin_option = self.create_option(
+            name,
+            "linkedin",
+            "LinkedIn — Production disabled",
+            False,
+            index,
+        )
+        linkedin_option["attrs"]["disabled"] = True
+        groups.append((None, [linkedin_option], index))
+        return groups
+
+
 def source_label(source_key: str) -> str:
     """Build a readable label without duplicating the registry's source list."""
     if source_key == "jazzhr":
         return "JazzHR"
+    if source_key == "linkedin":
+        return "LinkedIn"
     return source_key.replace("_", " ").replace("-", " ").title()
 
 
@@ -102,6 +127,7 @@ class CompanySourceForm(forms.ModelForm):
         label="Source",
         choices=(),
         help_text="The platform is immutable after this source is created.",
+        widget=SourceSelect,
     )
     source_jobs_url = forms.URLField(
         label="Jobs URL",

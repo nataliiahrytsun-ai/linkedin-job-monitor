@@ -26,10 +26,15 @@ _ADAPTER_FACTORIES: dict[str, Callable[[], SourceAdapter]] = {
     "jazzhr": JazzHRSourceAdapter,
     "lever": LeverSourceAdapter,
 }
-_USER_VISIBLE_SOURCE_KEYS = frozenset({"darwinbox", "jazzhr", "lever"})
+_USER_VISIBLE_SOURCE_KEYS = frozenset({"darwinbox", "jazzhr", "lever", "linkedin"})
 _USER_SELECTABLE_SOURCE_KEYS = frozenset({"darwinbox", "jazzhr", "lever"})
 _EXECUTION_BLOCKED_SOURCE_KEYS: frozenset[str] = frozenset()
-_SOURCE_UNAVAILABILITY_MESSAGES: dict[str, str] = {}
+_SOURCE_UNAVAILABILITY_MESSAGES: dict[str, str] = {
+    "linkedin": (
+        "Technical adapter ready · Production disabled · "
+        "Requires approved LinkedIn access"
+    ),
+}
 
 
 def registered_source_keys() -> tuple[str, ...]:
@@ -47,12 +52,8 @@ def user_selectable_source_keys() -> tuple[str, ...]:
 
 
 def user_visible_source_keys() -> tuple[str, ...]:
-    """Return registered sources that should be explained in source-management UI."""
-    return tuple(
-        source_key
-        for source_key in registered_source_keys()
-        if source_key in _USER_VISIBLE_SOURCE_KEYS
-    )
+    """Return executable and catalog-only sources explained in source management."""
+    return tuple(sorted(_USER_VISIBLE_SOURCE_KEYS))
 
 
 def executable_source_keys() -> tuple[str, ...]:

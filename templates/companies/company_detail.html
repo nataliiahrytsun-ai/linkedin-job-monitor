@@ -186,7 +186,7 @@
             {{ add_source_form.source }}
             {% if add_source_form.source.errors %}<div class="field-errors" role="alert">{{ add_source_form.source.errors }}</div>{% endif %}
             {% for source_label, availability_message in add_source_form.unavailable_source_choices %}
-              <p class="help-text"><strong>{{ source_label }}</strong> — {{ availability_message }}</p>
+              <p class="help-text source-option-disabled" aria-disabled="true"><strong>{{ source_label }}</strong> — {{ availability_message }}</p>
             {% endfor %}
           </div>
           <div class="form-field{% if add_source_form.source_jobs_url.errors %} form-field-error{% endif %}">

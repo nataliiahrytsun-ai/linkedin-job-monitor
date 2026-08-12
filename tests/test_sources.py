@@ -119,6 +119,25 @@ def test_registry_distinguishes_registered_and_user_selectable_sources() -> None
     assert set(executable_keys) <= set(registered_keys)
 
 
+def test_linkedin_is_visible_but_not_registered_selectable_or_executable() -> None:
+    assert "linkedin" in user_visible_source_keys()
+    assert "linkedin" not in registered_source_keys()
+    assert "linkedin" not in user_selectable_source_keys()
+    assert "linkedin" not in executable_source_keys()
+    assert source_unavailability_message(" LiNkEdIn ") == (
+        "Technical adapter ready · Production disabled · "
+        "Requires approved LinkedIn access"
+    )
+
+    with pytest.raises(UnknownSourceError, match="linkedin"):
+        get_source_adapter(
+            CompanyStub(
+                source="linkedin",
+                source_jobs_url="https://www.linkedin.com/jobs/example-jobs",
+            )
+        )
+
+
 def test_registry_rejects_unknown_source_safely() -> None:
     with pytest.raises(UnknownSourceError, match="not-permitted") as caught:
         get_source_adapter(CompanyStub(source=" Not-Permitted "))
