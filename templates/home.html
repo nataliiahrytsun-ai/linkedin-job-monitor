@@ -4,6 +4,11 @@
 {% block title %}Dashboard · Job Monitor{% endblock %}
 
 {% block content %}
+  {% if monitoring_batch_banner %}
+    <div class="messages dashboard-shell" aria-label="Messages" role="status" aria-live="polite">
+      <p class="message message-{{ monitoring_batch_banner.level }}">{{ monitoring_batch_banner.message }}</p>
+    </div>
+  {% endif %}
   <div class="dashboard-shell">
     <div class="page-heading dashboard-heading">
       <div>
@@ -69,7 +74,7 @@
     </section>
   </div>
 
-  {% if running_run_ids %}
+  {% if running_run_ids or monitoring_batch_banner %}
     {{ running_run_ids|json_script:"running-run-ids" }}
     {{ latest_run_state|json_script:"latest-run-state" }}
     <div id="scrape-run-polling" data-status-url="{% url 'scrape_runs:status' %}" data-interval-ms="5000"></div>

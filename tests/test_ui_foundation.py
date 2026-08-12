@@ -95,12 +95,13 @@ def scrape_run(
     started_at: datetime,
     jobs_created: int = 0,
     finished_at: datetime | None = None,
+    company_source: Any | None = None,
 ) -> Any:
     terminal = status != "running"
     resolved_finished_at = finished_at or (started_at + timedelta(minutes=1) if terminal else None)
     return model("scrape_runs.ScrapeRun").objects.create(
         company=company_record,
-        company_source=company_record.sources.get(),
+        company_source=company_source or company_record.sources.get(),
         status=status,
         started_at=started_at,
         finished_at=resolved_finished_at,
@@ -447,6 +448,124 @@ class HomePageTests(TestCase):  # type: ignore[misc]
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class DashboardUpdateAllTests(TestCase):  # type: ignore[misc]
+    def test_monitoring_banner_persists_while_submitted_batch_is_queued_or_running(
+        self,
+    ) -> None:
+        company_record = company(name="Persistent Batch")
+        source = company_record.sources.get()
+        with patch(
+            "job_monitor.views.background_executor.submit_company",
+            return_value=company_submission(company_record),
+        ):
+            response = self.client.post(reverse("update_all"))
+
+        queued_dashboard = self.client.get(response.url)
+        repeated_queued_dashboard = self.client.get(response.url)
+        running = scrape_run(
+            company_record,
+            company_source=source,
+            status="running",
+            started_at=datetime(2026, 8, 12, 9, tzinfo=UTC),
+        )
+        running_dashboard = self.client.get(response.url)
+
+        for dashboard in (
+            queued_dashboard,
+            repeated_queued_dashboard,
+            running_dashboard,
+        ):
+            assert b"Monitoring started for 1 source." in dashboard.content
+            assert 'class="message message-success"' in dashboard.content.decode()
+            assert 'id="scrape-run-polling"' in dashboard.content.decode()
+        assert running_dashboard.context["running_run_ids"] == [running.pk]
+
+    def test_monitoring_banner_persists_across_multiple_concurrent_runs(self) -> None:
+        company_record = company(name="Concurrent Batch")
+        first_source = company_record.sources.get()
+        second_source = model("companies.CompanySource").objects.create(
+            company=company_record,
+            source="fixture",
+            source_jobs_url="https://jobs.example.test/concurrent-batch/secondary",
+            approval_status="approved",
+            is_active=True,
+        )
+        submission = type(
+            "Submission",
+            (),
+            {
+                "submitted_source_ids": (first_source.pk, second_source.pk),
+                "already_running_source_ids": (),
+                "failed_source_ids": (),
+            },
+        )()
+        with patch(
+            "job_monitor.views.background_executor.submit_company",
+            return_value=submission,
+        ):
+            response = self.client.post(reverse("update_all"))
+
+        started_at = datetime(2026, 8, 12, 10, tzinfo=UTC)
+        first_run = scrape_run(
+            company_record,
+            company_source=first_source,
+            status="running",
+            started_at=started_at,
+        )
+        scrape_run(
+            company_record,
+            company_source=second_source,
+            status="running",
+            started_at=started_at,
+        )
+        both_running = self.client.get(response.url)
+
+        first_run.status = "success"
+        first_run.finished_at = started_at + timedelta(minutes=1)
+        first_run.duration_seconds = Decimal("60.000")
+        first_run.save(update_fields=("status", "finished_at", "duration_seconds"))
+        one_running = self.client.get(response.url)
+
+        assert both_running.context["running_runs"] == 2
+        assert one_running.context["running_runs"] == 1
+        assert b"Monitoring started for 2 sources." in both_running.content
+        assert b"Monitoring started for 2 sources." in one_running.content
+
+    def test_monitoring_banner_disappears_after_every_batch_run_is_terminal(
+        self,
+    ) -> None:
+        company_record = company(name="Completed Batch")
+        with patch(
+            "job_monitor.views.background_executor.submit_company",
+            return_value=company_submission(company_record),
+        ):
+            response = self.client.post(reverse("update_all"))
+
+        scrape_run(
+            company_record,
+            status="success",
+            started_at=datetime(2026, 8, 12, 11, tzinfo=UTC),
+        )
+        completed_dashboard = self.client.get(response.url)
+        refreshed_dashboard = self.client.get(response.url)
+
+        assert b"Monitoring started for 1 source." not in completed_dashboard.content
+        assert b"Monitoring started for 1 source." not in refreshed_dashboard.content
+        assert "monitoring_batch_banner" not in self.client.session
+
+    def test_unrelated_dashboard_refresh_does_not_create_monitoring_banner(self) -> None:
+        company_record = company(name="Unrelated Running")
+        scrape_run(
+            company_record,
+            status="running",
+            started_at=datetime(2026, 8, 12, 12, tzinfo=UTC),
+        )
+
+        dashboard = self.client.get(reverse("home"))
+
+        assert dashboard.context["running_runs"] == 1
+        assert dashboard.context["monitoring_batch_banner"] is None
+        assert b"Monitoring started for" not in dashboard.content
+
     def test_update_all_requires_post_and_get_submits_nothing(self) -> None:
         company(name="GET Company")
 
