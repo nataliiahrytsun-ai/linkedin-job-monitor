@@ -7,6 +7,7 @@ from django import forms
 from companies.models import Company, CompanySource
 from scraping.sources.base import SourceError
 from scraping.sources.darwinbox import darwinbox_source_from_url
+from scraping.sources.jazzhr import jazzhr_source_from_url
 from scraping.sources.lever import lever_site_from_url
 from scraping.sources.registry import (
     normalize_source_key,
@@ -25,6 +26,8 @@ class SourceChoiceField(forms.ChoiceField):  # type: ignore[misc]
 
 def source_label(source_key: str) -> str:
     """Build a readable label without duplicating the registry's source list."""
+    if source_key == "jazzhr":
+        return "JazzHR"
     return source_key.replace("_", " ").replace("-", " ").title()
 
 
@@ -57,6 +60,11 @@ def validate_source_configuration(*, source: str, source_jobs_url: str | None) -
     elif normalized_source == "darwinbox":
         try:
             darwinbox_source_from_url(source_jobs_url)
+        except SourceError as error:
+            raise forms.ValidationError(str(error)) from error
+    elif normalized_source == "jazzhr":
+        try:
+            jazzhr_source_from_url(source_jobs_url)
         except SourceError as error:
             raise forms.ValidationError(str(error)) from error
 

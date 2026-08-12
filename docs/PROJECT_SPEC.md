@@ -61,8 +61,9 @@ diesen Source-Kontext. Company Update kann alle freigegebenen aktiven Sources
 unabhängig ausführen. CompanySource-Konfiguration wird getrennt von Company
 create/edit über die Source-Management-UI verwaltet; mehrere Sources können
 angezeigt, hinzugefügt, bearbeitet und unabhängig aktiviert/deaktiviert werden.
-Source Discovery und zusätzliche ATS-Adapter wie JazzHR sind weiterhin nicht
-implementiert. Der Darwinbox Adapter öffnet
+Source Discovery und weitere ATS-Adapter bleiben nicht implementiert. JazzHR
+ist als normaler öffentlicher HTTP-Adapter für applytojob-Tenants registriert,
+auswählbar und ausführbar. Der Darwinbox Adapter öffnet
 `/ms/candidatev2/<companyId>/careers/allJobs`, paginiert innerhalb eines
 `fetch()` über die UI bis zum vollständigen Snapshot und verwendet Darwinbox
 `id` als stabile Source-ID. Unvollständige Pagination führt zu `SourceError`

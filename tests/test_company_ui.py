@@ -1126,6 +1126,7 @@ def test_create_source_options_come_from_user_selectable_registry_api() -> None:
     assert rendered_values == selectable_values
     assert ("lever", "Lever") in tuple(source_field.choices)
     assert ("darwinbox", "Darwinbox") in tuple(source_field.choices)
+    assert ("jazzhr", "JazzHR") in tuple(source_field.choices)
     assert all(value != "fixture" for value, _label in source_field.choices)
     assert response.context["form"].unavailable_source_choices == ()
     assert "is_active" not in response.context["form"].fields
@@ -1339,9 +1340,10 @@ def test_company_detail_add_source_dialog_is_compact_and_registry_driven() -> No
     assert "Darwinbox" in add_dialog
     assert "Live access unavailable" not in add_dialog
     assert '<option value="darwinbox">Darwinbox</option>' in add_dialog
+    assert '<option value="jazzhr">JazzHR</option>' in add_dialog
     assert '<option value="lever">Lever</option>' in add_dialog
     assert "Fixture" not in add_dialog
-    assert "Jazzhr" not in add_dialog
+    assert "JazzHR" in add_dialog
     assert 'name="source"' in add_dialog
     assert 'name="source_jobs_url"' in add_dialog
     assert "Jobs URL" in add_dialog
@@ -1392,10 +1394,11 @@ def test_add_source_uses_registry_choices_and_creates_approved_active_lever() ->
 
     assert '<option value="lever">Lever</option>' in html
     assert '<option value="darwinbox">Darwinbox</option>' in html
+    assert '<option value="jazzhr">JazzHR</option>' in html
     assert "Darwinbox" in html
     assert "Live access unavailable" not in html
     assert "Fixture" not in html
-    assert "Jazzhr" not in html
+    assert "JazzHR" in html
     response = client().post(add_url, valid_source_data())
 
     assert response.status_code == 302
@@ -1433,6 +1436,27 @@ def test_add_source_creates_approved_active_darwinbox() -> None:
     assert source.approval_status == "approved"
     assert source.is_active is True
     assert "Darwinbox" in client().get(response.url).content.decode()
+
+
+def test_add_source_creates_approved_active_jazzhr() -> None:
+    company = model("companies.Company").objects.create(name="JazzHR Company")
+    add_url = reverse("companies:source_create", args=(company.pk,))
+
+    response = client().post(
+        add_url,
+        valid_source_data(
+            source="jazzhr",
+            source_jobs_url="https://example.applytojob.com/apply/jobs/",
+        ),
+    )
+
+    assert response.status_code == 302
+    source = company.sources.get()
+    assert source.source == "jazzhr"
+    assert source.source_jobs_url == "https://example.applytojob.com/apply/jobs/"
+    assert source.approval_status == "approved"
+    assert source.is_active is True
+    assert "JazzHR" in client().get(response.url).content.decode()
 
 
 def test_existing_darwinbox_source_is_visible_and_presented_as_active() -> None:
@@ -1486,6 +1510,8 @@ def test_update_jobs_submits_active_darwinbox_source_without_network() -> None:
         ("fixture", "https://jobs.example.test/internal"),
         ("darwinbox", "https://careers.example.test/jobs"),
         ("darwinbox", "https://tenant.darwinbox.com/not-careers"),
+        ("jazzhr", "https://example.com/apply"),
+        ("jazzhr", "https://example.applytojob.com/not-apply"),
         ("lever", ""),
         ("lever", "https://example.com/not-lever"),
     ],

@@ -15,9 +15,11 @@ reconciliation, run history, and the UI source-neutral.
   by that UI. It never imports a profile or cookies and does not use stealth,
   proxies, custom fingerprinting, or direct listing API replay. Darwinbox is a
   normal Add Source choice and is executable through Update jobs/Update all.
+- **Current approved source:** JazzHR. Its plain-HTTP adapter accepts public
+  `https://<tenant>.applytojob.com/apply` listings, loads each public detail
+  page, and fails closed unless it can return the complete configured snapshot.
 - **Internal test source:** Fixture. It remains registered for deterministic
   offline pipeline tests, but is not offered for new user-managed companies.
-- **Audited/planned, not implemented:** JazzHR.
 - **LinkedIn production status:** Not implemented; feasibility/access follow-up
   and approval are blocked pending a separate decision. The LinkedIn spike and
   limited pagination diagnostic are

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from scraping.sources.base import SourceAdapter, SourceConfiguration, SourceError
 from scraping.sources.darwinbox import DarwinboxSourceAdapter
 from scraping.sources.fixture import FixtureSourceAdapter
+from scraping.sources.jazzhr import JazzHRSourceAdapter
 from scraping.sources.lever import LeverSourceAdapter
 
 
@@ -22,10 +23,11 @@ def normalize_source_key(source: str) -> str:
 _ADAPTER_FACTORIES: dict[str, Callable[[], SourceAdapter]] = {
     "darwinbox": DarwinboxSourceAdapter,
     "fixture": FixtureSourceAdapter,
+    "jazzhr": JazzHRSourceAdapter,
     "lever": LeverSourceAdapter,
 }
-_USER_VISIBLE_SOURCE_KEYS = frozenset({"darwinbox", "lever"})
-_USER_SELECTABLE_SOURCE_KEYS = frozenset({"darwinbox", "lever"})
+_USER_VISIBLE_SOURCE_KEYS = frozenset({"darwinbox", "jazzhr", "lever"})
+_USER_SELECTABLE_SOURCE_KEYS = frozenset({"darwinbox", "jazzhr", "lever"})
 _EXECUTION_BLOCKED_SOURCE_KEYS: frozenset[str] = frozenset()
 _SOURCE_UNAVAILABILITY_MESSAGES: dict[str, str] = {}
 

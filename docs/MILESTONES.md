@@ -127,9 +127,21 @@ Update jobs/Update all. Complete-snapshot enforcement, request accounting, and
 source-scoped pipeline/reconciliation remain unchanged. This does not complete
 Acuity multi-source monitoring or claim support for every Darwinbox installation.
 
-Source Discovery, JazzHR and LinkedIn adapters, cross-source vacancy
-deduplication, hard source deletion, run cancellation, and final legacy cleanup
-are not implemented. Lever remains unchanged and selectable.
+The bounded **JazzHR adapter is implemented** for public applytojob tenants.
+It uses ordinary Scrapling HTTP, opaque URL tokens as stable job IDs, and
+server-rendered listing links plus `JobPosting` JSON-LD detail data with a
+strict JazzHR HTML fallback when JobPosting JSON-LD is absent. It is
+registered, selectable, and executable through the existing source-owned
+pipeline. Offline adapter/UI/pipeline verification passed. The final bounded
+live run returned all 23 unique jobs in 24 requests: 6 details used JSON-LD and
+17 used the strict HTML fallback, with no access block. Manual source creation
+and **Update jobs** succeeded; an idempotency run reported Found 23, Created 0,
+Updated 0, and Requests 24. This verifies the configured interim source, not a
+complete company-wide Acuity vacancy set.
+
+Source Discovery and LinkedIn adapters, cross-source vacancy deduplication,
+hard source deletion, run cancellation, and final legacy cleanup are not
+implemented. Lever remains unchanged and selectable.
 The current architecture and boundaries are documented in
 [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 

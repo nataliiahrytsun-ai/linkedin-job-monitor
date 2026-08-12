@@ -28,9 +28,11 @@ The shared pipeline supports two deliberately different source roles:
 - `darwinbox`: registered, user-selectable, executable adapter implementing the
   observed public Acuity Darwinbox contract through a normal headful system-
   Chrome session.
+- `jazzhr`: registered, user-selectable, executable plain-HTTP adapter for
+  validated public `<tenant>.applytojob.com/apply` snapshots.
 
 LinkedIn has no production adapter or registry key and remains blocked pending
-a separate feasibility/access/approval decision. JazzHR is not implemented.
+a separate feasibility/access/approval decision.
 Direct automated HTTP listing access received Cloudflare 403, and headless
 Chrome received a minimal non-bootstrapping document. A fresh plain headful
 system-Chrome run rendered the public SPA and received the initial listing with
@@ -162,6 +164,12 @@ the observed Acuity contract together with the existing source-neutral pipeline.
 The headful transport implementation is offline-tested; no live request is part
 of the automated gate. It does not prove all Darwinbox tenants, guarantee a
 headless/server-only deployment, or complete Acuity multi-source monitoring. It
-does not verify or claim Source Discovery,
-JazzHR/LinkedIn adapters, cross-source vacancy deduplication, hard source delete,
+does not verify or claim Source Discovery, a LinkedIn adapter, company-wide
+Acuity completeness, cross-source vacancy deduplication, hard source delete,
 run cancellation, or final legacy-schema cleanup. Lever remains unchanged.
+
+JazzHR closeout verified the configured interim Ascent/Acuity source directly:
+23 unique opaque IDs produced 23 records in 24 requests (one listing and 23
+details), using JSON-LD for 6 details and strict HTML fallback for 17. Manual
+source creation and **Update jobs** succeeded; a repeat run reported Found 23,
+Created 0, Updated 0, and Requests 24 without duplicate postings.

@@ -16,11 +16,11 @@ Company
 - `SourceAdapter` is the fetching and mapping implementation for one ATS or platform. One registered adapter can serve many CompanySource rows.
 
 The schema, source ownership, source-scoped persistence/reconciliation, Company
-multi-source orchestration, and source-management UI are implemented. Lever is
-the production-approved/user-selectable adapter. Darwinbox is implemented,
-user-selectable, and executable through its verified normal headful-browser
-transport. Additional ATS
-adapters and automatic Source Discovery are not implemented.
+multi-source orchestration, and source-management UI are implemented. Lever,
+Darwinbox, and JazzHR are production-approved/user-selectable adapters.
+Darwinbox executes through its verified normal headful-browser transport;
+JazzHR uses ordinary server-rendered HTTP. Additional ATS adapters and
+automatic Source Discovery are not implemented.
 
 ## CompanySource is not an adapter
 
@@ -157,12 +157,11 @@ configuration workflow. The dialog lists multiple sources independently and is
 responsive on narrow viewports.
 
 Manual **Add source** obtains its platform choices from the registry's
-user-selectable API. Lever and Darwinbox are the current user-selectable
+user-selectable API. Lever, Darwinbox, and JazzHR are the current user-selectable
 adapters. A valid public jobs URL is required and checked server-side. A manually
 created source starts as `approval_status=approved` and `is_active=True`.
 Fixture remains registered and executable for internal tests but is not offered
-or accepted as a normal user-managed source. JazzHR is not selectable because
-its adapter does not exist.
+or accepted as a normal user-managed source.
 
 The source platform is immutable after creation because CompanySource is both a
 provenance and execution boundary. **Edit source** can update the supported
@@ -241,6 +240,42 @@ The staged migration still retains:
 
 Legacy exactly-one-source resolution remains only for compatibility entry points and tests. Normal Company UI execution uses `submit_company` and does not use legacy fields to choose an execution source.
 
+## JazzHR adapter boundary
+
+`JazzHRSourceAdapter` accepts the public `/apply` and `/apply/jobs` listing
+variants on a single `<tenant>.applytojob.com` host and canonicalizes listing
+retrieval to `/apply`. It uses one ordinary Scrapling `FetcherSession`, with no
+browser, login, cookies, stealth headers, impersonation, proxies, or retries
+beyond the single configured attempt. The current audit found a server-rendered
+complete listing with no pagination control. If a future listing exposes a next
+page or offset control, the adapter fails closed rather than returning an
+untraversed snapshot.
+
+Current `/apply/<opaque-id>/<slug>` and legacy
+`/apply/jobs/details/<opaque-id>` URLs normalize to the same opaque
+`source_job_id`. Visible `Ref` values are deliberately ignored: the audited
+listing contained one duplicated Ref across distinct opaque IDs. Every unique
+listing link requires one successful public detail request. An unambiguous
+`JobPosting` JSON-LD object is preferred. When no JobPosting candidate exists,
+the offline-tested fallback requires a JazzHR `.job-header`, one matching `h2`,
+structured `.job-attributes-container`, and a non-empty `#job-description`
+outside any application form. It never reads the body or application form as a
+description. Ambiguous or conflicting JSON-LD fails without fallback.
+`requests_made` counts the listing attempt plus every required detail attempt.
+Any transport, structural, identity, detail, conflict, challenge, or pagination
+failure raises `SourceError`; no partial batch can reconcile jobs.
+
+The pre-implementation audit observed 23 jobs and HTTP 200 for `/apply`,
+`/apply/jobs`, and a sample detail. A later bounded run reached an HTTP-200
+detail whose only JSON-LD object was `Organization`. A single targeted DOM
+diagnostic confirmed a complete 4,413-character `#job-description` outside the
+separate application form, so a strict HTML fallback was implemented and
+verified offline. The final bounded live adapter run returned 23 records for 23
+unique opaque IDs in 24 requests: 6 details used JSON-LD and 17 used HTML
+fallback. The listing exposed 23 Ref values but only 22 unique values, further
+confirming that Ref is not identity. Manual **Manage sources**/**Update jobs**
+verification succeeded, and a repeat run created or updated no postings.
+
 Normal Company create/edit forms no longer expose or mutate
 `Company.source`/`Company.source_jobs_url`. These fields remain in the schema
 only for staged migration and backward compatibility; final cleanup has not
@@ -249,7 +284,7 @@ been completed.
 ## Not implemented
 
 - automatic Source Discovery or LinkedIn-to-careers discovery;
-- `JazzHRSourceAdapter`, Greenhouse/Ashby adapters, or `LinkedInSourceAdapter`;
+- Greenhouse/Ashby adapters or `LinkedInSourceAdapter`;
 - cross-source vacancy matching/deduplication or `CanonicalVacancy`;
 - final removal of legacy Company fields or final non-null ownership cleanup;
 - hard deletion of CompanySource or run cancellation;
@@ -257,11 +292,12 @@ been completed.
 
 ## Acuity reference case
 
-The architecture can represent and orchestrate two independent sources for
-Acuity. Darwinbox transport compatibility is implemented against the observed
-public Acuity contract and is exposed through normal source creation. JazzHR is
-not implemented, Acuity multi-source monitoring is not complete, and Source Discovery remains
-manual/outside the application. No vacancy-completeness claim is made.
+The architecture can represent and orchestrate independent Darwinbox and
+JazzHR sources for Acuity. Both are exposed through normal source creation.
+The configured JazzHR adapter targets the interim Ascent/Acuity page only and
+does not claim company-wide careers completeness. Source Discovery remains
+manual/outside the application. Cross-source canonical deduplication is not
+implemented.
 
 ## Conceptual onboarding
 
@@ -284,5 +320,5 @@ without a separately approved and implemented adapter/access path.
 Slices 1-4 and the bounded Darwinbox headful-browser transport are complete.
 Darwinbox is enabled for normal source creation and Company execution, subject
 to its explicit interactive system-Chrome deployment requirement.
-JazzHR, Source Discovery, and other ATS integrations remain separate future
-work.
+JazzHR is implemented; Source Discovery and other ATS integrations remain
+separate future work.

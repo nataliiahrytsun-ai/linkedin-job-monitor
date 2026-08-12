@@ -208,6 +208,37 @@ reconciliation produced three jobs and a terminal `SUCCESS` run with
 Historical manual verification of the Olo company established the live Lever
 path separately. It is not repeated by this documentation closeout.
 
+## 5a. JazzHR production adapter
+
+`JazzHRSourceAdapter` uses Scrapling 0.4.8 `FetcherSession` for ordinary public
+HTTP against a validated `<tenant>.applytojob.com` host. A canonical `/apply`
+listing request discovers current or legacy detail URLs; their opaque URL token
+is the stable ID. One required detail request per unique ID prefers an
+unambiguous `JobPosting` JSON-LD object. If no JobPosting candidate exists, a
+strict server-rendered fallback requires `.job-header`, one matching `h2`,
+`.job-attributes-container`, and non-empty `#job-description` content outside
+the application form. The visible Ref is not identity: the Acuity/Ascent audit
+found duplicate Ref `26521` on distinct jobs.
+
+No explicit total count is published. Completeness means the server-rendered
+listing contains verifiable job structure, exposes no unhandled pagination,
+and every unique discovered detail succeeds. The adapter returns no partial
+batch. `requests_made` is one listing attempt plus each detail attempt.
+
+Robots preflight returned HTTP 200; the wildcard group disallowed `/cb`, not
+`/apply`. The bounded audit found HTTP 200, server-rendered links, no pagination
+control, 23 opaque IDs, and detail JSON-LD with description, location,
+employment type, and dates. Another HTTP-200 detail exposed only Organization
+JSON-LD; a single structural diagnostic confirmed a complete
+`#job-description` outside `#job-application-form-container`. Sanitized offline
+fixtures verify this fallback, application/CAPTCHA exclusion, canonical ID
+validation, and fail-closed ambiguity handling. The final bounded live run
+returned 23 records for 23 opaque IDs in 24 requests: 6 details used JSON-LD
+and 17 used HTML fallback, with no challenge, login, or access-denied response.
+Manual UI execution succeeded; a repeat run found 23 jobs and created or
+updated none. This proves only the configured public interim source, not every
+Acuity vacancy or every JazzHR tenant.
+
 ## 6. LinkedIn-specific extraction design (historical spike)
 
 ### Entry point and access gate
