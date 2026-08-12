@@ -556,22 +556,102 @@ def test_job_detail_uses_positive_and_neutral_status_badges(
     assert "status-error" not in html
 
 
-def test_job_detail_escapes_plain_text_description() -> None:
-    employer = company(name="Safe Description", sequence=1)
+def test_job_detail_renders_sanitized_paragraphs_emphasis_lists_and_breaks() -> None:
+    employer = company(name="Formatted Description", sequence=1)
+    raw_description = (
+        "<h3>About the role</h3>"
+        "<p><b>Job purpose</b><br>Build reliable systems.</p>"
+        "<ul><li>Own delivery</li><li><strong>Support the team</strong></li></ul>"
+    )
     posting = job(
         employer,
         sequence=1,
-        description='<script>alert("unsafe")</script>\nSecond line',
+        description=raw_description,
     )
 
     html = client().get(
         reverse("jobs:detail", kwargs={"pk": posting.pk})
     ).content.decode()
 
-    assert "<script>" not in html
-    assert "&lt;script&gt;" in html
-    assert "Second line" in html
+    assert "<h3>About the role</h3>" in html
+    assert "<p><b>Job purpose</b><br>Build reliable systems.</p>" in html
+    assert "<ul><li>Own delivery</li><li><strong>Support the team</strong></li></ul>" in html
+    assert "&lt;p&gt;" not in html
     assert 'class="job-description"' in html
+    posting.refresh_from_db()
+    assert posting.description == raw_description
+
+
+def test_job_detail_removes_scripts_event_handlers_and_dangerous_attributes() -> None:
+    employer = company(name="Unsafe Description", sequence=1)
+    posting = job(
+        employer,
+        sequence=1,
+        description=(
+            '<script>alert("unsafe")</script>'
+            '<p class="external" onclick="steal()">Safe paragraph '
+            '<a href="javascript:alert(1)" target="_blank">link text</a></p>'
+            '<iframe src="https://evil.example.test">hidden frame</iframe>'
+            '<img src="x" onerror="steal()">'
+        ),
+    )
+
+    html = client().get(
+        reverse("jobs:detail", kwargs={"pk": posting.pk})
+    ).content.decode()
+    description = html[
+        html.index('<div class="job-description">') : html.index(
+            "</div>", html.index('<div class="job-description">')
+        )
+    ]
+
+    assert "<p>Safe paragraph link text</p>" in description
+    for unsafe_value in (
+        "<script",
+        "alert(",
+        "onclick",
+        'class="external"',
+        "<a ",
+        "href=",
+        "javascript:",
+        "target=",
+        "<iframe",
+        "evil.example.test",
+        "hidden frame",
+        "<img",
+        "onerror",
+    ):
+        assert unsafe_value not in description
+
+
+def test_job_detail_preserves_plain_text_and_line_breaks_safely() -> None:
+    employer = company(name="Plain Description", sequence=1)
+    posting = job(
+        employer,
+        sequence=1,
+        description="First < second & safe\nSecond line\n\nFinal paragraph",
+    )
+
+    html = client().get(
+        reverse("jobs:detail", kwargs={"pk": posting.pk})
+    ).content.decode()
+
+    assert "First &lt; second &amp; safe<br>" in html
+    assert "Second line<br>\n<br>\nFinal paragraph" in html
+    assert "First < second" not in html
+
+
+@pytest.mark.parametrize("description", [None, ""])
+def test_job_detail_keeps_empty_description_fallback(description: str | None) -> None:
+    employer = company(name="Empty Description", sequence=1)
+    posting = job(employer, sequence=1, description=description)
+
+    html = client().get(
+        reverse("jobs:detail", kwargs={"pk": posting.pk})
+    ).content.decode()
+
+    assert "No description available." in html
+    assert '<div class="job-description">' not in html
 
 
 def test_job_detail_returns_404_for_unknown_pk() -> None:

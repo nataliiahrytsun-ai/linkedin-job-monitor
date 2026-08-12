@@ -9,6 +9,7 @@ from django.http import HttpRequest, HttpResponse  # type: ignore[import-untyped
 from django.shortcuts import get_object_or_404, render  # type: ignore[import-untyped]
 
 from companies.models import Company
+from jobs.description import sanitize_job_description
 from jobs.forms import JobFilterForm
 from jobs.models import JobPosting
 
@@ -88,4 +89,11 @@ def job_detail(request: HttpRequest, pk: int) -> HttpResponse:
         JobPosting.objects.select_related("company"),
         pk=pk,
     )
-    return render(request, "jobs/job_detail.html", {"job": job})
+    return render(
+        request,
+        "jobs/job_detail.html",
+        {
+            "job": job,
+            "job_description_html": sanitize_job_description(job.description),
+        },
+    )

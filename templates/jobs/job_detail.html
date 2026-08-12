@@ -73,7 +73,7 @@
   <section class="card job-description-panel" aria-labelledby="job-description-heading">
     <h2 id="job-description-heading">Description</h2>
     {% if job.description %}
-      <div class="job-description">{{ job.description }}</div>
+      <div class="job-description">{{ job_description_html }}</div>
     {% else %}
       <p class="job-description-empty">No description available.</p>
     {% endif %}
