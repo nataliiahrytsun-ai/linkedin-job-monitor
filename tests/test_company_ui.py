@@ -229,7 +229,7 @@ def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     assert "ACTIVE" in html
     assert "INACTIVE" in html
     assert "Failed" in html
-    assert "2026-08-07 14:33" in html
+    assert "2026-08-07 16:33" in html
     assert "Add company" in html
     assert html.count(f'href="{reverse("companies:create")}"') == 1
     assert f'href="{reverse("companies:detail", args=(alpha.pk,))}"' in html
@@ -722,7 +722,10 @@ def test_company_detail_get_is_read_only_and_starts_no_execution() -> None:
         last_scrape_status="success",
         last_scraped_at=datetime(2026, 8, 6, 12, tzinfo=UTC),
     )
-    job = create_job(company)
+    job = create_job(
+        company,
+        published_at=datetime(2026, 1, 31, 23, 30, tzinfo=UTC),
+    )
     company_before = model("companies.Company").objects.values().get(pk=company.pk)
     job_before = model("jobs.JobPosting").objects.values().get(pk=job.pk)
 
@@ -736,7 +739,8 @@ def test_company_detail_get_is_read_only_and_starts_no_execution() -> None:
 
     assert response.status_code == 200
     assert "SUCCESS" in response.content.decode()
-    assert "2026-08-06 12:00" in response.content.decode()
+    assert "2026-08-06 14:00" in response.content.decode()
+    assert "2026-02-01" in response.content.decode()
     assert model("companies.Company").objects.values().get(pk=company.pk) == company_before
     assert model("jobs.JobPosting").objects.values().get(pk=job.pk) == job_before
     assert model("scrape_runs.ScrapeRun").objects.count() == 0

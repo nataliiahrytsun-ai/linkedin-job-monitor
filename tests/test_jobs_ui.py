@@ -544,6 +544,34 @@ def test_job_detail_displays_stored_fields_and_related_links() -> None:
     assert f'href="{reverse("jobs:list")}">← Back to jobs</a>' in html
 
 
+def test_job_dates_render_in_vienna_without_changing_stored_timestamps() -> None:
+    employer = company(name="Timezone Company", sequence=1)
+    published_at = datetime(2026, 1, 31, 23, 30, tzinfo=UTC)
+    first_seen_at = datetime(2026, 7, 31, 22, 30, tzinfo=UTC)
+    last_seen_at = datetime(2026, 7, 31, 22, 45, tzinfo=UTC)
+    posting = job(
+        employer,
+        sequence=1,
+        published_at=published_at,
+        first_seen_at=first_seen_at,
+        last_seen_at=last_seen_at,
+    )
+
+    list_html = client().get(reverse("jobs:list")).content.decode()
+    detail_html = client().get(
+        reverse("jobs:detail", kwargs={"pk": posting.pk})
+    ).content.decode()
+
+    assert "2026-02-01" in list_html
+    assert "2026-08-01" in list_html
+    assert "1 Feb 2026" in detail_html
+    assert detail_html.count("1 Aug 2026") == 2
+    posting.refresh_from_db()
+    assert posting.published_at == published_at
+    assert posting.first_seen_at == first_seen_at
+    assert posting.last_seen_at == last_seen_at
+
+
 def test_opening_job_detail_clears_new_then_updated_badges() -> None:
     employer = company(name="Review Detail", sequence=1)
     posting = job(employer, sequence=1, title="Review Me")

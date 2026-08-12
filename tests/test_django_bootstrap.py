@@ -55,6 +55,8 @@ def test_django_settings_import_and_configuration(tmp_path: Path) -> None:
         "'django.db.backends.sqlite3'; "
         "assert settings.DATABASES['default']['OPTIONS']['timeout'] == 30.0; "
         "assert settings.JOB_MONITOR_BACKGROUND_MAX_WORKERS == 2; "
+        "assert settings.TIME_ZONE == 'Europe/Vienna'; "
+        "assert settings.USE_TZ is True; "
         "configured=Path(settings.DATABASES['default']['NAME']).resolve(); "
         f"temporary=Path({str(database_path)!r}).resolve(); "
         f"working=Path({str(WORKING_DATABASE_PATH)!r}).resolve(); "

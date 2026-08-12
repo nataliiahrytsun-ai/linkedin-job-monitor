@@ -76,6 +76,26 @@ def scrape_run(
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
 class ScrapeRunHistoryTests(TestCase):  # type: ignore[misc]
+    def test_history_renders_vienna_cet_and_cest_offsets(self) -> None:
+        employer = company(name="Vienna Time Company")
+        scrape_run(
+            employer,
+            status="success",
+            started_at=datetime(2026, 1, 15, 12, tzinfo=UTC),
+        )
+        scrape_run(
+            employer,
+            status="success",
+            started_at=datetime(2026, 7, 15, 12, tzinfo=UTC),
+        )
+
+        html = self.client.get(reverse("scrape_runs:list")).content.decode()
+
+        assert "15 Jan 2026, 13:00" in html
+        assert "15 Jul 2026, 14:00" in html
+        assert 'datetime="2026-01-15T13:00:00+01:00"' in html
+        assert 'datetime="2026-07-15T14:00:00+02:00"' in html
+
     def test_history_is_newest_first_and_displays_real_fields(self) -> None:
         employer = company(name="Northwind")
         older = scrape_run(
