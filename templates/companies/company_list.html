@@ -81,7 +81,6 @@
               </td>
               <td class="company-actions-cell">
                 <div class="row-actions company-list-actions">
-                  <a class="button button-secondary" href="{% url 'companies:edit' company.pk %}">Edit</a>
                   <form method="post" action="{% url 'companies:toggle_active' company.pk %}">
                     {% csrf_token %}
                     <button class="button button-secondary company-toggle-button" type="submit">

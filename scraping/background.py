@@ -153,12 +153,16 @@ class ControlledBackgroundExecutor:
             not isinstance(company_source, source_model)
             or type(source_pk) is not int
             or getattr(getattr(company_source, "_state", None), "adding", True)
-            or not source_model.objects.filter(pk=source_pk).exists()
         ):
             raise BackgroundCompanyNotSavedError(
                 "company source must already be saved before background submission"
             )
-        stored_source = source_model.objects.select_related("company").get(pk=source_pk)
+        try:
+            stored_source = source_model.objects.select_related("company").get(pk=source_pk)
+        except source_model.DoesNotExist as error:
+            raise BackgroundCompanyNotSavedError(
+                "company source must already be saved before background submission"
+            ) from error
         if company_source.company_id != stored_source.company_id:
             raise BackgroundCompanyNotSavedError(
                 "company source company does not match persisted ownership"
@@ -184,10 +188,7 @@ class ControlledBackgroundExecutor:
     ) -> PipelineResult:
         close_old_connections()
         try:
-            source_model = apps.get_model("companies", "CompanySource")
-            worker_source = source_model.objects.select_related("company").get(
-                pk=company_source_id
-            )
+            worker_source = self._worker_source(company_source_id)
             stored_source, adapter = self._validated_source(worker_source)
             return run_source_pipeline(
                 company_source=cast(CompanySourceRecord, stored_source),
@@ -199,6 +200,19 @@ class ControlledBackgroundExecutor:
         finally:
             close_old_connections()
 
+    @staticmethod
+    def _worker_source(company_source_id: int) -> Any:
+        """Load queued work afresh and fail cleanly if its owner was deleted."""
+        source_model = apps.get_model("companies", "CompanySource")
+        try:
+            return source_model.objects.select_related("company").get(
+                pk=company_source_id
+            )
+        except source_model.DoesNotExist as error:
+            raise BackgroundCompanyNotSavedError(
+                "company source was deleted before background work started"
+            ) from error
+
     def _run_fixture_pipeline(
         self,
         *,
@@ -209,10 +223,7 @@ class ControlledBackgroundExecutor:
     ) -> FixturePipelineResult:
         close_old_connections()
         try:
-            source_model = apps.get_model("companies", "CompanySource")
-            worker_source = source_model.objects.select_related("company").get(
-                pk=company_source_id
-            )
+            worker_source = self._worker_source(company_source_id)
             stored_source, _adapter = self._validated_source(worker_source)
             if normalize_source_key(stored_source.source) != "fixture":
                 raise BackgroundSourceError(

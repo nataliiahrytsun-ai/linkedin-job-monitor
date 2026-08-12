@@ -621,6 +621,99 @@ h3 {
   cursor: not-allowed;
 }
 
+.button-danger {
+  background: #b42318;
+  border-color: #b42318;
+  color: #ffffff;
+}
+
+.button-danger:hover {
+  background: #912018;
+  border-color: #912018;
+  color: #ffffff;
+}
+
+.button-danger-outline {
+  background: #ffffff;
+  border-color: #d92d20;
+  color: #b42318;
+}
+
+.button-danger-outline:hover {
+  background: #fef3f2;
+  border-color: #b42318;
+  color: #912018;
+}
+
+.company-delete-page {
+  width: min(100%, 43rem);
+  margin-inline: auto;
+  padding-top: clamp(1rem, 5vh, 3rem);
+}
+
+.company-delete-page .back-link {
+  margin-bottom: 0.65rem;
+}
+
+.company-delete-confirmation {
+  width: 100%;
+  padding: 1.25rem;
+}
+
+.company-delete-confirmation .eyebrow {
+  margin-bottom: 0.15rem;
+}
+
+.company-delete-confirmation h1 {
+  margin-bottom: 0.85rem;
+  font-size: clamp(1.55rem, 3vw, 2rem);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.company-delete-confirmation > p:not(.eyebrow, .destructive-warning) {
+  margin-bottom: 0.65rem;
+}
+
+.company-delete-counts {
+  margin: 0 0 0.85rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.company-delete-counts div {
+  padding: 0.45rem 0.55rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  background: #f9fafb;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.company-delete-counts dt {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.company-delete-counts dd {
+  margin: 0;
+  flex: none;
+  font-size: 1rem;
+  font-weight: 750;
+}
+
+.destructive-warning {
+  margin-bottom: 0.85rem;
+  padding: 0.65rem 0.8rem;
+  background: #fef3f2;
+  border-left: 4px solid #b42318;
+  color: #7a271a;
+}
+
 .status-active {
   background: #ecfdf3;
   border-color: #abefc6;
@@ -985,9 +1078,32 @@ h3 {
   gap: 0.6rem;
 }
 
-.update-jobs-action {
+.company-jobs-heading {
+  margin-bottom: 1rem;
   display: flex;
-  justify-content: flex-end;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.company-jobs-heading-copy {
+  min-width: 0;
+}
+
+.company-jobs-heading .section-note {
+  margin-bottom: 0;
+}
+
+.company-jobs-actions {
+  display: flex;
+  align-items: flex-end;
+  flex: none;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.company-jobs-update {
+  margin: 0;
 }
 
 .detail-panel {
@@ -2323,10 +2439,6 @@ h3 {
     justify-items: start;
   }
 
-  .update-jobs-action {
-    justify-content: flex-start;
-  }
-
   .detail-source-row,
   .detail-monitoring-row {
     grid-template-columns: 1fr;
@@ -2465,6 +2577,45 @@ h3 {
 }
 
 @media (max-width: 40rem) {
+  .company-delete-page {
+    margin-top: -1.5rem;
+    padding-top: 0;
+  }
+
+  .company-delete-confirmation {
+    padding: 0.85rem;
+  }
+
+  .company-delete-confirmation h1 {
+    margin-bottom: 0.65rem;
+  }
+
+  .company-delete-counts {
+    margin-bottom: 0.65rem;
+    gap: 0.4rem;
+  }
+
+  .destructive-warning {
+    margin-bottom: 0.65rem;
+    padding-block: 0.5rem;
+  }
+
+  .company-jobs-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .company-jobs-actions {
+    align-items: center;
+    flex-direction: row;
+    gap: 0.75rem;
+  }
+
+  .company-delete-counts {
+    grid-template-columns: 1fr;
+  }
+
   .scrape-run-card-time dd,
   .scrape-run-card-results dd,
   .scrape-run-card-performance dd {

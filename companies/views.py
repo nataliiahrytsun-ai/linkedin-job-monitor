@@ -5,11 +5,12 @@ from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Exists, OuterRef
-from django.http import HttpRequest, HttpResponse
+from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 
+from companies.deletion import CompanyDeletionBlockedError, delete_company
 from companies.forms import CompanyForm, CompanySourceForm, validate_source_configuration
 from companies.models import Company, CompanySource
 from jobs.forms import CompanyJobFilterForm
@@ -229,6 +230,49 @@ def company_edit(request: HttpRequest, pk: int) -> HttpResponse:
         request,
         "companies/company_form.html",
         {"form": form, "page_title": "Edit company", "submit_label": "Save changes"},
+    )
+
+
+def _company_delete_context(company: Company) -> dict[str, object]:
+    """Build current confirmation counts without mutating the Company graph."""
+    running_runs = company.scrape_runs.filter(status=ScrapeRun.Status.RUNNING)
+    return {
+        "company": company,
+        "source_count": company.sources.count(),
+        "job_count": company.job_postings.count(),
+        "run_count": company.scrape_runs.count(),
+        "deletion_blocked": running_runs.exists(),
+    }
+
+
+@require_http_methods(["GET", "POST"])
+def company_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    """Confirm and atomically hard-delete one complete Company graph."""
+    company = get_object_or_404(Company, pk=pk)
+    if request.method == "POST":
+        try:
+            result = delete_company(company_id=company.pk)
+        except CompanyDeletionBlockedError:
+            context = _company_delete_context(company)
+            context["deletion_blocked"] = True
+            return render(
+                request,
+                "companies/company_confirm_delete.html",
+                context,
+                status=409,
+            )
+        except Company.DoesNotExist as error:
+            raise Http404("Company does not exist") from error
+        messages.success(
+            request,
+            f'Company "{result.company_name}" and all related data were permanently deleted.',
+        )
+        return redirect("companies:list")
+
+    return render(
+        request,
+        "companies/company_confirm_delete.html",
+        _company_delete_context(company),
     )
 
 

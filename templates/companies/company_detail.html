@@ -28,20 +28,9 @@
       </p>
     </div>
     <div class="detail-header-actions">
-      <div class="row-actions">
-        <a class="button button-secondary" href="{% url 'companies:edit' company.pk %}">Edit</a>
-        <form method="post" action="{% url 'companies:toggle_active' company.pk %}">
-          {% csrf_token %}
-          <button class="button button-secondary" type="submit">
-            {% if company.is_active %}Deactivate{% else %}Activate{% endif %}
-          </button>
-        </form>
-      </div>
-      <div class="update-jobs-action">
-        <form method="post" action="{% url 'companies:update_jobs' company.pk %}">
-          {% csrf_token %}
-          <button class="button button-primary" type="submit">Update jobs</button>
-        </form>
+      <div class="row-actions company-detail-quick-actions">
+        <a class="button button-secondary button-compact" href="{% url 'companies:edit' company.pk %}">Edit</a>
+        <a class="button button-danger-outline button-compact" href="{% url 'companies:delete' company.pk %}">Delete</a>
       </div>
     </div>
   </div>
@@ -240,12 +229,21 @@
   {% endfor %}
 
   <section class="detail-section" aria-labelledby="jobs-heading">
-    <form class="jobs-table-filter-form" method="get" action="{% url 'companies:detail' company.pk %}">
-      <div class="jobs-overview-toolbar">
+    <div class="company-jobs-heading">
+      <div class="company-jobs-heading-copy">
         <h2 id="jobs-heading">Jobs</h2>
+        <p class="section-note">Saved vacancies for this company.</p>
+      </div>
+      <div class="company-jobs-actions">
+        <form class="company-jobs-update" method="post" action="{% url 'companies:update_jobs' company.pk %}">
+          {% csrf_token %}
+          <button class="button button-primary" type="submit">Update jobs</button>
+        </form>
         <a class="jobs-clear-filters" href="{% url 'companies:detail' company.pk %}">Clear filters</a>
       </div>
-      <p class="section-note">Saved vacancies for this company.</p>
+    </div>
+
+    <form class="jobs-table-filter-form" method="get" action="{% url 'companies:detail' company.pk %}">
 
       {% if filter_form.errors %}
         <p class="filter-errors-summary" role="status">Some invalid filter values were ignored.</p>

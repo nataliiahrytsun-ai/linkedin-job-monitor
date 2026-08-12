@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Delete {{ company.name }} · Job Monitor{% endblock %}
+
+{% block content %}
+  <div class="company-delete-page">
+    <p class="back-link"><a href="{% url 'companies:detail' company.pk %}">← Back to company</a></p>
+
+    <section class="card company-delete-confirmation" aria-labelledby="delete-company-heading">
+      <p class="eyebrow">Company management</p>
+      <h1 id="delete-company-heading">Delete {{ company.name }}?</h1>
+
+      <p>This hard delete will permanently remove:</p>
+      <dl class="company-delete-counts">
+        <div><dt>Configured sources</dt><dd>{{ source_count }}</dd></div>
+        <div><dt>Saved jobs</dt><dd>{{ job_count }}</dd></div>
+        <div><dt>Scrape runs</dt><dd>{{ run_count }}</dd></div>
+      </dl>
+
+      <p class="destructive-warning">
+        Sources, saved jobs, and complete run history including errors will be permanently deleted.
+        <strong>This action cannot be undone.</strong>
+      </p>
+
+      {% if deletion_blocked %}
+        <div class="form-errors" role="alert">
+          This company cannot be deleted while one or more source runs are RUNNING.
+          Wait for every run to finish and try again.
+        </div>
+        <div class="form-actions">
+          <a class="button button-secondary" href="{% url 'companies:detail' company.pk %}">Cancel</a>
+        </div>
+      {% else %}
+        <form method="post">
+          {% csrf_token %}
+          <div class="form-actions">
+            <a class="button button-secondary" href="{% url 'companies:detail' company.pk %}">Cancel</a>
+            <button class="button button-danger" type="submit">Delete company</button>
+          </div>
+        </form>
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}

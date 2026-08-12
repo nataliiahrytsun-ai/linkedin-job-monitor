@@ -235,7 +235,6 @@ def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     assert f'href="{reverse("companies:detail", args=(alpha.pk,))}"' in html
     assert f'href="{reverse("companies:detail", args=(beta.pk,))}"' in html
     assert f'href="{reverse("companies:detail", args=(zulu.pk,))}"' in html
-    assert "Edit" in html
     assert "Activate" in html
     assert "Deactivate" in html
     assert '<table class="company-table">' in html
@@ -255,7 +254,7 @@ def test_company_list_shows_records_statuses_and_stable_name_order() -> None:
     assert table_html.count('<span class="responsive-field-label">Last status</span>') == 3
     assert table_html.count('<span class="responsive-field-label">Last checked</span>') == 3
     assert f'href="{reverse("companies:detail", args=(alpha.pk,))}"' in table_html
-    assert f'href="{reverse("companies:edit", args=(alpha.pk,))}"' in table_html
+    assert f'href="{reverse("companies:edit", args=(alpha.pk,))}"' not in table_html
     assert f'action="{reverse("companies:toggle_active", args=(alpha.pk,))}"' in table_html
     assert 'method="post"' in table_html
     assert table_html.count("company-toggle-button") == 3
@@ -395,8 +394,23 @@ def test_company_detail_renders_information_navigation_and_empty_states() -> Non
     assert html.index("Active jobs") < html.index("Sources")
     assert html.index('id="sources-summary-heading"') < html.index('id="jobs-heading"')
     assert f'href="{reverse("companies:list")}"' in html
-    assert f'href="{reverse("companies:edit", args=(company.pk,))}"' in html
-    assert f'action="{reverse("companies:toggle_active", args=(company.pk,))}"' in html
+    edit_url = reverse("companies:edit", args=(company.pk,))
+    delete_url = reverse("companies:delete", args=(company.pk,))
+    assert f'href="{edit_url}"' in html
+    assert f'href="{delete_url}"' in html
+    detail_header_start = html.index('<div class="page-heading detail-header">')
+    detail_header = html[detail_header_start : html.index("<section", detail_header_start)]
+    assert f'href="{edit_url}"' in detail_header
+    assert (
+        f'class="button button-danger-outline button-compact" href="{delete_url}"'
+        in detail_header
+    )
+    assert (
+        f'class="button button-secondary button-compact" href="{edit_url}"'
+        in detail_header
+    )
+    assert "Update jobs" not in detail_header
+    assert f'action="{reverse("companies:toggle_active", args=(company.pk,))}"' not in detail_header
     assert 'method="post"' in html
     assert '<meta name="viewport"' in html
     assert 'class="table-scroll"' not in html
@@ -637,9 +651,11 @@ def test_company_detail_filter_ui_reuses_column_popovers_and_clean_company_url()
     filter_form = html[form_start : html.index("</form>", form_start)]
 
     assert f'action="{reverse("companies:detail", args=(company.pk,))}"' in filter_form
-    assert (
-        f'href="{reverse("companies:detail", args=(company.pk,))}">Clear filters</a>' in filter_form
+    clear_filters = (
+        f'href="{reverse("companies:detail", args=(company.pk,))}">Clear filters</a>'
     )
+    assert clear_filters in html
+    assert html.index(clear_filters) < form_start
     assert filter_form.count('<details class="column-filter') == 5
     for label in (
         "Filter position",
@@ -728,20 +744,234 @@ def test_company_detail_get_is_read_only_and_starts_no_execution() -> None:
     background_submit.assert_not_called()
 
 
+def test_company_delete_confirmation_is_read_only_and_shows_exact_counts() -> None:
+    company = create_company(name="Delete Confirmation")
+    source = company.sources.get()
+    first_job = create_job(company, company_source=source)
+    second_job = create_job(
+        company,
+        company_source=source,
+        source_job_id="confirmation-job-two",
+    )
+    model("companies.CompanySource").objects.create(
+        company=company,
+        source="fixture-two",
+        source_jobs_url="https://jobs.example.test/delete-confirmation/other",
+        approval_status="approved",
+        is_active=True,
+    )
+    first_run = create_scrape_run(
+        company,
+        status="success",
+        started_at=datetime(2026, 8, 12, 9, tzinfo=UTC),
+        company_source=source,
+    )
+    second_run = create_scrape_run(
+        company,
+        status="failed",
+        started_at=datetime(2026, 8, 12, 10, tzinfo=UTC),
+        company_source=source,
+        error_message="safe test failure",
+    )
+
+    response = client().get(reverse("companies:delete", args=(company.pk,)))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "companies/company_confirm_delete.html" in [
+        template.name for template in response.templates if template.name
+    ]
+    assert response.context["source_count"] == 2
+    assert response.context["job_count"] == 2
+    assert response.context["run_count"] == 2
+    assert response.context["deletion_blocked"] is False
+    assert "Delete Delete Confirmation?" in html
+    assert "Configured sources" in html
+    assert "Saved jobs" in html
+    assert "Scrape runs" in html
+    assert "run history including errors" in html
+    assert "This action cannot be undone." in html
+    assert '<button class="button button-danger" type="submit">Delete company</button>' in html
+    assert 'name="csrfmiddlewaretoken"' in html
+    assert "window.confirm" not in html
+    assert '<div class="company-delete-page">' in html
+    assert model("companies.Company").objects.filter(pk=company.pk).exists()
+    assert model("jobs.JobPosting").objects.filter(
+        pk__in=(first_job.pk, second_job.pk)
+    ).count() == 2
+    assert model("scrape_runs.ScrapeRun").objects.filter(
+        pk__in=(first_run.pk, second_run.pk)
+    ).count() == 2
+
+
+def test_company_delete_confirmation_has_compact_responsive_layout() -> None:
+    stylesheet = (
+        Path(__file__).resolve().parents[1] / "static" / "css" / "app.css"
+    ).read_text(encoding="utf-8")
+    mobile_start = stylesheet.index("@media (max-width: 40rem)")
+    desktop_css = stylesheet[:mobile_start]
+    mobile_css = stylesheet[mobile_start:]
+
+    assert """.company-delete-page {
+  width: min(100%, 43rem);
+  margin-inline: auto;
+  padding-top: clamp(1rem, 5vh, 3rem);
+}""" in desktop_css
+    assert """.company-delete-confirmation h1 {
+  margin-bottom: 0.85rem;
+  font-size: clamp(1.55rem, 3vw, 2rem);""" in desktop_css
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr));" in desktop_css
+    assert """.company-delete-counts div {
+  padding: 0.45rem 0.55rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+""" in desktop_css
+    assert "min-height: calc(100vh" not in desktop_css
+    assert """.company-delete-counts {
+    grid-template-columns: 1fr;
+  }""" in mobile_css
+    assert """.company-delete-page {
+    margin-top: -1.5rem;
+    padding-top: 0;
+  }""" in mobile_css
+
+
+def test_company_delete_post_removes_terminal_graph_and_redirects_with_message() -> None:
+    company = create_company(name="Terminal Delete")
+    posting = create_job(company)
+    run = create_scrape_run(
+        company,
+        status="success",
+        started_at=datetime(2026, 8, 12, 9, tzinfo=UTC),
+    )
+    company_id = company.pk
+    source_ids = tuple(company.sources.values_list("pk", flat=True))
+    browser = client()
+
+    response = browser.post(reverse("companies:delete", args=(company_id,)))
+
+    assert response.status_code == 302
+    assert response.url == reverse("companies:list")
+    assert not model("companies.Company").objects.filter(pk=company_id).exists()
+    assert not model("companies.CompanySource").objects.filter(pk__in=source_ids).exists()
+    assert not model("jobs.JobPosting").objects.filter(pk=posting.pk).exists()
+    assert not model("scrape_runs.ScrapeRun").objects.filter(pk=run.pk).exists()
+    assert b"and all related data were permanently deleted" in browser.get(
+        response.url
+    ).content
+
+
+def test_running_company_delete_page_blocks_action_and_crafted_post() -> None:
+    company = create_company(name="Running Delete")
+    posting = create_job(company)
+    running = create_scrape_run(
+        company,
+        status="running",
+        started_at=datetime(2026, 8, 12, 9, tzinfo=UTC),
+    )
+    delete_url = reverse("companies:delete", args=(company.pk,))
+
+    get_response = client().get(delete_url)
+    get_html = get_response.content.decode()
+    crafted_post = client().post(delete_url)
+
+    assert get_response.status_code == 200
+    assert get_response.context["deletion_blocked"] is True
+    assert "cannot be deleted while one or more source runs are RUNNING" in get_html
+    assert "Delete company</button>" not in get_html
+    assert crafted_post.status_code == 409
+    assert "cannot be deleted while one or more source runs are RUNNING" in (
+        crafted_post.content.decode()
+    )
+    assert model("companies.Company").objects.filter(pk=company.pk).exists()
+    assert model("jobs.JobPosting").objects.filter(pk=posting.pk).exists()
+    assert model("scrape_runs.ScrapeRun").objects.filter(pk=running.pk).exists()
+
+
+def test_company_delete_requires_csrf_and_accepts_only_get_or_post() -> None:
+    company = create_company(name="Protected Delete")
+    delete_url = reverse("companies:delete", args=(company.pk,))
+    csrf_client = importlib.import_module("django.test").Client(enforce_csrf_checks=True)
+
+    csrf_response = csrf_client.post(delete_url)
+    put_response = client().put(delete_url)
+    delete_response = client().delete(delete_url)
+
+    assert csrf_response.status_code == 403
+    assert put_response.status_code == 405
+    assert delete_response.status_code == 405
+    assert model("companies.Company").objects.filter(pk=company.pk).exists()
+
+
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_unknown_company_delete_returns_not_found(method: str) -> None:
+    response = getattr(client(), method)(reverse("companies:delete", args=(999_999,)))
+
+    assert response.status_code == 404
+
+
 def test_company_detail_update_jobs_action_is_csrf_protected_post_form() -> None:
     company = create_company()
     update_url = reverse("companies:update_jobs", args=(company.pk,))
 
     html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
 
+    heading_start = html.index('<div class="company-jobs-heading">')
+    filter_form_start = html.index('<form class="jobs-table-filter-form"', heading_start)
+    heading_html = html[heading_start:filter_form_start]
     assert f'action="{update_url}"' in html
-    action_index = html.index(f'action="{update_url}"')
-    update_form = html[html.rfind("<form", 0, action_index) :]
+    assert f'action="{update_url}"' in heading_html
+    assert "Clear filters" in heading_html
+    assert "Saved vacancies for this company." in heading_html
+    assert heading_html.index("Jobs") < heading_html.index("Update jobs")
+    assert heading_html.index("Update jobs") < heading_html.index("Clear filters")
+    assert '<div class="company-jobs-actions">' in heading_html
+    action_index = heading_html.index(f'action="{update_url}"')
+    update_form = heading_html[heading_html.rfind("<form", 0, action_index) :]
     update_form = update_form[: update_form.index("</form>")]
+    assert 'class="company-jobs-update"' in update_form
     assert 'method="post"' in update_form
     assert 'name="csrfmiddlewaretoken"' in update_form
     assert "Update jobs" in update_form
     assert "disabled" not in update_form
+
+
+def test_company_detail_action_layout_has_desktop_and_mobile_contracts() -> None:
+    stylesheet = (
+        Path(__file__).resolve().parents[1] / "static" / "css" / "app.css"
+    ).read_text(encoding="utf-8")
+    mobile_start = stylesheet.index("@media (max-width: 40rem)")
+    desktop_css = stylesheet[:mobile_start]
+    mobile_css = stylesheet[mobile_start:]
+
+    assert ".button-danger-outline {\n  background: #ffffff;" in desktop_css
+    assert "border-color: #d92d20;\n  color: #b42318;" in desktop_css
+    assert """.company-jobs-heading {
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}""" in desktop_css
+    assert """.company-jobs-actions {
+  display: flex;
+  align-items: flex-end;
+  flex: none;
+  flex-direction: column;
+  gap: 0.3rem;
+}""" in desktop_css
+    assert """.company-jobs-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.75rem;
+  }""" in mobile_css
+    assert """.company-jobs-actions {
+    align-items: center;
+    flex-direction: row;
+    gap: 0.75rem;
+  }""" in mobile_css
 
 
 def test_runtime_fixture_setting_uses_tracked_demo_data_not_test_fixtures() -> None:
