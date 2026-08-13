@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -123,6 +124,7 @@ class ControlledBackgroundExecutor:
         self._clock = clock
         self._lock = Lock()
         self._active: dict[int, Future[PipelineResult] | None] = {}
+        self._active_discoveries: dict[int, Future[Any] | None] = {}
         self._shutdown = False
 
     @staticmethod
@@ -438,6 +440,56 @@ class ControlledBackgroundExecutor:
             recover_job_errors=recover_job_errors,
             miss_threshold=miss_threshold,
         )
+
+    def _run_discovery(self, *, company_id: int, supplied_domain: str) -> Any:
+        close_old_connections()
+        try:
+            run_discovery = importlib.import_module("discovery.service").run_discovery
+            return run_discovery(company_id=company_id, supplied_domain=supplied_domain)
+        finally:
+            close_old_connections()
+
+    def _release_discovery(self, company_id: int, future: Future[Any]) -> None:
+        with self._lock:
+            if self._active_discoveries.get(company_id) is future:
+                self._active_discoveries.pop(company_id, None)
+
+    def submit_discovery(
+        self,
+        *,
+        company: CompanyRecord,
+        supplied_domain: str = "",
+    ) -> Future[Any]:
+        """Queue one company-keyed discovery task on the shared bounded pool."""
+        stored_company = self._validated_company(company)
+        company_id = cast(int, stored_company.pk)
+        with self._lock:
+            if self._shutdown:
+                raise BackgroundExecutorShutdownError(
+                    "background executor has been shut down"
+                )
+            existing = self._active_discoveries.get(company_id)
+            if company_id in self._active_discoveries and (
+                existing is None or not existing.done()
+            ):
+                raise BackgroundRunAlreadyScheduledError(
+                    "source discovery is already queued or running for this company"
+                )
+            self._active_discoveries[company_id] = None
+        try:
+            future = self._executor.submit(
+                self._run_discovery,
+                company_id=company_id,
+                supplied_domain=supplied_domain,
+            )
+        except Exception:
+            with self._lock:
+                self._active_discoveries.pop(company_id, None)
+            raise
+        with self._lock:
+            self._active_discoveries[company_id] = future
+        future.add_done_callback(partial(self._release_discovery, company_id))
+        return future
 
     def shutdown(self, wait: bool = True) -> None:
         if type(wait) is not bool:

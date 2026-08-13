@@ -195,7 +195,7 @@ def test_company_list_empty_state_navigation_and_template_contract() -> None:
     assert 'href="/jobs/"' in html
     assert 'href="/scrape-runs/"' in html
     assert '<meta name="viewport"' in html
-    assert '<link rel="stylesheet" href="/static/css/app.css">' in html
+    assert '<link rel="stylesheet" href="/static/css/app.css?v=' in html
     assert html.count("<h1") == 1
 
 
@@ -433,7 +433,8 @@ def test_company_detail_shows_safe_source_link_and_missing_url_fallback() -> Non
     assert 'href="https://jobs.example.test/example/openings"' in configured_html
     assert 'target="_blank"' in configured_html
     assert 'rel="noopener noreferrer"' in configured_html
-    assert ">https://jobs.example.test/example/openings</a>" in configured_html
+    assert 'title="https://jobs.example.test/example/openings"' in configured_html
+    assert ">jobs.example.test/example/openings</a>" in configured_html
     assert "Not configured" in missing_html
     assert "INACTIVE" in missing_html
     assert "Other" in missing_html
@@ -1306,6 +1307,31 @@ def test_update_jobs_rejects_inactive_company_without_submission() -> None:
     assert b"Activate this company before updating jobs." in browser.get(response.url).content
 
 
+def test_update_jobs_without_source_guides_to_discovery_without_starting_it() -> None:
+    company = model("companies.Company").objects.create(name="Needs Initial Discovery")
+    browser = client()
+    no_sources_error = importlib.import_module(
+        "scraping.background"
+    ).BackgroundNoExecutableSourcesError
+
+    with (
+        patch(
+            "companies.views.background_executor.submit_company",
+            side_effect=no_sources_error("no source"),
+        ) as submit,
+        patch("companies.views.background_executor.submit_discovery") as discover,
+    ):
+        response = browser.post(reverse("companies:update_jobs", args=(company.pk,)))
+
+    assert response.status_code == 302
+    assert response.url.endswith("manage_sources=1&source_tab=discovered")
+    submit.assert_called_once_with(company=company)
+    discover.assert_not_called()
+    html = browser.get(response.url).content
+    assert b"Discover or add a source first" in html
+    assert b"Discover sources" in html
+
+
 def test_update_jobs_reports_controlled_unknown_source_submission_error() -> None:
     company = create_company(source="not-permitted")
     browser = client()
@@ -1416,6 +1442,7 @@ def test_create_source_options_come_from_user_selectable_registry_api() -> None:
     assert ("lever", "Lever") in tuple(source_field.choices)
     assert ("darwinbox", "Darwinbox") in tuple(source_field.choices)
     assert ("jazzhr", "JazzHR") in tuple(source_field.choices)
+    assert ("dreamjobs", "DreamJobs") in tuple(source_field.choices)
     assert all(value != "fixture" for value, _label in source_field.choices)
     assert response.context["form"].unavailable_source_choices == (
         (
@@ -1616,26 +1643,29 @@ def test_company_without_sources_renders_source_empty_state_and_add_action() -> 
     html = response.content.decode()
 
     assert "No sources configured" in html
-    assert "Configure sources" in html
+    assert "Manage sources" in html
     assert '<dialog class="source-dialog" id="job-sources-dialog"' in html
     dialog_html = html[html.index('<dialog class="source-dialog"') :]
     assert "No job sources configured." in dialog_html
     assert reverse("companies:source_create", args=(company.pk,)) in dialog_html
+    assert "Discover sources" in dialog_html
+    assert "Discover again" not in dialog_html
     assert 'class="source-row"' not in html
     assert company.sources.count() == 0
 
 
-def test_company_detail_add_source_dialog_is_compact_and_registry_driven() -> None:
+def test_company_detail_connected_tab_add_form_is_compact_and_registry_driven() -> None:
     company = model("companies.Company").objects.create(name="Dialog Add")
 
     html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
-    add_dialog = html[html.index('id="add-source-dialog"') :]
+    add_dialog = html[html.index('id="add-source-form"') :]
 
     assert "Add source" in add_dialog
     assert "Darwinbox" in add_dialog
     assert "Live access unavailable" not in add_dialog
     assert '<option value="darwinbox">Darwinbox</option>' in add_dialog
     assert '<option value="jazzhr">JazzHR</option>' in add_dialog
+    assert '<option value="dreamjobs">DreamJobs</option>' in add_dialog
     assert '<option value="lever">Lever</option>' in add_dialog
     assert (
         '<option value="linkedin" disabled>LinkedIn — Production disabled</option>'
@@ -1653,10 +1683,10 @@ def test_company_detail_add_source_dialog_is_compact_and_registry_driven() -> No
     assert 'name="source_jobs_url"' in add_dialog
     assert "Jobs URL" in add_dialog
     assert 'name="is_active"' not in add_dialog
-    assert "Cancel" in add_dialog
+    assert html.count("<dialog") == 1
 
 
-def test_company_detail_inactive_source_summary_and_compact_edit_dialog() -> None:
+def test_company_detail_inactive_source_summary_and_inline_edit_form() -> None:
     company = model("companies.Company").objects.create(name="Dialog Edit")
     source = company.sources.create(
         source="lever",
@@ -1676,8 +1706,8 @@ def test_company_detail_inactive_source_summary_and_compact_edit_dialog() -> Non
     assert 'name="source_jobs_url"' in edit_dialog
     assert '<select name="source"' not in edit_dialog
     assert 'name="is_active"' not in edit_dialog
-    assert "Cancel" in edit_dialog
     assert ">Save</button>" in edit_dialog
+    assert "Discover sources" in html
 
 
 def test_company_source_dialog_script_supports_open_close_and_escape() -> None:
@@ -1689,6 +1719,12 @@ def test_company_source_dialog_script_supports_open_close_and_escape() -> None:
     assert 'event.key === "Escape"' in script
     assert "dialog.close()" in script
     assert "[data-dialog-target]" in script
+    assert "ArrowRight" in script
+    assert "opener.focus()" in script
+    assert "scheduleDiscoveryRefresh(dialog)" in script
+    assert "window.clearTimeout(refreshTimer)" in script
+    assert "[data-connected-source-link]" in script
+    assert 'data-source-tab="connected"' in script
 
 
 def test_add_source_uses_registry_choices_and_creates_approved_active_lever() -> None:
@@ -1700,6 +1736,7 @@ def test_add_source_uses_registry_choices_and_creates_approved_active_lever() ->
     assert '<option value="lever">Lever</option>' in html
     assert '<option value="darwinbox">Darwinbox</option>' in html
     assert '<option value="jazzhr">JazzHR</option>' in html
+    assert '<option value="dreamjobs">DreamJobs</option>' in html
     assert (
         '<option value="linkedin" disabled>LinkedIn — Production disabled</option>'
         in html
@@ -1717,7 +1754,7 @@ def test_add_source_uses_registry_choices_and_creates_approved_active_lever() ->
     response = client().post(add_url, valid_source_data())
 
     assert response.status_code == 302
-    assert response.url.endswith("?manage_sources=1")
+    assert response.url.endswith("?manage_sources=1&source_tab=connected")
     source = company.sources.get()
     assert source.source == "lever"
     assert source.source_jobs_url == "https://jobs.lever.co/example"
@@ -1774,6 +1811,26 @@ def test_add_source_creates_approved_active_jazzhr() -> None:
     assert "JazzHR" in client().get(response.url).content.decode()
 
 
+def test_add_source_creates_approved_active_dreamjobs_custom_domain() -> None:
+    company = model("companies.Company").objects.create(name="Data Sentics")
+
+    response = client().post(
+        reverse("companies:source_create", args=(company.pk,)),
+        valid_source_data(
+            source="dreamjobs",
+            source_jobs_url="https://careers.datasentics.com/jobs",
+        ),
+    )
+
+    assert response.status_code == 302
+    source = company.sources.get()
+    assert source.source == "dreamjobs"
+    assert source.source_jobs_url == "https://careers.datasentics.com/jobs"
+    assert source.approval_status == "approved"
+    assert source.is_active is True
+    assert "DreamJobs" in client().get(response.url).content.decode()
+
+
 def test_existing_darwinbox_source_is_visible_and_presented_as_active() -> None:
     company = model("companies.Company").objects.create(name="Darwinbox Existing")
     source = company.sources.create(
@@ -1827,6 +1884,7 @@ def test_update_jobs_submits_active_darwinbox_source_without_network() -> None:
         ("darwinbox", "https://tenant.darwinbox.com/not-careers"),
         ("jazzhr", "https://example.com/apply"),
         ("jazzhr", "https://example.applytojob.com/not-apply"),
+        ("dreamjobs", "https://careers.datasentics.com/not-jobs"),
         ("lever", ""),
         ("lever", "https://example.com/not-lever"),
     ],
@@ -1844,7 +1902,7 @@ def test_add_source_rejects_internal_unsupported_blank_and_invalid_config(
 
     assert response.status_code == 200
     assert response.context["form"].errors
-    assert 'id="add-source-dialog"' in response.content.decode()
+    assert 'id="add-source-form"' in response.content.decode()
     assert 'data-auto-open' in response.content.decode()
     assert company.sources.count() == 0
 
@@ -1938,7 +1996,7 @@ def test_edit_source_changes_url_but_platform_is_immutable_and_cross_company_is_
     )
 
     assert response.status_code == 302
-    assert response.url.endswith("?manage_sources=1")
+    assert response.url.endswith("?manage_sources=1&source_tab=connected")
     assert cross_company.status_code == 404
     source.refresh_from_db()
     assert source.source == "lever"
@@ -2241,3 +2299,1308 @@ def test_unknown_company_url_returns_not_found() -> None:
     response = client().get("/companies/not-a-real-page/")
 
     assert response.status_code == 404
+
+
+def discovery_run(company: Any, *, status: str = "needs_review") -> Any:
+    return model("discovery.DiscoveryRun").objects.create(
+        company=company,
+        query=f'"{company.name}" official website',
+        official_website_url="https://example.com/",
+        careers_url="https://example.com/careers",
+        status=status,
+        summary="Saved discovery result",
+    )
+
+
+def discovery_candidate(
+    run: Any,
+    *,
+    url: str,
+    kind: str = "source",
+    platform: str = "lever",
+    supported: bool = True,
+    decision: str = "selected",
+    company_source: Any = None,
+    official_site_eligibility: str = "uncertain",
+    job_source_eligibility: str = "uncertain",
+    job_source_confidence: int = 0,
+    evidence: list[str] | None = None,
+) -> Any:
+    return model("discovery.DiscoveryCandidate").objects.create(
+        run=run,
+        kind=kind,
+        discovered_url=url,
+        canonical_url=url,
+        platform=platform,
+        confidence=92,
+        job_source_confidence=job_source_confidence,
+        evidence=(
+            evidence
+            if evidence is not None
+            else ["Company name matched", "Careers link relationship"]
+        ),
+        redirects=[url],
+        supported=supported,
+        decision=decision,
+        reason="Saved evidence reason",
+        company_source=company_source,
+        official_site_eligibility=official_site_eligibility,
+        job_source_eligibility=job_source_eligibility,
+    )
+
+
+def test_unified_sources_manager_has_exactly_two_tabs_and_no_second_dialog() -> None:
+    company = model("companies.Company").objects.create(name="Unified Sources")
+    run = discovery_run(company)
+    discovery_candidate(run, url="https://jobs.lever.co/unified")
+
+    html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
+    before_jobs = html[: html.index('id="jobs-heading"')]
+
+    assert html.count("<dialog") == 1
+    assert before_jobs.count('role="tab"') == 2
+    assert '>Connected (0)</button>' in before_jobs
+    assert '>Discovered</button>' in before_jobs
+    assert 'id="sources-panel-discovered"' in before_jobs
+    assert "Source Discovery" not in html
+    assert html.index("source-summary") < html.index('id="jobs-heading"')
+
+
+@pytest.mark.parametrize("status", ["running", "needs_review", "failed"])
+def test_unified_sources_manager_defaults_to_discovered_for_actionable_run(
+    status: str,
+) -> None:
+    company = model("companies.Company").objects.create(name=f"Discovery {status}")
+    discovery_run(company, status=status)
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,)) + "?manage_sources=1"
+    ).content.decode()
+
+    assert 'id="sources-tab-discovered" role="tab"' in html
+    assert 'data-source-tab="discovered">Discovered</button>' in html
+    assert 'data-source-panel="discovered" hidden' not in html
+    assert 'data-source-panel="connected" hidden' in html
+    if status == "running":
+        assert 'data-discovery-running="true"' in html
+        assert "source_tab=discovered" in html
+
+
+def test_discovered_tab_derives_and_renders_every_candidate_state() -> None:
+    company = model("companies.Company").objects.create(name="State Matrix")
+    connected_source = company.sources.create(
+        source="jazzhr",
+        source_jobs_url="https://connected.applytojob.com/apply/jobs/",
+        approval_status="approved",
+        is_active=True,
+    )
+    old_run = discovery_run(company)
+    discovery_candidate(old_run, url="https://jobs.lever.co/old-hidden")
+    run = discovery_run(company)
+    discovery_candidate(run, url="https://jobs.lever.co/ready")
+    discovery_candidate(run, url="https://jobs.lever.co/ready-two")
+    discovery_candidate(
+        run,
+        url=connected_source.source_jobs_url,
+        platform="jazzhr",
+        decision="already_connected",
+        company_source=connected_source,
+    )
+    discovery_candidate(
+        run,
+        url="https://boards.greenhouse.io/state-matrix",
+        platform="greenhouse",
+        supported=False,
+        decision="unsupported",
+        evidence=["Unregistered ATS asset or host"],
+    )
+    discovery_candidate(
+        run,
+        url="https://example.com/careers",
+        kind="careers",
+        platform="",
+        supported=False,
+        decision="unsupported",
+        evidence=["Confirmed careers listing with repeated job cards"],
+    )
+    discovery_candidate(
+        run,
+        url="https://jobs.lever.co/review",
+        decision="needs_review",
+        evidence=["Repeated job cards"],
+    )
+    discovery_candidate(
+        run,
+        url="https://linkedin.com/jobs/search/?keywords=state",
+        kind="official_site",
+        platform="",
+        supported=False,
+        decision="rejected",
+    )
+    discovery_candidate(
+        run,
+        url="https://linkedin.com/company/state-matrix",
+        kind="official_site",
+        platform="",
+        supported=False,
+        decision="rejected",
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    for state in ("ready_to_connect", "adapter_required", "investigation_required", "needs_review"):
+        assert f'data-candidate-state="{state}"' in html
+    assert 'data-candidate-state="connected"' not in html
+    assert 'data-candidate-state="not_a_job_source"' not in html
+    assert "https://jobs.lever.co/old-hidden" in html
+    assert "Adapter task" in html
+    assert "New adapter needed" in html
+    assert "Connect selected" not in html
+
+
+def test_single_connect_is_idempotent_and_company_scoped() -> None:
+    company = model("companies.Company").objects.create(name="Connect Owner")
+    other = model("companies.Company").objects.create(name="Other Owner")
+    run = discovery_run(company)
+    candidate = discovery_candidate(run, url="https://jobs.lever.co/connect-owner")
+
+    first = client().post(
+        reverse("discovery:connect", args=(company.pk, candidate.pk))
+    )
+    repeated = client().post(
+        reverse("discovery:connect", args=(company.pk, candidate.pk))
+    )
+    cross_company = client().post(
+        reverse("discovery:connect", args=(other.pk, candidate.pk))
+    )
+
+    assert first.status_code == 302
+    assert first.url.endswith("source_tab=connected")
+    assert repeated.status_code == 302
+    assert cross_company.status_code == 302
+    assert company.sources.count() == 1
+    assert other.sources.count() == 0
+    candidate.refresh_from_db()
+    assert candidate.decision == "connected"
+    assert candidate.company_source_id == company.sources.get().pk
+
+
+def test_bulk_connect_revalidates_each_candidate_and_reports_partial_result() -> None:
+    company = model("companies.Company").objects.create(name="Bulk Owner")
+    run = discovery_run(company)
+    ready = discovery_candidate(run, url="https://jobs.lever.co/bulk-owner")
+    review = discovery_candidate(
+        run,
+        url="https://jobs.lever.co/bulk-review",
+        decision="needs_review",
+    )
+    browser = client()
+
+    response = browser.post(
+        reverse("discovery:connect_selected", args=(company.pk,)),
+        {"candidate_ids": [str(ready.pk), str(ready.pk), str(review.pk), "bad"]},
+    )
+    rendered = browser.get(response.url).content.decode()
+
+    assert response.status_code == 302
+    assert response.url.endswith("source_tab=connected")
+    assert company.sources.count() == 1
+    assert "was connected" in rendered
+    assert f"Candidate #{review.pk} could not be connected" in rendered
+    review.refresh_from_db()
+    assert review.decision == "needs_review"
+
+
+def test_revalidate_uses_only_saved_candidate_and_never_creates_source() -> None:
+    company = model("companies.Company").objects.create(name="Saved Revalidate")
+    run = discovery_run(company)
+    candidate = discovery_candidate(
+        run,
+        url="https://jobs.lever.co/saved-revalidate",
+        supported=False,
+        decision="unsupported",
+    )
+
+    with patch("discovery.service.configured_search_provider") as search_provider:
+        response = client().post(
+            reverse("discovery:revalidate", args=(company.pk, candidate.pk))
+        )
+
+    assert response.status_code == 302
+    search_provider.assert_not_called()
+    assert company.sources.count() == 0
+    candidate.refresh_from_db()
+    assert candidate.supported is True
+    assert candidate.decision == "selected"
+
+
+def test_existing_equivalent_source_state_is_preserved_by_discovered_view() -> None:
+    company = model("companies.Company").objects.create(name="Preserve Source")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/preserve/",
+        approval_status="needs_review",
+        is_active=False,
+    )
+    run = discovery_run(company)
+    candidate = discovery_candidate(run, url="https://jobs.lever.co/preserve")
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+    discovered_start = html.index('id="sources-panel-discovered"')
+    discovered = html[discovered_start : html.index("</section>", discovered_start)]
+
+    assert candidate.canonical_url not in discovered
+    source.refresh_from_db()
+    candidate.refresh_from_db()
+    assert source.approval_status == "needs_review"
+    assert source.is_active is False
+    assert candidate.decision == "selected"
+
+
+def test_adapter_task_draft_is_built_from_saved_data_without_side_effects() -> None:
+    company = model("companies.Company").objects.create(name="Draft Company")
+    run = discovery_run(company)
+    candidate = discovery_candidate(
+        run,
+        url="https://boards.greenhouse.io/draft-company",
+        platform="greenhouse",
+        supported=False,
+        decision="unsupported",
+        evidence=["Unregistered ATS asset or host"],
+    )
+    run_count = model("discovery.DiscoveryRun").objects.count()
+    candidate_count = model("discovery.DiscoveryCandidate").objects.count()
+
+    with patch("discovery.service.configured_search_provider") as search_provider:
+        html = client().get(
+            reverse("companies:detail", args=(company.pk,))
+            + "?manage_sources=1&source_tab=discovered"
+        ).content.decode()
+
+    search_provider.assert_not_called()
+    assert "Adapter research task" in html
+    assert "Draft Company" in html
+    assert candidate.canonical_url in html
+    assert "no registered adapter supports this source" in html
+    assert "Do not assume implementation is feasible" in html
+    assert "DiscoveryRun ID" not in html
+    assert "Confidence:" not in html
+    assert "Evidence:" not in html
+    assert model("discovery.DiscoveryRun").objects.count() == run_count
+    assert model("discovery.DiscoveryCandidate").objects.count() == candidate_count
+    assert company.sources.count() == 0
+
+
+def test_discovered_tab_hides_registry_coverage_and_internal_states() -> None:
+    company = model("companies.Company").objects.create(name="Coverage Company")
+    darwinbox = company.sources.create(
+        source="darwinbox",
+        source_jobs_url="https://coverage.darwinbox.com/ms/candidate/careers",
+        approval_status="approved",
+        is_active=True,
+    )
+    jazzhr = company.sources.create(
+        source="jazzhr",
+        source_jobs_url="https://coverage.applytojob.com/apply",
+        approval_status="approved",
+        is_active=True,
+    )
+    run = discovery_run(company, status="already_connected")
+    darwinbox_candidate = discovery_candidate(
+        run,
+        url=darwinbox.source_jobs_url,
+        platform="darwinbox",
+        decision="already_connected",
+        company_source=darwinbox,
+    )
+    darwinbox_candidate.origin = "existing_source"
+    darwinbox_candidate.save(update_fields=("origin",))
+    jazzhr_candidate = discovery_candidate(
+        run,
+        url=jazzhr.source_jobs_url,
+        platform="jazzhr",
+        decision="already_connected",
+        company_source=jazzhr,
+    )
+    jazzhr_candidate.origin = "existing_source"
+    jazzhr_candidate.save(update_fields=("origin",))
+    check_model = model("discovery.DiscoveryAdapterCheck")
+    for platform, status, candidate, source in (
+        ("darwinbox", "already_connected", darwinbox_candidate, darwinbox),
+        ("dreamjobs", "not_found", None, None),
+        ("jazzhr", "already_connected", jazzhr_candidate, jazzhr),
+        ("lever", "not_found", None, None),
+    ):
+        check_model.objects.create(
+            run=run,
+            platform=platform,
+            status=status,
+            reason="Coverage evidence",
+            candidate=candidate,
+            company_source=source,
+        )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    dialog = html[html.index('<dialog class="source-dialog"') : html.index("</dialog>")]
+    discovered_start = dialog.index('id="sources-panel-discovered"')
+    discovered = dialog[discovered_start : dialog.index("</section>", discovered_start)]
+    assert "4 of 4 checked" not in dialog
+    assert "Adapter coverage" not in dialog
+    assert "Not found" not in dialog
+    assert "not_checked" not in dialog
+    assert "validation_failed" not in dialog
+    assert "already_connected" not in dialog
+    assert dialog.count(">Connected</span>") == 0
+    assert darwinbox.source_jobs_url not in discovered
+    assert jazzhr.source_jobs_url not in discovered
+
+
+def test_discovered_groups_other_results_and_hides_technical_data_by_default() -> None:
+    company = model("companies.Company").objects.create(name="Readable Discovery")
+    run = discovery_run(company)
+    connected_source = company.sources.create(
+        source="jazzhr",
+        source_jobs_url="https://readable.applytojob.com/apply",
+        approval_status="approved",
+        is_active=True,
+    )
+    discovery_candidate(
+        run,
+        url=connected_source.source_jobs_url,
+        platform="jazzhr",
+        decision="already_connected",
+        company_source=connected_source,
+    )
+    urls = (
+        "https://linkedin.com/company/readable",
+        "https://leadiq.com/c/readable/123",
+        "https://example.net/news/readable-company",
+    )
+    for url in urls:
+        discovery_candidate(
+            run,
+            url=url,
+            kind="official_site",
+            platform="",
+            supported=False,
+            decision="rejected",
+        )
+
+    with patch("discovery.service.configured_search_provider") as search_provider:
+        html = client().get(
+            reverse("companies:detail", args=(company.pk,))
+            + "?manage_sources=1&source_tab=discovered"
+        ).content.decode()
+
+    search_provider.assert_not_called()
+    assert "Other search results" not in html
+    for url in urls:
+        assert url not in html
+    assert "Evidence</dt>" not in html
+    assert '<div class="discovery-source-list">' not in html
+    assert 'class="discovery-candidate"' not in html
+    assert run.candidates.count() == 4
+    assert company.sources.count() == 1
+
+
+def test_linkedin_jobs_without_confirmed_listing_is_hidden() -> None:
+    company = model("companies.Company").objects.create(name="Data Sentics")
+    run = discovery_run(company)
+    candidate = discovery_candidate(
+        run,
+        url="https://www.linkedin.com/company/datasentics/jobs",
+        kind="official_site",
+        platform="",
+        supported=False,
+        decision="rejected",
+        official_site_eligibility="not_official_site",
+        job_source_eligibility="external_job_board",
+        job_source_confidence=82,
+    )
+    discovery_candidate(
+        run,
+        url="https://www.linkedin.com/company/datasentics",
+        kind="official_site",
+        platform="",
+        supported=False,
+        decision="rejected",
+        official_site_eligibility="not_official_site",
+        job_source_eligibility="not_a_job_source",
+        job_source_confidence=90,
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert 'data-candidate-state="adapter_required"' not in html
+    assert "LinkedIn jobs" not in html
+    assert "New adapter needed" not in html
+    assert "Adapter task" not in html
+    assert reverse("discovery:connect", args=(company.pk, candidate.pk)) not in html
+    assert "Other search results" not in html
+
+
+def test_blog_result_with_labour_market_terms_is_hidden_from_discovered() -> None:
+    company = model("companies.Company").objects.create(name="Acuity Analytics")
+    run = discovery_run(company)
+    blog_url = "https://acuityanalytics.com/blog/ai-skills-gap-and-talent-shortage/"
+    discovery_candidate(
+        run,
+        url=blog_url,
+        kind="careers",
+        platform="",
+        supported=False,
+        decision="needs_review",
+        job_source_eligibility="possible_job_source",
+        evidence=[
+            "Search result mentions talent, skills, jobs, careers, hiring and recruitment"
+        ],
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert blog_url not in html
+    assert "Adapter task" not in html
+    assert "New adapter needed" not in html
+    assert "No job sources found." in html
+    assert "require attention" not in html
+
+
+@pytest.mark.parametrize("keyword", ["talent", "skills", "jobs", "careers"])
+def test_article_keywords_do_not_create_adapter_task(keyword: str) -> None:
+    company = model("companies.Company").objects.create(name=f"Article {keyword}")
+    run = discovery_run(company)
+    url = f"https://example.com/insights/{keyword}-market-report/"
+    discovery_candidate(
+        run,
+        url=url,
+        kind="careers",
+        platform="",
+        supported=False,
+        decision="unsupported",
+        job_source_eligibility="possible_job_source",
+        evidence=[f"Search text contains {keyword}"],
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert url not in html
+    assert "Adapter task" not in html
+
+
+def test_official_corporate_url_without_listing_does_not_create_adapter_task() -> None:
+    company = model("companies.Company").objects.create(name="Corporate Only")
+    run = discovery_run(company)
+    corporate_url = "https://corporate-only.example/about-us/"
+    discovery_candidate(
+        run,
+        url=corporate_url,
+        kind="official_site",
+        platform="",
+        supported=False,
+        decision="needs_review",
+        official_site_eligibility="official_site",
+        job_source_eligibility="possible_job_source",
+        evidence=["Company identity matches the official domain"],
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert corporate_url not in html
+    assert "Adapter task" not in html
+
+
+def test_confirmed_unknown_listing_creates_exactly_one_adapter_task() -> None:
+    company = model("companies.Company").objects.create(name="Unknown ATS")
+    run = discovery_run(company)
+    listing_url = "https://careers.unknown-ats.example/openings"
+    discovery_candidate(
+        run,
+        url=listing_url,
+        kind="source",
+        platform="unknown_ats",
+        supported=False,
+        decision="unsupported",
+        job_source_eligibility="unsupported_ats",
+        evidence=["Job listing schema", "Repeated job cards", "ATS-specific metadata"],
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert listing_url in html
+    assert html.count("Adapter task") == 1
+    assert html.count("New adapter needed") == 1
+    assert "1 additional source found." in html
+
+
+def test_connected_and_canonical_duplicate_candidates_are_hidden_from_discovered() -> None:
+    company = model("companies.Company").objects.create(name="Canonical Duplicate")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/canonical-duplicate",
+        approval_status="approved",
+        is_active=True,
+    )
+    run = discovery_run(company)
+    discovery_candidate(
+        run,
+        url=source.source_jobs_url,
+        company_source=source,
+        decision="already_connected",
+    )
+    duplicate = discovery_candidate(
+        run,
+        url=f"{source.source_jobs_url}/",
+        decision="selected",
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+    discovered = html[html.index('id="sources-panel-discovered"') :]
+
+    assert source.source_jobs_url not in discovered
+    assert duplicate.canonical_url not in discovered
+    assert "1 source already connected · No additional sources found." in discovered
+    assert "require attention" not in discovered
+
+
+def test_ignore_preserves_candidate_and_removes_it_from_inventory() -> None:
+    company = model("companies.Company").objects.create(name="Reversible Ignore")
+    run = discovery_run(company)
+    candidate = discovery_candidate(
+        run,
+        url="https://unknown.example/careers/jobs",
+        kind="careers",
+        platform="",
+        supported=False,
+        decision="needs_review",
+        evidence=["Confirmed careers listing with repeated job cards"],
+    )
+
+    ignored = client().post(reverse("discovery:ignore", args=(company.pk, candidate.pk)))
+    candidate.refresh_from_db()
+    assert ignored.status_code == 302
+    assert candidate.is_ignored is True
+    assert run.candidates.filter(pk=candidate.pk).exists()
+
+    ignored_html = client().get(ignored.url).content.decode()
+    assert "Restore" not in ignored_html
+    assert "Ignored by user" not in ignored_html
+    assert candidate.canonical_url not in ignored_html
+
+
+def test_candidate_card_is_compact_and_discover_again_is_primary() -> None:
+    company = model("companies.Company").objects.create(name="Compact Sources")
+    run = discovery_run(company)
+    discovery_candidate(
+        run,
+        url="https://unknown.example/company/jobs",
+        kind="careers",
+        platform="",
+        supported=False,
+        decision="needs_review",
+        evidence=["Confirmed job listing schema"],
+    )
+    discovery_candidate(
+        run,
+        url="https://example.com/",
+        kind="official_site",
+        platform="",
+        supported=False,
+        decision="selected",
+        official_site_eligibility="official_site",
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+    source_start = html.index('<div class="discovery-source-list">')
+    source_end = html.index("</section>", source_start)
+    compact_list = html[source_start:source_end]
+
+    assert "Unrecognized careers source" in compact_list
+    assert "New adapter needed" in compact_list
+    assert "confidence" not in html.casefold()
+    assert html.count('<article class="discovery-source-row"') == 1
+    technical_labels = (
+        "Official site</dt>",
+        "Careers URL</dt>",
+        "Origin</dt>",
+        "Validation</dt>",
+        "Redirects</dt>",
+    )
+    for technical_label in technical_labels:
+        assert technical_label not in compact_list
+    discover_button = (
+        'class="button button-primary button-compact" type="submit" '
+        'form="discovery-start-form" data-source-tab-action="discovered"'
+    )
+    assert discover_button in html
+
+
+def test_historical_discovery_without_checks_hides_coverage_details() -> None:
+    company = model("companies.Company").objects.create(name="Historical Coverage")
+    run = discovery_run(company)
+    discovery_candidate(run, url="https://jobs.lever.co/historical")
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert "Adapter coverage was not recorded for this run." not in html
+    assert "Adapter coverage" not in html
+    assert "0 of 0" not in html
+
+
+def test_sources_dialog_keeps_close_and_tabs_in_sticky_header() -> None:
+    company = model("companies.Company").objects.create(name="Sticky Sources")
+    html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
+    header = html[html.index('<header class="source-dialog-header">') : html.index(
+        "</header>", html.index('<header class="source-dialog-header">')
+    )]
+
+    assert "data-source-dialog-close" in header
+    assert 'aria-label="Close job sources">\u00d7</button>' in header
+    assert ">Close</button>" not in header
+    assert 'role="tablist"' in header
+    assert header.count('role="tab"') == 2
+    assert 'role="tabpanel"' in html
+
+
+def test_sources_toolbar_uses_actual_company_sources_and_one_context_action() -> None:
+    company = model("companies.Company").objects.create(name="Toolbar Sources")
+    for source, url in (
+        ("darwinbox", "https://toolbar.darwinbox.com/ms/candidate/careers"),
+        ("jazzhr", "https://toolbar.applytojob.com/apply"),
+    ):
+        company.sources.create(
+            source=source,
+            source_jobs_url=url,
+            approval_status="approved",
+            is_active=True,
+        )
+
+    connected_html = client().get(
+        reverse("companies:detail", args=(company.pk,)) + "?manage_sources=1"
+    ).content.decode()
+    connected_header_start = connected_html.index('<header class="source-dialog-header">')
+    connected_header = connected_html[
+        connected_header_start : connected_html.index("</header>", connected_header_start)
+    ]
+    assert ">Connected (2)</button>" in connected_header
+    assert 'data-source-tab-action="connected" data-source-form-toggle="add-source-form"' in (
+        connected_header
+    )
+    assert ">+ Add source</button>" in connected_header
+    assert 'data-source-tab-action="discovered" hidden' in connected_header
+    assert "source-panel-heading" not in connected_html
+
+    discovered_html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+    discovered_header_start = discovered_html.index('<header class="source-dialog-header">')
+    discovered_header = discovered_html[
+        discovered_header_start : discovered_html.index(
+            "</header>", discovered_header_start
+        )
+    ]
+    hidden_add_action = (
+        'data-source-tab-action="connected" '
+        'data-source-form-toggle="add-source-form" hidden'
+    )
+    assert hidden_add_action in discovered_header
+    assert 'form="discovery-start-form" data-source-tab-action="discovered"' in (
+        discovered_header
+    )
+    assert discovered_header.count("Discover sources") == 1
+    assert "Discover again" not in discovered_html
+    assert "Start discovery" not in discovered_html
+    assert discovered_html.count("Discover sources") == 1
+    assert 'id="discovery-start-form" class="discovery-start-form"' in discovered_html
+    assert "Official domain (optional)" in discovered_html
+
+
+def test_connected_sources_survive_a_later_discovery_result() -> None:
+    company = model("companies.Company").objects.create(name="Persistent Sources")
+    darwinbox = company.sources.create(
+        source="darwinbox",
+        source_jobs_url="https://persistent.darwinbox.com/ms/candidate/careers",
+        approval_status="approved",
+        is_active=True,
+    )
+    jazzhr = company.sources.create(
+        source="jazzhr",
+        source_jobs_url="https://persistent.applytojob.com/apply",
+        approval_status="approved",
+        is_active=True,
+    )
+    discovery_run(company, status="not_found")
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,)) + "?manage_sources=1"
+    ).content.decode()
+    connected_start = html.index('id="sources-panel-connected"')
+    connected = html[connected_start : html.index("</section>", connected_start)]
+
+    assert ">Connected (2)</button>" in html
+    assert "Darwinbox" in connected
+    assert darwinbox.source_jobs_url in connected
+    assert "JazzHR" in connected
+    assert jazzhr.source_jobs_url in connected
+    assert connected.count(">APPROVED</span>") == 2
+    assert connected.count(">ACTIVE</span>") == 2
+
+
+def test_discovery_summary_uses_company_sources_and_is_rendered_once() -> None:
+    company = model("companies.Company").objects.create(name="Summary Sources")
+    for source, url in (
+        ("darwinbox", "https://summary.darwinbox.com/ms/candidate/careers"),
+        ("jazzhr", "https://summary.applytojob.com/apply"),
+    ):
+        company.sources.create(
+            source=source,
+            source_jobs_url=url,
+            approval_status="approved",
+            is_active=True,
+        )
+    discovery_run(company, status="already_connected")
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+    summary = "2 sources already connected · No additional sources found."
+
+    assert html.count(summary) == 1
+    assert "No job sources found." not in html
+    assert "No new sources found" not in html
+
+
+def test_discovery_summary_reports_additional_source_without_connected_duplicates() -> None:
+    company = model("companies.Company").objects.create(name="Additional Source")
+    source = company.sources.create(
+        source="jazzhr",
+        source_jobs_url="https://additional.applytojob.com/apply",
+        approval_status="approved",
+        is_active=True,
+    )
+    run = discovery_run(company)
+    discovery_candidate(
+        run,
+        url=source.source_jobs_url,
+        platform="jazzhr",
+        decision="already_connected",
+        company_source=source,
+    )
+    new_url = "https://boards.greenhouse.io/additional-source"
+    discovery_candidate(
+        run,
+        url=new_url,
+        platform="greenhouse",
+        supported=False,
+        decision="unsupported",
+        job_source_eligibility="unsupported_ats",
+        evidence=["Unregistered ATS asset or host"],
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+    discovered_start = html.index('id="sources-panel-discovered"')
+    discovered = html[discovered_start : html.index("</section>", discovered_start)]
+
+    assert "1 source already connected · 1 additional source found." in discovered
+    assert new_url in discovered
+    assert source.source_jobs_url not in discovered
+
+
+@pytest.mark.parametrize("status", ["failed", "needs_review"])
+def test_failed_or_partial_discovery_does_not_claim_no_additional_sources(
+    status: str,
+) -> None:
+    company = model("companies.Company").objects.create(name=f"Incomplete {status}")
+    company.sources.create(
+        source="jazzhr",
+        source_jobs_url=f"https://incomplete-{status}.applytojob.com/apply",
+        approval_status="approved",
+        is_active=True,
+    )
+    run = discovery_run(company, status=status)
+    if status == "needs_review":
+        model("discovery.DiscoveryAdapterCheck").objects.create(
+            run=run,
+            platform="lever",
+            status="not_checked",
+            reason="Bounded search did not complete",
+        )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert "No additional sources found" not in html
+    expected = (
+        "Discovery could not be completed. Existing sources remain connected."
+        if status == "failed"
+        else "Search incomplete — some sources could not be checked."
+    )
+    assert html.count(expected) == 1
+
+
+def test_sources_manager_uses_compact_rows_and_hides_technical_fields() -> None:
+    company = model("companies.Company").objects.create(name="Compact Contract")
+    source = company.sources.create(
+        source="dreamjobs",
+        source_jobs_url="https://careers.example.com/jobs",
+        approval_status="approved",
+        is_active=True,
+    )
+    run = discovery_run(company)
+    discovery_candidate(
+        run,
+        url=source.source_jobs_url,
+        platform="dreamjobs",
+        decision="already_connected",
+        company_source=source,
+    )
+    discovery_candidate(
+        run,
+        url="https://linkedin.com/company/compact-contract/jobs",
+        kind="official_site",
+        platform="",
+        supported=False,
+        decision="needs_review",
+        official_site_eligibility="not_official_site",
+        job_source_eligibility="external_job_board",
+    )
+    discovery_candidate(
+        run,
+        url="https://unknown.example/compact-contract/jobs",
+        kind="careers",
+        platform="greenhouse",
+        supported=False,
+        decision="unsupported",
+        job_source_eligibility="unsupported_ats",
+        evidence=["Unregistered ATS asset or host"],
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+    dialog = html[html.index('<dialog class="source-dialog"') : html.index("</dialog>")]
+
+    assert 'class="source-row"' in dialog
+    assert 'class="source-row-main"' in dialog
+    assert 'class="discovery-source-row"' in dialog
+    assert 'class="discovery-candidate"' not in dialog
+    for forbidden in (
+        "Confidence",
+        "Evidence",
+        "Origin",
+        "Redirects",
+        "Validation status",
+        "Adapter coverage",
+        "Platform checks",
+        "Run #",
+        "canonical identity",
+    ):
+        assert forbidden not in dialog
+
+
+def test_sources_manager_render_does_not_search_or_mutate_discovery_state() -> None:
+    company = model("companies.Company").objects.create(name="Read Only Manager")
+    run = discovery_run(company)
+    candidate = discovery_candidate(
+        run,
+        url="https://jobs.lever.co/read-only-manager",
+    )
+    before = (run.status, run.summary, candidate.decision, candidate.reason)
+
+    with patch("discovery.service.configured_search_provider") as search_provider:
+        response = client().get(
+            reverse("companies:detail", args=(company.pk,)) + "?manage_sources=1"
+        )
+
+    assert response.status_code == 200
+    search_provider.assert_not_called()
+    run.refresh_from_db()
+    candidate.refresh_from_db()
+    assert (run.status, run.summary, candidate.decision, candidate.reason) == before
+
+
+def test_actionable_candidate_is_not_lost_when_new_run_is_empty() -> None:
+    company = model("companies.Company").objects.create(name="Candidate Lifecycle")
+    completed = discovery_run(company, status="needs_review")
+    candidate = discovery_candidate(
+        completed,
+        url="https://ascent.applytojob.com/apply",
+        platform="jazzhr",
+        supported=True,
+        decision="selected",
+        job_source_eligibility="supported_ats",
+        evidence=["JazzHR technical signal"],
+    )
+    running = discovery_run(company, status="running")
+
+    running_state = {
+        "run_id": running.pk,
+        "run_status": running.status,
+        "candidate_id": candidate.pk,
+        "candidate_run_id": candidate.run_id,
+        "url": candidate.canonical_url,
+        "platform": candidate.platform,
+        "classification": candidate.job_source_eligibility,
+        "decision": candidate.decision,
+        "ignored": candidate.is_ignored,
+        "company_source_id": candidate.company_source_id,
+    }
+    running_html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    running.status = "not_found"
+    running.save(update_fields=("status",))
+    candidate.refresh_from_db()
+    finished_state = {
+        "run_id": running.pk,
+        "run_status": running.status,
+        "candidate_id": candidate.pk,
+        "candidate_run_id": candidate.run_id,
+        "url": candidate.canonical_url,
+        "platform": candidate.platform,
+        "classification": candidate.job_source_eligibility,
+        "decision": candidate.decision,
+        "ignored": candidate.is_ignored,
+        "company_source_id": candidate.company_source_id,
+    }
+    finished_html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert running_state == {
+        "run_id": running.pk,
+        "run_status": "running",
+        "candidate_id": candidate.pk,
+        "candidate_run_id": completed.pk,
+        "url": "https://ascent.applytojob.com/apply",
+        "platform": "jazzhr",
+        "classification": "supported_ats",
+        "decision": "selected",
+        "ignored": False,
+        "company_source_id": None,
+    }
+    assert finished_state == {**running_state, "run_status": "not_found"}
+    assert "JazzHR" in running_html
+    assert "Ready to connect" in running_html
+    assert "JazzHR" in finished_html
+    assert "Ready to connect" in finished_html
+
+
+def test_running_candidate_is_published_only_after_run_completion() -> None:
+    company = model("companies.Company").objects.create(name="Atomic Publication")
+    run = discovery_run(company, status="running")
+    candidate = discovery_candidate(
+        run,
+        url="https://ascent.applytojob.com/apply",
+        platform="jazzhr",
+        job_source_eligibility="supported_ats",
+    )
+    url = (
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    )
+
+    running_html = client().get(url).content.decode()
+    run.status = "needs_review"
+    run.save(update_fields=("status",))
+    completed_html = client().get(url).content.decode()
+
+    assert "Searching for job sources" in running_html
+    assert candidate.canonical_url not in running_html
+    assert "No job sources found." not in running_html
+    assert candidate.canonical_url in completed_html
+    assert "Ready to connect" in completed_html
+
+
+def test_running_failed_and_partial_runs_preserve_last_published_snapshot() -> None:
+    company = model("companies.Company").objects.create(name="Stable Snapshot")
+    completed = discovery_run(company, status="needs_review")
+    saved = discovery_candidate(
+        completed,
+        url="https://ascent.applytojob.com/apply",
+        platform="jazzhr",
+        job_source_eligibility="supported_ats",
+    )
+    page_url = (
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    )
+
+    running = discovery_run(company, status="running")
+    partial_candidate = discovery_candidate(
+        running,
+        url="https://jobs.lever.co/not-published",
+        job_source_eligibility="supported_ats",
+    )
+    running_html = client().get(page_url).content.decode()
+
+    running.status = "failed"
+    running.save(update_fields=("status",))
+    failed_html = client().get(page_url).content.decode()
+
+    partial = discovery_run(company, status="needs_review")
+    published_partial_candidate = discovery_candidate(
+        partial,
+        url="https://jobs.lever.co/published-after-completion",
+        job_source_eligibility="supported_ats",
+    )
+    model("discovery.DiscoveryAdapterCheck").objects.create(
+        run=partial,
+        platform="darwinbox",
+        status="not_checked",
+        reason="Bounded query limit",
+    )
+    partial_html = client().get(page_url).content.decode()
+
+    for html in (running_html, failed_html, partial_html):
+        assert saved.canonical_url in html
+        assert "No job sources found." not in html
+    assert partial_candidate.canonical_url not in running_html
+    assert partial_candidate.canonical_url not in failed_html
+    assert partial_candidate.canonical_url not in partial_html
+    assert published_partial_candidate.canonical_url in partial_html
+    assert "Searching for job sources" in running_html
+    assert "Discovery could not be completed" in failed_html
+    assert "Search incomplete" in partial_html
+
+
+def test_historical_candidate_connects_with_revalidation_and_moves_to_connected() -> None:
+    company = model("companies.Company").objects.create(name="Historical Connect")
+    completed = discovery_run(company, status="needs_review")
+    candidate = discovery_candidate(
+        completed,
+        url="https://ascent.applytojob.com/apply",
+        platform="jazzhr",
+        job_source_eligibility="supported_ats",
+    )
+    discovery_run(company, status="not_found")
+    manager_url = (
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    )
+
+    first_open = client().get(manager_url).content.decode()
+    reopened = client().get(manager_url).content.decode()
+    with patch("discovery.service.validate_source_configuration") as validator:
+        connected = client().post(
+            reverse("discovery:connect", args=(company.pk, candidate.pk))
+        )
+    repeated = client().post(
+        reverse("discovery:connect", args=(company.pk, candidate.pk))
+    )
+    after = client().get(manager_url).content.decode()
+
+    assert candidate.canonical_url in first_open
+    assert candidate.canonical_url in reopened
+    assert connected.status_code == 302
+    validator.assert_called_once_with(
+        source="jazzhr", source_jobs_url=candidate.canonical_url
+    )
+    assert repeated.status_code == 302
+    assert company.sources.count() == 1
+    source = company.sources.get()
+    assert source.source == "jazzhr"
+    assert source.source_jobs_url == candidate.canonical_url
+    candidate.refresh_from_db()
+    assert candidate.company_source_id == source.pk
+    discovered_start = after.index('id="sources-panel-discovered"')
+    discovered = after[discovered_start : after.index("</section>", discovered_start)]
+    assert candidate.canonical_url not in discovered
+    assert ">Connected (1)</button>" in after
+
+
+def test_historical_supported_review_candidate_remains_ready_to_confirm() -> None:
+    company = model("companies.Company").objects.create(name="Fallback Review")
+    completed = discovery_run(company, status="needs_review")
+    candidate = discovery_candidate(
+        completed,
+        url="https://ascent.applytojob.com/apply",
+        platform="jazzhr",
+        supported=True,
+        decision="needs_review",
+        job_source_eligibility="supported_ats",
+        evidence=[
+            "Candidate came from search fallback, not direct site verification",
+            "JazzHR technical signal",
+        ],
+    )
+    model("discovery.DiscoveryAdapterCheck").objects.create(
+        run=completed,
+        platform="darwinbox",
+        status="not_checked",
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert candidate.canonical_url in html
+    assert "Ready to connect" in html
+    assert reverse("discovery:confirm", args=(company.pk, candidate.pk)) in html
+
+
+def test_acuity_two_source_partial_inventory_connects_independently() -> None:
+    darwinbox_url = "https://acuitykp.darwinbox.com/ms/candidate/careers"
+    jazzhr_url = "https://ascent.applytojob.com/apply"
+    deleted = model("companies.Company").objects.create(name="Acuity Analytics")
+    deleted.sources.create(
+        source="darwinbox",
+        source_jobs_url=darwinbox_url,
+        approval_status="approved",
+        is_active=True,
+    )
+    deleted.delete()
+    company = model("companies.Company").objects.create(name="Acuity Analytics")
+    run = discovery_run(company, status="needs_review")
+    jazzhr = discovery_candidate(
+        run,
+        url=jazzhr_url,
+        platform="jazzhr",
+        job_source_eligibility="supported_ats",
+    )
+    darwinbox = discovery_candidate(
+        run,
+        url=darwinbox_url,
+        platform="darwinbox",
+        job_source_eligibility="supported_ats",
+    )
+    model("discovery.DiscoveryAdapterCheck").objects.create(
+        run=run,
+        platform="lever",
+        status="not_checked",
+    )
+    discovered_url = (
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    )
+
+    first = client().get(discovered_url).content.decode()
+    refreshed = client().get(discovered_url).content.decode()
+    assert first.count("Ready to connect") == 2
+    assert jazzhr_url in first and darwinbox_url in first
+    assert jazzhr_url in refreshed and darwinbox_url in refreshed
+
+    client().post(reverse("discovery:connect", args=(company.pk, jazzhr.pk)))
+    after_jazzhr = client().get(discovered_url).content.decode()
+    discovered_start = after_jazzhr.index('id="sources-panel-discovered"')
+    discovered = after_jazzhr[
+        discovered_start : after_jazzhr.index("</section>", discovered_start)
+    ]
+    assert ">Connected (1)</button>" in after_jazzhr
+    assert jazzhr_url not in discovered
+    assert darwinbox_url in discovered
+    assert "Ready to connect" in discovered
+
+    client().post(reverse("discovery:connect", args=(company.pk, darwinbox.pk)))
+    after_darwinbox = client().get(discovered_url).content.decode()
+    assert ">Connected (2)</button>" in after_darwinbox
+    assert company.sources.count() == 2
+
+
+def test_company_inventory_deduplicates_canonical_url_and_tenant_identity() -> None:
+    company = model("companies.Company").objects.create(name="Canonical Inventory")
+    older = discovery_run(company, status="needs_review")
+    discovery_candidate(
+        older,
+        url="https://ascent.applytojob.com/apply/",
+        platform="jazzhr",
+        job_source_eligibility="supported_ats",
+    )
+    newer = discovery_run(company, status="needs_review")
+    discovery_candidate(
+        newer,
+        url="https://ascent.applytojob.com/apply",
+        platform="jazzhr",
+        job_source_eligibility="supported_ats",
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert html.count('data-candidate-state="ready_to_connect"') == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "expected", "forbidden"),
+    [
+        ("running", "Searching for job sources", "No job sources found."),
+        ("failed", "Discovery could not be completed", "No job sources found."),
+        ("not_found", "No job sources found.", "Searching for job sources"),
+    ],
+)
+def test_empty_state_requires_a_complete_successful_empty_run(
+    status: str, expected: str, forbidden: str
+) -> None:
+    company = model("companies.Company").objects.create(name=f"Empty {status}")
+    discovery_run(company, status=status)
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert expected in html
+    assert forbidden not in html
+
+
+def test_sources_dialog_css_prevents_nested_and_horizontal_overflow() -> None:
+    css = (Path(__file__).resolve().parents[1] / "static" / "css" / "app.css").read_text(
+        encoding="utf-8"
+    )
+
+    assert ".source-dialog-header {" in css
+    assert "position: sticky;" in css
+    assert "overflow-x: hidden;" in css
+    assert "text-overflow: ellipsis;" in css
+    assert "body:has(.source-dialog[open])" in css
+    assert "width: min(60rem, calc(100vw - 3rem));" in css
+    assert "max-height: calc(100vh - 3rem);" in css
+    assert "width: calc(100vw - 2rem);" in css
+    assert "scrollbar-gutter: stable;" in css

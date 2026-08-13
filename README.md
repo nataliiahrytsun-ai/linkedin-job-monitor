@@ -18,6 +18,13 @@ reconciliation, run history, and the UI source-neutral.
 - **Current approved source:** JazzHR. Its plain-HTTP adapter accepts public
   `https://<tenant>.applytojob.com/apply` listings, loads each public detail
   page, and fails closed unless it can return the complete configured snapshot.
+- **Current approved source:** DreamJobs. Its plain-HTTP adapter accepts public
+  HTTPS `/jobs` career pages, including verified custom domains such as
+  `https://careers.datasentics.com/jobs`. It verifies the platform from the
+  Next.js snapshot and DreamJobs assets, then uses the same public GraphQL
+  listing/detail contract as the career page with bounded pagination and
+  request limits. The verified compatibility scope is Data Sentics' current
+  DreamJobs variant, not every historical or future DreamJobs deployment.
 - **Internal test source:** Fixture. It remains registered for deterministic
   offline pipeline tests, but is not offered for new user-managed companies.
 - **LinkedIn production status:** Not implemented; feasibility/access follow-up
@@ -70,6 +77,22 @@ while the short persistence/reconciliation write phase is serialized in the
 process. Each worker closes stale Django connections before and after its task;
 SQLite WAL mode is not enabled.
 
+### Source Discovery
+
+Company detail can discover a probable official careers source in the
+background. Entering the company name is sufficient: production/development
+name search uses Tavily's structured Search API with
+`SOURCE_DISCOVERY_TAVILY_API_KEY` (never search-result HTML). Keyless mode is an
+explicit, bounded diagnostic fallback only. Brave remains an explicitly
+selectable legacy implementation. The official-domain field is only an
+optional accelerator. Configuration, bounded limits, failure behavior, and
+automatic-connection thresholds are documented in
+[Production Source Discovery](docs/SOURCE_DISCOVERY.md).
+Each explicit run inventories all existing and retained sources, scans current
+evidence, and performs registry-driven searches only for missing adapters. The
+Discovered tab keeps separate, deduplicated candidates with their origin and a
+per-platform coverage summary; bounded/incomplete sweeps are labeled partial.
+
 ## Architecture
 
 The source-owned production flow is:
@@ -85,7 +108,10 @@ One Company can own and manage multiple CompanySource configurations, and one
 platform adapter can serve many companies. Background execution, run ownership,
 and reconciliation are source-scoped; a Company update can launch several
 eligible sources independently. Company detail provides a compact source
-summary plus Add, Edit, Activate, and Deactivate workflows. See the
+summary and one **Manage sources** dialog. Its **Connected** tab contains Add,
+Edit, Activate, and Deactivate; its **Discovered** tab contains name-only
+Discovery status, candidates, revalidation, connection actions, and
+saved-evidence task drafts. See the
 [multi-source architecture](docs/MULTI_SOURCE_ARCHITECTURE.md) for the exact
 current and future boundaries.
 
@@ -94,6 +120,7 @@ current and future boundaries.
 - [Milestones and current status](docs/MILESTONES.md)
 - [Backend and quality verification](docs/BACKEND_VERIFICATION.md)
 - [Multi-source architecture](docs/MULTI_SOURCE_ARCHITECTURE.md)
+- [Production Source Discovery](docs/SOURCE_DISCOVERY.md)
 - [Project specification](docs/PROJECT_SPEC.md)
 - [Scrapling guide and evidence](docs/SCRAPLING_GUIDE.md)
 - [Canonical historical LinkedIn pagination diagnostic](docs/diagnostics/linkedin-pagination-2026-08-05.md)

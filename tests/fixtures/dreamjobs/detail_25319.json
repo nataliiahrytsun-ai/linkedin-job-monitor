@@ -1,0 +1,15 @@
+{
+  "data": {
+    "opportunity": {
+      "id": "25319",
+      "company": {"id": "8", "name": "Example", "integrationType": "ATS"},
+      "externalUrl": null,
+      "type": [],
+      "title": "ML Engineer",
+      "locations": [],
+      "salary": null,
+      "workEnvironment": null,
+      "rawDescription": null
+    }
+  }
+}

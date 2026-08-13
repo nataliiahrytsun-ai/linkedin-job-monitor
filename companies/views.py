@@ -1,6 +1,5 @@
 """Server-rendered company management views."""
 
-from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
@@ -13,6 +12,13 @@ from django.views.decorators.http import require_http_methods, require_POST
 from companies.deletion import CompanyDeletionBlockedError, delete_company
 from companies.forms import CompanyForm, CompanySourceForm, validate_source_configuration
 from companies.models import Company, CompanySource
+from discovery.models import DiscoveryRun
+from discovery.presentation import (
+    company_candidate_presentations,
+    discovery_coverage,
+    discovery_result_presentation,
+)
+from job_monitor.background import background_executor
 from jobs.forms import CompanyJobFilterForm
 from jobs.models import JobPosting
 from jobs.review import annotate_review_state
@@ -20,7 +26,7 @@ from jobs.views import _apply_filters
 from scrape_runs.models import ScrapeRun
 from scraping.background import (
     BackgroundExecutionError,
-    ControlledBackgroundExecutor,
+    BackgroundNoExecutableSourcesError,
 )
 from scraping.sources.registry import (
     executable_source_keys,
@@ -29,13 +35,12 @@ from scraping.sources.registry import (
     user_selectable_source_keys,
 )
 
-background_executor = ControlledBackgroundExecutor(
-    max_workers=settings.JOB_MONITOR_BACKGROUND_MAX_WORKERS
-)
-
 
 def _manage_sources_url(company_pk: int) -> str:
-    return f"{reverse('companies:detail', args=(company_pk,))}?manage_sources=1"
+    return (
+        f"{reverse('companies:detail', args=(company_pk,))}"
+        "?manage_sources=1&source_tab=connected"
+    )
 
 
 def company_list(request: HttpRequest) -> HttpResponse:
@@ -152,6 +157,29 @@ def company_detail(
         }
     else:
         company_run_polling = None
+    latest_discovery = (
+        DiscoveryRun.objects.filter(company=company)
+        .prefetch_related("candidates")
+        .order_by("-started_at", "-pk")
+        .first()
+    )
+    requested_tab = request.GET.get("source_tab")
+    if requested_tab in {"connected", "discovered"}:
+        active_source_tab = requested_tab
+    elif latest_discovery is not None and latest_discovery.status in {
+        DiscoveryRun.Status.RUNNING,
+        DiscoveryRun.Status.NEEDS_REVIEW,
+        DiscoveryRun.Status.FAILED,
+    }:
+        active_source_tab = "discovered"
+    else:
+        active_source_tab = "connected"
+    if auto_open_source_dialog in {"add-source-dialog"} or (
+        auto_open_source_dialog or ""
+    ).startswith("edit-source-dialog-"):
+        active_source_tab = "connected"
+    discovery_candidates = company_candidate_presentations(company_id=company.pk)
+    discovery_coverage_state = discovery_coverage(latest_discovery)
     return render(
         request,
         "companies/company_detail.html",
@@ -168,6 +196,20 @@ def company_detail(
             "form": edit_source_form if edit_source_form is not None else add_source_form,
             "auto_open_source_dialog": auto_open_source_dialog,
             "company_run_polling": company_run_polling,
+            "latest_discovery": latest_discovery,
+            "discovery_candidates": discovery_candidates,
+            "discovery_coverage": discovery_coverage_state,
+            "discovery_result": discovery_result_presentation(
+                latest_discovery,
+                discovery_candidates,
+                discovery_coverage_state,
+                connected_source_count=source_count,
+            ),
+            "ready_candidate_count": sum(
+                candidate.can_connect for candidate in discovery_candidates
+            ),
+            "active_source_tab": active_source_tab,
+            "show_add_source_form": auto_open_source_dialog == "add-source-dialog",
         },
     )
 
@@ -418,6 +460,15 @@ def company_update_jobs(request: HttpRequest, pk: int) -> HttpResponse:
     )
     try:
         submission = background_executor.submit_company(company=company)
+    except BackgroundNoExecutableSourcesError:
+        messages.warning(
+            request,
+            "No approved active source is configured. Discover or add a source first.",
+        )
+        return redirect(
+            f"{reverse('companies:detail', args=(company.pk,))}"
+            "?manage_sources=1&source_tab=discovered"
+        )
     except BackgroundExecutionError:
         messages.error(request, "Job update could not be started.")
     else:

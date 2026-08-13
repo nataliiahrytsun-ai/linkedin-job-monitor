@@ -140,7 +140,7 @@ class HomePageTests(TestCase):  # type: ignore[misc]
         assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in html
         assert '<nav aria-label="Primary">' in html
         assert '<main id="main-content"' in html
-        assert '<link rel="stylesheet" href="/static/css/app.css">' in html
+        assert '<link rel="stylesheet" href="/static/css/app.css?v=' in html
         assert 'class="skip-link" href="#main-content"' in html
         assert 'href="/" aria-current="page">Dashboard</a>' in html
         assert 'href="/companies/">Companies</a>' in html

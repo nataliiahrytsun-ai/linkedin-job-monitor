@@ -19,6 +19,8 @@ def _isolated_environment(database_path: Path) -> dict[str, str]:
     environment = os.environ.copy()
     environment["DJANGO_SETTINGS_MODULE"] = "job_monitor.settings"
     environment["JOB_MONITOR_SQLITE_PATH"] = str(database_path)
+    environment.pop("SOURCE_DISCOVERY_SEARCH_MAX_QUERIES", None)
+    environment.pop("SOURCE_DISCOVERY_TAVILY_KEYLESS_DIAGNOSTIC", None)
     return environment
 
 
@@ -55,6 +57,8 @@ def test_django_settings_import_and_configuration(tmp_path: Path) -> None:
         "'django.db.backends.sqlite3'; "
         "assert settings.DATABASES['default']['OPTIONS']['timeout'] == 30.0; "
         "assert settings.JOB_MONITOR_BACKGROUND_MAX_WORKERS == 2; "
+        "assert settings.SOURCE_DISCOVERY_SEARCH_MAX_QUERIES == 6; "
+        "assert settings.SOURCE_DISCOVERY_TAVILY_KEYLESS_DIAGNOSTIC is False; "
         "assert settings.TIME_ZONE == 'Europe/Vienna'; "
         "assert settings.USE_TZ is True; "
         "configured=Path(settings.DATABASES['default']['NAME']).resolve(); "

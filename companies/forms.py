@@ -7,6 +7,7 @@ from django import forms
 from companies.models import Company, CompanySource
 from scraping.sources.base import SourceError
 from scraping.sources.darwinbox import darwinbox_source_from_url
+from scraping.sources.dreamjobs import dreamjobs_source_from_url
 from scraping.sources.jazzhr import jazzhr_source_from_url
 from scraping.sources.lever import lever_site_from_url
 from scraping.sources.registry import (
@@ -51,6 +52,8 @@ def source_label(source_key: str) -> str:
     """Build a readable label without duplicating the registry's source list."""
     if source_key == "jazzhr":
         return "JazzHR"
+    if source_key == "dreamjobs":
+        return "DreamJobs"
     if source_key == "linkedin":
         return "LinkedIn"
     return source_key.replace("_", " ").replace("-", " ").title()
@@ -90,6 +93,11 @@ def validate_source_configuration(*, source: str, source_jobs_url: str | None) -
     elif normalized_source == "jazzhr":
         try:
             jazzhr_source_from_url(source_jobs_url)
+        except SourceError as error:
+            raise forms.ValidationError(str(error)) from error
+    elif normalized_source == "dreamjobs":
+        try:
+            dreamjobs_source_from_url(source_jobs_url)
         except SourceError as error:
             raise forms.ValidationError(str(error)) from error
 
@@ -135,6 +143,7 @@ class CompanySourceForm(forms.ModelForm):
         assume_scheme="https",
         widget=forms.URLInput(attrs={"placeholder": "https://jobs.lever.co/company"}),
     )
+
     def __init__(self, *args: Any, company: Company, **kwargs: Any) -> None:
         self.company = company
         self.unavailable_source_choices = unavailable_source_choices()

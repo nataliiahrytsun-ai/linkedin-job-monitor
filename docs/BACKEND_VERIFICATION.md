@@ -30,6 +30,9 @@ The shared pipeline supports two deliberately different source roles:
   Chrome session.
 - `jazzhr`: registered, user-selectable, executable plain-HTTP adapter for
   validated public `<tenant>.applytojob.com/apply` snapshots.
+- `dreamjobs`: registered, user-selectable, executable plain-HTTP adapter for
+  structurally verified public `/jobs` pages, including the audited Data
+  Sentics custom domain.
 
 LinkedIn has no production adapter or registry key and remains blocked pending
 a separate feasibility/access/approval decision.
@@ -64,7 +67,9 @@ The regression suite proves:
 
 Company create/edit now manages Company-level fields without mutating the
 transitional legacy source fields. CompanySource configuration is managed
-separately from Company detail through responsive dialogs. Tests cover the
+separately from Company fields through one responsive Manage sources dialog.
+Its Connected/Discovered tabs combine manual source management with the latest
+Discovery run and candidate actions without nested dialogs. Tests cover the
 compact empty/summary states, multiple source rows, registry-backed Add source,
 server-side Lever URL validation, duplicate handling, immutable source
 provenance, company scoping, POST-only activation changes, and RUNNING-source
@@ -118,6 +123,32 @@ and transport failures. Background integration tests prove source-owned
 persistence, SUCCESS reconciliation isolation, equal IDs in different
 CompanySources, and preservation of existing jobs after incomplete fetch. No
 real Darwinbox request is part of automated verification.
+
+## DreamJobs complete-snapshot integration proof
+
+The adapter first verifies a configured custom domain from its server-rendered
+Next.js data and DreamJobs static assets. It then consumes the public GraphQL
+listing/detail contract used by that page. Offline tests cover Data Sentics-
+shaped embedded results, strict platform detection, URL canonicalization,
+stable IDs and canonical detail URLs, missing optional fields, HTML description
+cleanup, empty snapshots, pagination, repeated-page termination, page/request
+limits, GraphQL and detail failure, request accounting, registry/UI exposure,
+and a source-owned pipeline run. The integration test also repeats the same
+snapshot and proves no duplicate `JobPosting` rows are created and an unrelated
+source is untouched.
+
+The bounded public audit observed Data Sentics SSR listing data and successfully
+queried one public detail through the page's own GraphQL contract. A later
+bounded production-adapter run returned all six advertised jobs in seven HTTP
+operations with non-empty descriptions. The same adapter then ran through the
+source-owned pipeline against an automatically removed temporary SQLite
+database: SUCCESS, Found 6, Created 6, Failed 0, Requests 7, Persisted 6. The
+working `db.sqlite3` was not opened. Automated pytest remains completely offline.
+
+The DreamJobs closeout quality gate passed with 29 focused tests and 713 total
+tests (172 existing third-party `lxml` deprecation warnings). Ruff, MyPy strict
+over 36 source files, Django system check, migration dry-run, dependency check,
+and diff check passed.
 
 ## Reproducible checks
 

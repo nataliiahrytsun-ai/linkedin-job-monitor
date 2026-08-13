@@ -11,5 +11,6 @@ urlpatterns = [
     path("companies/", include("companies.urls")),
     path("jobs/", include("jobs.urls")),
     path("scrape-runs/", include("scrape_runs.urls")),
+    path("discovery/", include("discovery.urls")),
     path("admin/", admin.site.urls),
 ]

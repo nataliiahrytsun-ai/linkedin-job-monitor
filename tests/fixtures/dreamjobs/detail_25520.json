@@ -1,0 +1,17 @@
+{
+  "data": {
+    "opportunity": {
+      "id": "25520",
+      "company": {"id": "8", "name": "Example", "integrationType": "ATS"},
+      "externalUrl": null,
+      "type": ["FULL_TIME"],
+      "title": "Data & AI Lead",
+      "locations": [
+        {"region": null, "countryCode": "CZ", "city": "Praha", "country": "Česko"}
+      ],
+      "salary": {"min": 65000, "max": 120000, "currency": "CZK"},
+      "workEnvironment": "HYBRID",
+      "rawDescription": "<h2>About the role</h2><p>Build &amp; improve data.</p><ul><li>Lead delivery</li></ul>"
+    }
+  }
+}

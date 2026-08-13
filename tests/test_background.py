@@ -1238,6 +1238,69 @@ def test_one_failed_concurrent_run_does_not_break_the_other(
     assert model("jobs.JobPosting").objects.get().company_source_id == good_source.pk
 
 
+def test_thirty_company_updates_call_adapter_thirty_times_and_tavily_never(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company(name="Thirty Daily Updates")
+    adapter_calls = 0
+
+    class CountingAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            nonlocal adapter_calls
+            del company
+            adapter_calls += 1
+            return SourceBatch(records=(), requests_made=1)
+
+    def forbidden_search_provider() -> object:
+        raise AssertionError("Update jobs must never initialize Tavily")
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "fixture", CountingAdapter)
+    monkeypatch.setattr(
+        "discovery.service.configured_search_provider",
+        forbidden_search_provider,
+    )
+
+    with ControlledBackgroundExecutor(max_workers=1, clock=IncrementingClock()) as executor:
+        for _index in range(30):
+            submission = executor.submit_company(company=company_record)
+            assert len(submission.submitted) == 1
+            submission.submitted[0].future.result(timeout=5)
+
+    assert adapter_calls == 30
+    assert model("scrape_runs.ScrapeRun").objects.filter(company=company_record).count() == 30
+
+
+def test_single_adapter_failure_does_not_trigger_automatic_rediscovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company_record = company(name="No Automatic Recovery Search")
+
+    class FailingAdapter:
+        def fetch(self, *, company: Any) -> SourceBatch:
+            del company
+            raise SourceError("synthetic one-run source failure", requests_made=1)
+
+    def forbidden_search_provider() -> object:
+        raise AssertionError("One adapter failure must not initialize Tavily")
+
+    registry = importlib.import_module("scraping.sources.registry")
+    monkeypatch.setitem(registry._ADAPTER_FACTORIES, "fixture", FailingAdapter)
+    monkeypatch.setattr(
+        "discovery.service.configured_search_provider",
+        forbidden_search_provider,
+    )
+
+    with ControlledBackgroundExecutor(max_workers=1, clock=IncrementingClock()) as executor:
+        submission = executor.submit_company(company=company_record)
+        with pytest.raises(FixturePipelineError):
+            submission.submitted[0].future.result(timeout=5)
+
+    assert not model("discovery.DiscoveryRun").objects.filter(
+        company=company_record
+    ).exists()
+
+
 def test_sqlite_lock_error_finalizes_the_affected_run_as_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

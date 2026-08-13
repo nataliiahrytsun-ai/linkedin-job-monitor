@@ -19,8 +19,8 @@ The schema, source ownership, source-scoped persistence/reconciliation, Company
 multi-source orchestration, and source-management UI are implemented. Lever,
 Darwinbox, and JazzHR are production-approved/user-selectable adapters.
 Darwinbox executes through its verified normal headful-browser transport;
-JazzHR uses ordinary server-rendered HTTP. Additional ATS adapters and
-automatic Source Discovery are not implemented.
+JazzHR uses ordinary server-rendered HTTP. Production Source Discovery is a
+separate orchestration layer; additional ATS adapters are not implemented.
 
 ## CompanySource is not an adapter
 
@@ -135,6 +135,13 @@ Olo -> Lever CompanySource -> submit_company(Olo) -> LeverSourceAdapter
     -> persistence -> reconciliation -> terminal ScrapeRun
 ```
 
+This daily execution boundary never calls Source Discovery, Tavily, or another
+SearchProvider. Thirty updates produce thirty adapter executions and zero
+search requests. Discovery is initial source onboarding: it runs for a company
+without a source, on the explicit **Discover again** action, or in a separate
+operator-confirmed recovery workflow after a persistent source fault. A single
+adapter failure never triggers automatic rediscovery.
+
 ### Polling
 
 The submission carries the expected submitted CompanySource IDs and a pre-submission ScrapeRun baseline. The existing read-only status polling waits for a post-baseline run for every expected source and treats the submission as complete only when every such run exists and is no longer `running`.
@@ -152,12 +159,16 @@ Dashboard **Running now** counts actual ScrapeRun rows with status `running`, no
 Company create/edit manages Company-level data only. Source-specific
 configuration is managed separately as CompanySource data. Company detail keeps
 the primary Company state, **Update jobs**, and saved jobs prominent; a compact
-Sources summary opens the **Manage sources** dialog for the secondary source
-configuration workflow. The dialog lists multiple sources independently and is
+Sources summary opens one **Manage sources** dialog for the secondary source
+workflow. It has exactly two tabs: **Connected** lists and edits CompanySource
+rows, while **Discovered** starts Source Discovery and renders every candidate
+from the latest run. Add/Edit forms are inline in the same dialog rather than
+nested dialogs. Candidate connection is server-revalidated and company-scoped;
+equivalent CompanySource approval/active state is preserved. The dialog is
 responsive on narrow viewports.
 
 Manual **Add source** obtains its platform choices from the registry's
-user-selectable API. Lever, Darwinbox, and JazzHR are the current user-selectable
+user-selectable API. Lever, Darwinbox, JazzHR, and DreamJobs are the current user-selectable
 adapters. A valid public jobs URL is required and checked server-side. A manually
 created source starts as `approval_status=approved` and `is_active=True`.
 Fixture remains registered and executable for internal tests but is not offered
@@ -189,6 +200,8 @@ source. It does not fall back to legacy Company source fields.
 - multi-source-aware polling, Update jobs, and Update all;
 - responsive CompanySource management UI with Add, Edit, Activate, and
   Deactivate workflows;
+- public DreamJobs custom-domain adapter using the verified Next.js/GraphQL
+  contract and the existing source-owned pipeline;
 - existing single-source Olo/Lever compatibility.
 
 ## Darwinbox adapter boundary
@@ -281,9 +294,36 @@ Normal Company create/edit forms no longer expose or mutate
 only for staged migration and backward compatibility; final cleanup has not
 been completed.
 
+## DreamJobs adapter boundary
+
+`DreamJobsSourceAdapter` accepts a public HTTPS `/jobs` URL on a custom domain.
+It canonicalizes away UI-only `activeOpportunityId`, `page`, and
+`similarVacancyId` parameters. The first ordinary Scrapling HTTP GET must expose
+the verified current platform topology: Next.js `/jobs` data, a tenant
+`clientName`, successful dehydrated client-configuration and opportunities-list
+queries, and a DreamJobs static asset. This makes custom-domain support
+structural rather than a hostname allowlist.
+
+The embedded first page and advertised total seed the snapshot. Further pages,
+when required, use the public unauthenticated GraphQL request made by the career
+page; every stable opportunity ID then receives one public detail query.
+Pagination and total consistency, unique IDs, page/request limits, timeout,
+and bounded retries are enforced. Any missing detail or incomplete snapshot
+fails the source run before persistence/reconciliation. A verified total of
+zero is a successful complete snapshot. `source_job_id`, title, canonical job
+URL, location/city/country, workplace type, employment type, and cleaned
+description map into existing normalized fields. The source exposes salary,
+currency, and company name, but the current shared model has no matching salary
+or employer field, so those values are not persisted and no schema expansion
+was introduced.
+
+The 2026-08-13 audit verified this contract for Data Sentics at
+`https://careers.datasentics.com/jobs`. It does not prove every DreamJobs site
+or future frontend/API version. Source Discovery remains outside this adapter.
+
 ## Not implemented
 
-- automatic Source Discovery or LinkedIn-to-careers discovery;
+- LinkedIn-derived discovery (name/domain discovery is implemented without LinkedIn);
 - Greenhouse/Ashby adapters or `LinkedInSourceAdapter`;
 - cross-source vacancy matching/deduplication or `CanonicalVacancy`;
 - final removal of legacy Company fields or final non-null ownership cleanup;
@@ -295,8 +335,8 @@ been completed.
 The architecture can represent and orchestrate independent Darwinbox and
 JazzHR sources for Acuity. Both are exposed through normal source creation.
 The configured JazzHR adapter targets the interim Ascent/Acuity page only and
-does not claim company-wide careers completeness. Source Discovery remains
-manual/outside the application. Cross-source canonical deduplication is not
+does not claim company-wide careers completeness. Source Discovery can retain
+and present multiple candidates for review. Cross-source canonical deduplication is not
 implemented.
 
 ## Conceptual onboarding
@@ -309,16 +349,18 @@ it to users, then reuse it for other companies on that ATS.
 
 ## Source Discovery status
 
-Source Discovery remains a proposed future enhancement: locate an official
-careers site from a Company or LinkedIn reference, identify its ATS, and create
-a CompanySource candidate for review. That investigation currently happens
-manually outside the application. A LinkedIn reference is not executable
-without a separately approved and implemented adapter/access path.
+Production Source Discovery now locates a probable official site from a company
+name or supplied domain, performs a bounded safe careers crawl, detects the four
+registered production ATS platforms, and either connects one high-confidence
+source or persists review/unsupported candidates. It is deliberately separate
+from adapters and reconciliation. A LinkedIn reference is not executable
+without a separately approved and implemented adapter/access path. See
+[`docs/SOURCE_DISCOVERY.md`](SOURCE_DISCOVERY.md).
 
 ## Next work
 
 Slices 1-4 and the bounded Darwinbox headful-browser transport are complete.
 Darwinbox is enabled for normal source creation and Company execution, subject
 to its explicit interactive system-Chrome deployment requirement.
-JazzHR is implemented; Source Discovery and other ATS integrations remain
-separate future work.
+JazzHR and the independent Source Discovery layer are implemented; other ATS
+integrations remain separate future work.

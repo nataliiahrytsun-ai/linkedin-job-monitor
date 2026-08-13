@@ -110,7 +110,8 @@ slices:
   with 467 tests and the existing 150 third-party `lxml` warnings; all other
   checks passed.
 - **Slice 4 — source-management UI: Completed.** Company detail now provides a
-  compact source summary and responsive Manage/Add/Edit dialogs. Users can add
+  compact source summary and one responsive Manage sources dialog with
+  Connected/Discovered tabs and inline Add/Edit forms. Users can add
   registry-approved production sources, edit source configuration without
   changing immutable platform provenance, and independently activate or
   deactivate eligible sources. RUNNING-source safety and POST-only state
@@ -139,9 +140,25 @@ and **Update jobs** succeeded; an idempotency run reported Found 23, Created 0,
 Updated 0, and Requests 24. This verifies the configured interim source, not a
 complete company-wide Acuity vacancy set.
 
-Source Discovery and LinkedIn adapters, cross-source vacancy deduplication,
-hard source deletion, run cancellation, and final legacy cleanup are not
-implemented. Lever remains unchanged and selectable.
+The **DreamJobs adapter is implemented** for the current public Data Sentics
+career-page contract. It is registered, selectable, and executable through the
+existing CompanySource pipeline. A normal Scrapling HTTP GET verifies multiple
+Next.js/DreamJobs technical signals on the custom domain; bounded public
+GraphQL listing/detail requests then build an all-or-nothing snapshot keyed by
+DreamJobs opportunity ID. Offline tests cover platform detection, pagination,
+limits, details, empty and failed snapshots, repeat execution, source-scoped
+reconciliation, registry, form, and pipeline integration. This is a focused
+adapter extension, not Source Discovery and not a claim of support for every
+DreamJobs deployment.
+The bounded live adapter run returned all six advertised Data Sentics jobs in
+seven requests with complete descriptions. A live source-owned pipeline run in
+an automatically removed temporary SQLite database completed SUCCESS with
+Found 6, Created 6, Failed 0, and Requests 7; the working database was not used.
+
+Production Source Discovery is implemented as a separate bounded orchestration
+layer with offline coverage and manual review. LinkedIn adapters, cross-source
+vacancy deduplication, hard source deletion, run cancellation, and final legacy
+cleanup are not implemented. Lever remains unchanged and selectable.
 The current architecture and boundaries are documented in
 [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 

@@ -85,63 +85,69 @@
       data-dialog-target="job-sources-dialog"
       aria-haspopup="dialog"
       aria-controls="job-sources-dialog"
-    >{% if source_count %}Manage sources{% else %}Configure sources{% endif %}</button>
+    >Manage sources</button>
     <noscript>
       <a href="{% url 'companies:source_create' company.pk %}">Add source</a>
     </noscript>
   </section>
 
-  <dialog class="source-dialog" id="job-sources-dialog" data-source-dialog{% if auto_open_source_dialog == 'job-sources-dialog' %} data-auto-open{% endif %} aria-labelledby="job-sources-heading">
+  <dialog class="source-dialog" id="job-sources-dialog" data-source-dialog{% if auto_open_source_dialog %} data-auto-open{% endif %}{% if latest_discovery.status == 'running' %} data-discovery-running="true" data-discovery-refresh-url="{% url 'companies:detail' company.pk %}?manage_sources=1&amp;source_tab=discovered"{% endif %} aria-labelledby="job-sources-heading">
     <div class="source-dialog-surface">
       <header class="source-dialog-header">
-        <h2 id="job-sources-heading">Job sources</h2>
-        <div class="source-dialog-header-actions">
-          <button class="button button-primary button-compact" type="button" data-dialog-target="add-source-dialog">Add source</button>
+        <div class="source-dialog-topbar">
+          <h2 id="job-sources-heading">Job sources</h2>
           <form method="dialog">
-            <button class="button button-secondary button-compact" type="submit" data-source-dialog-close>Close</button>
+            <button class="dialog-close-button" type="submit" data-source-dialog-close aria-label="Close job sources">×</button>
           </form>
+        </div>
+        <div class="source-tabs-toolbar">
+          <div class="source-tabs" role="tablist" aria-label="Source manager sections">
+            <button id="sources-tab-connected" role="tab" type="button" aria-controls="sources-panel-connected" aria-selected="{% if active_source_tab == 'connected' %}true{% else %}false{% endif %}" tabindex="{% if active_source_tab == 'connected' %}0{% else %}-1{% endif %}" data-source-tab="connected">Connected ({{ source_count }})</button>
+            <button id="sources-tab-discovered" role="tab" type="button" aria-controls="sources-panel-discovered" aria-selected="{% if active_source_tab == 'discovered' %}true{% else %}false{% endif %}" tabindex="{% if active_source_tab == 'discovered' %}0{% else %}-1{% endif %}" data-source-tab="discovered">Discovered</button>
+          </div>
+          <div class="source-tab-actions">
+            <button class="button button-primary button-compact" type="button" data-source-tab-action="connected" data-source-form-toggle="add-source-form"{% if active_source_tab != 'connected' %} hidden{% endif %}>+ Add source</button>
+            <button class="button button-primary button-compact" type="submit" form="discovery-start-form" data-source-tab-action="discovered"{% if active_source_tab != 'discovered' %} hidden{% endif %}{% if latest_discovery.status == 'running' %} disabled{% endif %}>{% if latest_discovery.status == 'running' %}Searching…{% else %}Discover sources{% endif %}</button>
+          </div>
         </div>
       </header>
       <div class="source-dialog-body">
-        {% if source_rows %}
+        <section id="sources-panel-connected" role="tabpanel" aria-labelledby="sources-tab-connected" data-source-panel="connected"{% if active_source_tab != 'connected' %} hidden{% endif %}>
+          <div id="add-source-form" class="source-inline-form"{% if not show_add_source_form %} hidden{% endif %}>
+            <h4>Add source</h4>
+            <form method="post" action="{% url 'companies:source_create' company.pk %}" novalidate>
+              {% csrf_token %}
+              {% if add_source_form.non_field_errors %}<div class="form-errors" role="alert">{{ add_source_form.non_field_errors }}</div>{% endif %}
+              <div class="form-field{% if add_source_form.source.errors %} form-field-error{% endif %}"><label for="{{ add_source_form.source.id_for_label }}">Source</label>{{ add_source_form.source }}{% if add_source_form.source.errors %}<div class="field-errors" role="alert">{{ add_source_form.source.errors }}</div>{% endif %}{% for source_label, availability_message in add_source_form.unavailable_source_choices %}<p class="help-text source-option-disabled" aria-disabled="true"><strong>{{ source_label }}</strong> — {{ availability_message }}</p>{% endfor %}</div>
+              <div class="form-field{% if add_source_form.source_jobs_url.errors %} form-field-error{% endif %}"><label for="{{ add_source_form.source_jobs_url.id_for_label }}">Jobs URL</label>{{ add_source_form.source_jobs_url }}{% if add_source_form.source_jobs_url.errors %}<div class="field-errors" role="alert">{{ add_source_form.source_jobs_url.errors }}</div>{% endif %}</div>
+              <button class="button button-primary button-compact" type="submit">Add source</button>
+            </form>
+          </div>
+          {% if source_rows %}
           <div class="source-list">
             {% for row in source_rows %}
               {% with source=row.source %}
-                <article class="source-row">
-                  <div class="source-row-identity">
-                    <h3>{{ source.source|title }}</h3>
-                    {% if row.availability_message %}
-                      <span class="source-summary-status">{{ row.availability_message }}</span>
-                    {% else %}
-                      <span class="status-badge">{{ source.get_approval_status_display|upper }}</span>
-                      {% if source.is_active %}
-                        <span class="status-badge status-active">ACTIVE</span>
-                      {% else %}
-                        <span class="status-badge status-inactive">INACTIVE</span>
-                      {% endif %}
-                    {% endif %}
-                    {% if row.has_running_run %}
-                      <span class="status-badge status-running">RUNNING</span>
-                    {% endif %}
+                <article class="source-row" id="company-source-{{ source.pk }}">
+                  <div class="source-row-main">
+                    <div class="source-row-identity">
+                      <h3>{% if source.source == 'dreamjobs' %}DreamJobs{% elif source.source == 'jazzhr' %}JazzHR{% elif source.source == 'darwinbox' %}Darwinbox{% elif source.source == 'lever' %}Lever{% else %}{{ source.source|title }}{% endif %}</h3>
+                      {% if row.availability_message %}<span class="source-summary-status">{{ row.availability_message }}</span>{% else %}<span class="status-badge">{{ source.get_approval_status_display|upper }}</span><span class="status-badge {% if source.is_active %}status-active{% else %}status-inactive{% endif %}">{% if source.is_active %}ACTIVE{% else %}INACTIVE{% endif %}</span>{% if row.has_running_run %}<span class="status-badge status-running">RUNNING</span>{% endif %}{% endif %}
+                    </div>
+                    <p class="source-url external-url">{% if source.source_jobs_url %}<a href="{{ source.source_jobs_url }}" title="{{ source.source_jobs_url }}" target="_blank" rel="noopener noreferrer">{{ source.source_jobs_url|cut:"https://"|cut:"http://" }}</a>{% else %}Not configured{% endif %}</p>
+                    {% if row.is_manageable %}<div class="row-actions source-row-actions"><button class="button button-secondary button-compact" type="button" data-source-form-toggle="{{ row.edit_dialog_id }}">Edit</button>{% if source.approval_status == 'approved' %}<form method="post" action="{% url 'companies:source_toggle_active' company.pk source.pk %}">{% csrf_token %}<button class="button button-secondary button-compact" type="submit"{% if row.has_running_run %} disabled{% endif %}>{% if source.is_active %}Deactivate{% else %}Activate{% endif %}</button></form>{% endif %}</div>{% endif %}
                   </div>
-                  <p class="source-url external-url">
-                    {% if source.source_jobs_url %}
-                      <a href="{{ source.source_jobs_url }}" title="{{ source.source_jobs_url }}" target="_blank" rel="noopener noreferrer">{{ source.source_jobs_url }}</a>
-                    {% else %}
-                      Not configured
-                    {% endif %}
-                  </p>
                   {% if row.is_manageable %}
-                    <div class="row-actions source-row-actions">
-                      <button class="button button-secondary button-compact" type="button" data-dialog-target="{{ row.edit_dialog_id }}">Edit</button>
-                      {% if source.approval_status == 'approved' %}
-                        <form method="post" action="{% url 'companies:source_toggle_active' company.pk source.pk %}">
-                          {% csrf_token %}
-                          <button class="button button-secondary button-compact" type="submit"{% if row.has_running_run %} disabled{% endif %}>
-                            {% if source.is_active %}Deactivate{% else %}Activate{% endif %}
-                          </button>
-                        </form>
-                      {% endif %}
+                    <div id="{{ row.edit_dialog_id }}" class="source-inline-form"{% if not row.is_auto_open %} hidden{% endif %}>
+                      <h4>Edit source</h4>
+                      <form method="post" action="{% url 'companies:source_edit' company.pk source.pk %}" novalidate>
+                        {% csrf_token %}
+                        {% with edit_form=row.edit_form %}
+                          {% if edit_form.non_field_errors %}<div class="form-errors" role="alert">{{ edit_form.non_field_errors }}</div>{% endif %}
+                          <p><strong>Source:</strong> <span class="source-readonly-value">{{ source.source|title }}</span></p>
+                          <div class="form-field{% if edit_form.source_jobs_url.errors %} form-field-error{% endif %}"><label for="{{ edit_form.source_jobs_url.id_for_label }}">Jobs URL</label>{{ edit_form.source_jobs_url }}{% if edit_form.source_jobs_url.errors %}<div class="field-errors" role="alert">{{ edit_form.source_jobs_url.errors }}</div>{% endif %}</div>
+                          <button class="button button-primary button-compact" type="submit">Save</button>
+                        {% endwith %}
+                      </form>
                     </div>
                   {% endif %}
                 </article>
@@ -151,82 +157,27 @@
         {% else %}
           <div class="source-dialog-empty">
             <p><strong>No job sources configured.</strong></p>
-            <p>Add an approved source before running Update jobs.</p>
+            <p>Add an approved source, or switch to Discovered to find candidates, before running Update jobs.</p>
           </div>
         {% endif %}
+        </section>
+        <section id="sources-panel-discovered" role="tabpanel" aria-labelledby="sources-tab-discovered" data-source-panel="discovered"{% if active_source_tab != 'discovered' %} hidden{% endif %}>
+          <p class="discovery-result-summary" role="status" aria-live="polite">{% if discovery_result %}{{ discovery_result.summary_text }}{% else %}Discovery has not run yet.{% endif %}</p>
+          <form id="discovery-start-form" class="discovery-start-form" method="post" action="{% url 'discovery:start' company.pk %}">
+            {% csrf_token %}
+            <label for="discovery-domain"><span>Official domain (optional)</span><input id="discovery-domain" name="domain" type="text" maxlength="253" placeholder="example.com"></label>
+          </form>
+          {% if latest_discovery and discovery_result %}
+            {% if discovery_result.additional_items %}<div class="discovery-source-list">
+              {% for item in discovery_result.connected_items %}<article class="discovery-source-row" data-candidate-state="connected"><div class="discovery-source-copy"><strong>{{ item.display_name }}</strong><a href="{{ item.display_url }}" title="{{ item.display_url }}" target="_blank" rel="noopener noreferrer">{{ item.short_url }}</a></div><div class="discovery-source-actions"><span class="source-state source-state-connected">Connected</span></div></article>{% endfor %}
+              {% for item in discovery_result.additional_items %}{% with candidate=item.candidate %}<article class="discovery-source-row" data-candidate-state="{{ item.state }}"><div class="discovery-source-copy"><strong>{{ item.display_name }}</strong><a href="{{ item.display_url }}" title="{{ item.display_url }}" target="_blank" rel="noopener noreferrer">{{ item.short_url }}</a></div><div class="discovery-source-actions"><span class="source-state {% if item.state == 'ready_to_connect' or item.can_confirm %}source-state-ready{% else %}source-state-attention{% endif %}">{% if item.can_confirm %}Ready to connect{% else %}{{ item.state_label }}{% endif %}</span>{% if item.can_connect %}<form method="post" action="{% url 'discovery:connect' company.pk candidate.pk %}">{% csrf_token %}<button class="button button-primary button-compact" type="submit">Connect</button></form>{% elif item.can_confirm %}<form method="post" action="{% url 'discovery:confirm' company.pk candidate.pk %}">{% csrf_token %}<button class="button button-primary button-compact" type="submit">Connect</button></form>{% elif item.state == 'needs_review' and item.can_revalidate %}<form method="post" action="{% url 'discovery:revalidate' company.pk candidate.pk %}">{% csrf_token %}<button class="button button-secondary button-compact" type="submit">Review</button></form>{% endif %}{% if item.draft_action %}<details class="adapter-task"><summary class="button button-secondary button-compact">Adapter task</summary><div class="adapter-task-content"><p>For connection, this public source must first be researched and a new adapter developed.</p><textarea readonly rows="8" data-adapter-task-text>{{ item.task_draft }}</textarea><button class="button button-secondary button-compact" type="button" data-copy-adapter-task>Copy task</button></div></details>{% endif %}{% if item.can_ignore %}<form method="post" action="{% url 'discovery:ignore' company.pk candidate.pk %}">{% csrf_token %}<button class="button button-secondary button-compact" type="submit">Ignore</button></form>{% endif %}</div></article>{% endwith %}{% endfor %}
+            </div>{% endif %}
+            {% if discovery_result.rejected_items %}<details class="other-search-results"><summary>Other search results ({{ discovery_result.rejected }})</summary><div>{% for item in discovery_result.rejected_items %}{% with candidate=item.candidate %}<article class="other-search-row" data-candidate-state="{{ item.state }}"><div><strong>{{ item.display_name }}</strong><a href="{{ item.display_url }}" title="{{ item.display_url }}" target="_blank" rel="noopener noreferrer">{{ item.short_url }}</a></div>{% if item.can_restore %}<form method="post" action="{% url 'discovery:restore' company.pk candidate.pk %}">{% csrf_token %}<button class="button button-secondary button-compact" type="submit">Restore</button></form>{% else %}<span class="source-state">Not a job source</span>{% endif %}</article>{% endwith %}{% endfor %}</div></details>{% endif %}
+          {% endif %}
+        </section>
       </div>
     </div>
   </dialog>
-
-  <dialog class="source-form-dialog" id="add-source-dialog" data-source-dialog{% if auto_open_source_dialog == 'add-source-dialog' %} data-auto-open{% endif %} aria-labelledby="add-source-heading">
-    <div class="source-form-dialog-surface">
-      <header class="source-form-dialog-header">
-        <h2 id="add-source-heading">Add source</h2>
-        <button class="dialog-close-button" type="button" data-source-dialog-close aria-label="Close add source dialog">×</button>
-      </header>
-      <form method="post" action="{% url 'companies:source_create' company.pk %}" novalidate>
-        {% csrf_token %}
-        <div class="source-form-dialog-body">
-          {% if add_source_form.non_field_errors %}
-            <div class="form-errors" role="alert">{{ add_source_form.non_field_errors }}</div>
-          {% endif %}
-          <div class="form-field{% if add_source_form.source.errors %} form-field-error{% endif %}">
-            <label for="{{ add_source_form.source.id_for_label }}">Source</label>
-            {{ add_source_form.source }}
-            {% if add_source_form.source.errors %}<div class="field-errors" role="alert">{{ add_source_form.source.errors }}</div>{% endif %}
-            {% for source_label, availability_message in add_source_form.unavailable_source_choices %}
-              <p class="help-text source-option-disabled" aria-disabled="true"><strong>{{ source_label }}</strong> — {{ availability_message }}</p>
-            {% endfor %}
-          </div>
-          <div class="form-field{% if add_source_form.source_jobs_url.errors %} form-field-error{% endif %}">
-            <label for="{{ add_source_form.source_jobs_url.id_for_label }}">Jobs URL</label>
-            {{ add_source_form.source_jobs_url }}
-            {% if add_source_form.source_jobs_url.errors %}<div class="field-errors" role="alert">{{ add_source_form.source_jobs_url.errors }}</div>{% endif %}
-          </div>
-        </div>
-        <div class="source-form-dialog-actions">
-          <button class="button button-secondary" type="button" data-source-dialog-close>Cancel</button>
-          <button class="button button-primary" type="submit">Add source</button>
-        </div>
-      </form>
-    </div>
-  </dialog>
-
-  {% for row in source_rows %}
-    {% if row.is_manageable %}
-      {% with source=row.source edit_form=row.edit_form %}
-        <dialog class="source-form-dialog" id="{{ row.edit_dialog_id }}" data-source-dialog{% if row.is_auto_open %} data-auto-open{% endif %} aria-labelledby="edit-source-heading-{{ source.pk }}">
-          <div class="source-form-dialog-surface">
-            <header class="source-form-dialog-header">
-              <h2 id="edit-source-heading-{{ source.pk }}">Edit source</h2>
-              <button class="dialog-close-button" type="button" data-source-dialog-close aria-label="Close edit source dialog">×</button>
-            </header>
-            <form method="post" action="{% url 'companies:source_edit' company.pk source.pk %}" novalidate>
-              {% csrf_token %}
-              <div class="source-form-dialog-body">
-                {% if edit_form.non_field_errors %}
-                  <div class="form-errors" role="alert">{{ edit_form.non_field_errors }}</div>
-                {% endif %}
-                <div class="form-field">
-                  <span class="form-label">Source</span>
-                  <span class="source-readonly-value">{{ source.source|title }}</span>
-                </div>
-                <div class="form-field{% if edit_form.source_jobs_url.errors %} form-field-error{% endif %}">
-                  <label for="{{ edit_form.source_jobs_url.id_for_label }}">Jobs URL</label>
-                  {{ edit_form.source_jobs_url }}
-                  {% if edit_form.source_jobs_url.errors %}<div class="field-errors" role="alert">{{ edit_form.source_jobs_url.errors }}</div>{% endif %}
-                </div>
-              </div>
-              <div class="source-form-dialog-actions">
-                <button class="button button-secondary" type="button" data-source-dialog-close>Cancel</button>
-                <button class="button button-primary" type="submit">Save</button>
-              </div>
-            </form>
-          </div>
-        </dialog>
-      {% endwith %}
-    {% endif %}
-  {% endfor %}
 
   <section class="detail-section" aria-labelledby="jobs-heading">
     <div class="company-jobs-heading">

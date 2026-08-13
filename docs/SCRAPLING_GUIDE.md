@@ -239,6 +239,45 @@ Manual UI execution succeeded; a repeat run found 23 jobs and created or
 updated none. This proves only the configured public interim source, not every
 Acuity vacancy or every JazzHR tenant.
 
+## 5b. DreamJobs production adapter
+
+`DreamJobsSourceAdapter` uses Scrapling 0.4.8 `FetcherSession` with ordinary
+HTTP only. It first GETs the configured HTTPS `/jobs` page. A custom domain is
+accepted only when the response has the combined verified signals: one
+`#__NEXT_DATA__` snapshot for `/jobs`, a non-empty `clientName`, a successful
+`clientConfiguration-*` dehydrated query, an `opportunitiesList` dehydrated
+query, and an asset hosted below `api.dream.jobs/static/`. A domain name alone
+is never treated as platform proof.
+
+The audited Data Sentics page server-renders the first 20 results in React
+Query dehydrated state. The same public page posts unauthenticated GraphQL to
+`https://api.dream.jobs`, identifying its public tenant with
+`jobnoone-webclientid`. The adapter reuses that observed public contract: the
+SSR total controls bounded page traversal, DreamJobs opportunity `id` is the
+stable source-local ID, and one detail query per ID supplies the full public
+description. Canonical job URLs are the configured listing plus
+`?activeOpportunityId=<id>`. No browser, login, user cookies, proxy,
+impersonation, stealth headers, private/admin endpoint, application data, or
+hiring-contact fields are used.
+
+The page and request limits are independently configurable; pagination rejects
+changing totals, empty required pages, repeated-only pages, duplicate IDs that
+leave the advertised total incomplete, and any snapshot exceeding a limit.
+Every detail is required. Any transport, GraphQL, structure, identity, limit,
+or detail failure raises `SourceError`, so the shared pipeline cannot reconcile
+an incomplete snapshot. An explicit verified zero total is a complete empty
+snapshot. `requests_made` includes the custom-domain GET, each extra listing
+page, and each detail POST. The transport has a timeout and two bounded HTTP
+attempts through Scrapling.
+
+The bounded audit on 2026-08-13 observed six Data Sentics results in SSR, a
+stable example ID `25520`, `/jobs?activeOpportunityId=25520` detail navigation,
+and a public detail response with a 5,130-character description. Sanitized
+offline fixtures contain only parsing-relevant fields. This verifies the
+current Data Sentics DreamJobs implementation; it does not claim universal
+DreamJobs compatibility. Salary is present in the source but is intentionally
+not added to the current shared model.
+
 ## 6. LinkedIn-specific extraction design (historical spike)
 
 ### Entry point and access gate

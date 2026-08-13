@@ -61,7 +61,8 @@ diesen Source-Kontext. Company Update kann alle freigegebenen aktiven Sources
 unabhängig ausführen. CompanySource-Konfiguration wird getrennt von Company
 create/edit über die Source-Management-UI verwaltet; mehrere Sources können
 angezeigt, hinzugefügt, bearbeitet und unabhängig aktiviert/deaktiviert werden.
-Source Discovery und weitere ATS-Adapter bleiben nicht implementiert. JazzHR
+Production Source Discovery ist als separater Orchestration-Layer implementiert;
+weitere ATS-Adapter bleiben nicht implementiert. JazzHR
 ist als normaler öffentlicher HTTP-Adapter für applytojob-Tenants registriert,
 auswählbar und ausführbar. Der Darwinbox Adapter öffnet
 `/ms/candidatev2/<companyId>/careers/allJobs`, paginiert innerhalb eines
@@ -69,6 +70,13 @@ auswählbar und ausführbar. Der Darwinbox Adapter öffnet
 `id` als stabile Source-ID. Unvollständige Pagination führt zu `SourceError`
 ohne Reconciliation; Detail-Navigation erfolgt nur bei leerem Listing-`jd`, und
 `requests_made` zählt Listing- und Detail-Datenoperationen. Lever bleibt unverändert.
+DreamJobs ist als normaler öffentlicher HTTP-Adapter registriert, auswählbar
+und ausführbar. Er validiert HTTPS-`/jobs`-Custom-Domains strukturell anhand des
+Next.js-Snapshots und DreamJobs-Assets und nutzt danach den von der Seite selbst
+verwendeten öffentlichen GraphQL-Listing-/Detail-Contract mit festen Seiten-
+und Request-Grenzen. Der verifizierte Umfang ist die aktuelle Data-Sentics-
+Variante; Discovery erkennt und validiert diese Quelle, bleibt aber außerhalb
+des Adapter- und Vacancy-Reconciliation-Umfangs.
 Aktueller Contract und Grenzen stehen
 in [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 
