@@ -3144,6 +3144,114 @@ def test_discovery_summary_reports_additional_source_without_connected_duplicate
     assert source.source_jobs_url not in discovered
 
 
+@pytest.mark.parametrize(
+    ("platform", "platform_label", "url", "evidence"),
+    [
+        (
+            "personio",
+            "Personio",
+            "https://myneva-group.jobs.personio.de/",
+            "Personio public jobs host",
+        ),
+        (
+            "workday",
+            "Workday",
+            "https://acme.wd3.myworkdayjobs.com/",
+            "Workday public myworkdayjobs host",
+        ),
+    ],
+)
+def test_catalog_unsupported_ats_candidates_are_published_without_evidence_whitelist(
+    platform: str, platform_label: str, url: str, evidence: str
+) -> None:
+    company = model("companies.Company").objects.create(name=f"Unsupported {platform}")
+    run = discovery_run(company, status="unsupported")
+    discovery_candidate(
+        run,
+        url=url,
+        platform=platform,
+        supported=False,
+        decision="unsupported",
+        job_source_eligibility="unsupported_ats",
+        evidence=[evidence],
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+    discovered_start = html.index('id="sources-panel-discovered"')
+    discovered = html[discovered_start : html.index("</section>", discovered_start)]
+
+    assert url in discovered
+    assert platform_label in discovered
+    assert "Adapter: Adapter not implemented" in discovered
+    assert "New adapter needed" in discovered
+    assert "1 additional source found." in discovered
+    assert "No job sources found." not in discovered
+    assert "Confidence" not in discovered
+    assert "Evidence" not in discovered
+
+
+def test_multiple_supported_and_unsupported_sources_are_published_together() -> None:
+    company = model("companies.Company").objects.create(name="Multi Source")
+    run = discovery_run(company, status="needs_review")
+    discovery_candidate(
+        run,
+        url="https://jobs.lever.co/multi-source",
+        platform="lever",
+        supported=True,
+        decision="selected",
+        job_source_eligibility="supported_ats",
+    )
+    discovery_candidate(
+        run,
+        url="https://multi-source.jobs.personio.de/",
+        platform="personio",
+        supported=False,
+        decision="unsupported",
+        job_source_eligibility="unsupported_ats",
+        evidence=["Personio public jobs host"],
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+    discovered_start = html.index('id="sources-panel-discovered"')
+    discovered = html[discovered_start : html.index("</section>", discovered_start)]
+
+    assert "https://jobs.lever.co/multi-source" in discovered
+    assert "https://multi-source.jobs.personio.de/" in discovered
+    assert "Ready to connect" in discovered
+    assert "Adapter: Adapter not implemented" in discovered
+    assert "2 additional sources found." in discovered
+    assert "No job sources found." not in discovered
+
+
+def test_non_source_privacy_candidate_is_not_published_as_unknown_custom() -> None:
+    company = model("companies.Company").objects.create(name="Privacy Candidate")
+    run = discovery_run(company, status="unsupported")
+    discovery_candidate(
+        run,
+        url="https://privacy.example/careers/privacy-policy",
+        kind="careers",
+        platform="",
+        supported=False,
+        decision="unsupported",
+        job_source_eligibility="company_jobs_page",
+        evidence=["Confirmed careers listing candidate"],
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert "privacy.example/careers/privacy-policy" not in html
+    assert "Unknown / Custom" not in html
+
+
 @pytest.mark.parametrize("status", ["failed", "needs_review"])
 def test_failed_or_partial_discovery_does_not_claim_no_additional_sources(
     status: str,
@@ -3176,6 +3284,27 @@ def test_failed_or_partial_discovery_does_not_claim_no_additional_sources(
         else "Search incomplete — some sources could not be checked."
     )
     assert html.count(expected) == 1
+
+
+def test_failed_discovery_shows_safe_name_only_search_guidance() -> None:
+    company = model("companies.Company").objects.create(name="Search Guidance")
+    run = discovery_run(company, status="failed")
+    run.error_code = "SearchConfigurationError"
+    run.error_message = (
+        "SOURCE_DISCOVERY_TAVILY_API_KEY is required; enable the explicit keyless "
+        "diagnostic mode only for bounded diagnostics"
+    )
+    run.save(update_fields=("error_code", "error_message"))
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    ).content.decode()
+
+    assert "Discovery needs search configuration." in html
+    assert "Supply the official domain to bypass search" in html
+    assert "Official domain (optional)" in html
+    assert "No job sources found." not in html
 
 
 def test_sources_manager_uses_compact_rows_and_hides_technical_fields() -> None:

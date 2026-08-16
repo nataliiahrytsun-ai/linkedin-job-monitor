@@ -79,8 +79,16 @@ class FakeCrawler:
         return self.pages
 
 
-def page(url: str, body: str = "", links: tuple[str, ...] = ()) -> Any:
-    return CrawledPage(url, url, body, links, 0)
+def page(
+    url: str,
+    body: str = "",
+    links: tuple[str, ...] = (),
+    *,
+    depth: int = 0,
+    requested_url: str | None = None,
+    final_url: str | None = None,
+) -> Any:
+    return CrawledPage(requested_url or url, final_url or url, body, links, depth)
 
 
 @pytest.mark.parametrize(
@@ -507,13 +515,11 @@ def test_initial_discovery_uses_tavily_then_daily_updates_use_only_saved_adapter
     source = model("companies.CompanySource").objects.get(company=record)
     assert outcome.status == "connected"
     assert (source.source, source.source_jobs_url) == ("dreamjobs", careers)
-    assert provider.queries == [
+    assert provider.queries[:2] == [
         '"Data Sentics" official website',
-        '"Data Sentics" official careers jobs',
-        '"Data Sentics" Darwinbox careers',
-        '"Data Sentics" JazzHR jobs',
-        '"Data Sentics" Lever jobs',
+        '"Data Sentics" careers jobs vacancies recruiting',
     ]
+    assert "site:datasentics.com careers jobs vacancies" in provider.queries
 
     adapter_calls = 0
     SourceBatch = importlib.import_module("scraping.sources.base").SourceBatch
@@ -599,21 +605,15 @@ def test_official_site_403_uses_search_fallback_without_auto_connecting() -> Non
         "needs_review",
     )
     assert "JazzHR technical signal" in source_candidate.evidence
-    assert 'Fallback query: "Acuity Analytics" official careers jobs' in (
-        source_candidate.evidence
-    )
-    assert not any("site:" in evidence for evidence in source_candidate.evidence)
+    assert any(evidence.startswith("Fallback query: ") for evidence in source_candidate.evidence)
     assert linkedin_candidate.decision == "needs_review"
     assert linkedin_candidate.official_site_eligibility == "not_official_site"
     assert linkedin_candidate.job_source_eligibility == "external_job_board"
-    assert provider.queries == [
+    assert provider.queries[:2] == [
         '"Acuity Analytics" official website',
-        '"Acuity Analytics" official careers jobs',
-        "site:www.acuityanalytics.com careers jobs",
-        '"Acuity Analytics" Darwinbox careers',
-        '"Acuity Analytics" DreamJobs careers',
-        '"Acuity Analytics" Lever jobs',
+        '"Acuity Analytics" careers jobs vacancies recruiting',
     ]
+    assert "site:www.acuityanalytics.com careers jobs vacancies" in provider.queries
     assert not model("companies.CompanySource").objects.filter(company=record).exists()
 
 
@@ -832,6 +832,63 @@ def test_unknown_platform_careers_link_is_persisted() -> None:
     assert "new source adapter" in candidate.reason
 
 
+def test_catalog_unsupported_ats_link_is_classified_without_fetching_target(
+) -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("myneva")
+    personio = "https://myneva-group.jobs.personio.de/job/123?language=de"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="myneva.eu",
+        crawler=FakeCrawler(page("https://myneva.eu/", links=(personio,))),
+    )
+
+    candidate = model("discovery.DiscoveryCandidate").objects.get(kind="source")
+    assert outcome.status == "unsupported"
+    assert (candidate.platform, candidate.canonical_url, candidate.supported) == (
+        "personio",
+        "https://myneva-group.jobs.personio.de/",
+        False,
+    )
+    assert not model("companies.CompanySource").objects.exists()
+
+
+def test_workday_link_is_classified_without_fetching_target() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("Acme")
+    workday = "https://acme.wd3.myworkdayjobs.com/en-US/External/job/123"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="acme.com",
+        crawler=FakeCrawler(page("https://acme.com/", links=(workday,))),
+    )
+
+    candidate = model("discovery.DiscoveryCandidate").objects.get(kind="source")
+    assert outcome.status == "unsupported"
+    assert (candidate.platform, candidate.canonical_url, candidate.supported) == (
+        "workday",
+        "https://acme.wd3.myworkdayjobs.com/",
+        False,
+    )
+    assert not model("companies.CompanySource").objects.exists()
+
+
+def test_weak_vendor_name_text_alone_does_not_classify_catalog_platform() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("Weak Vendor Text")
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="weak.example",
+        crawler=FakeCrawler(page("https://weak.example/", "Careers powered by Personio")),
+    )
+
+    assert outcome.status == "not_found"
+    assert not model("discovery.DiscoveryCandidate").objects.filter(kind="source").exists()
+
+
 def test_empty_search_results_fail_closed_without_fake_source() -> None:
     run_discovery = service_module().run_discovery
 
@@ -1013,14 +1070,11 @@ def test_discovery_searches_by_company_name_without_manual_domain() -> None:
         crawler=FakeCrawler(page("https://www.siemens.com/", "Siemens")),
     )
     run = model("discovery.DiscoveryRun").objects.get(pk=outcome.run_id)
-    assert provider.queries == [
+    assert provider.queries[:2] == [
         '"Siemens" official website',
-        '"Siemens" official careers jobs',
-        '"Siemens" Darwinbox careers',
-        '"Siemens" DreamJobs careers',
-        '"Siemens" JazzHR jobs',
-        '"Siemens" Lever jobs',
+        '"Siemens" careers jobs vacancies recruiting',
     ]
+    assert "site:www.siemens.com careers jobs vacancies" in provider.queries
     assert run.supplied_domain == ""
     assert run.official_website_url == "https://www.siemens.com/"
 
@@ -1040,7 +1094,7 @@ def test_registry_driven_sweep_finds_second_platform_and_records_coverage() -> N
             self.queries.append(query)
             if query == '"Two Source Company" official website':
                 return (SearchResult("Two Source Company", official),)
-            if query == '"Two Source Company" official careers jobs':
+            if query == '"Two Source Company" careers jobs vacancies recruiting':
                 return (
                     SearchResult(
                         "Two Source Company jobs",
@@ -1048,8 +1102,13 @@ def test_registry_driven_sweep_finds_second_platform_and_records_coverage() -> N
                         "Careers at Two Source Company",
                     ),
                 )
-            if "JazzHR" in query:
+            if "Lever" in query or "JazzHR" in query:
                 return (
+                    SearchResult(
+                        "Two Source Company jobs",
+                        lever,
+                        "Careers at Two Source Company",
+                    ),
                     SearchResult(
                         "Two Source Company careers",
                         jazzhr,
@@ -1087,10 +1146,176 @@ def test_registry_driven_sweep_finds_second_platform_and_records_coverage() -> N
         "lever": "found",
     }
     assert record.sources.count() == 0
-    assert len(provider.queries) == 5
+    assert '"Two Source Company" careers jobs vacancies recruiting' in provider.queries
+    assert len(provider.queries) <= 6
     assert {
         item.candidate.platform for item in presentations if item.can_connect
     } == {"jazzhr", "lever"}
+
+
+def test_search_inventory_retains_multiple_ats_sources() -> None:
+    run_discovery = service_module().run_discovery
+    record = company("Orbit Labs")
+    official = "https://orbitlabs.example/"
+    lever = "https://jobs.lever.co/orbitlabs"
+    personio = "https://orbitlabs.jobs.personio.de/job/123?language=en"
+
+    class InventorySearch:
+        def search(self, query: str, *, limit: int = 5) -> tuple[Any, ...]:
+            del limit
+            if query == '"Orbit Labs" official website':
+                return (SearchResult("Orbit Labs", official),)
+            if query == '"Orbit Labs" careers jobs vacancies recruiting':
+                return (SearchResult("Orbit Labs careers", official, "Orbit Labs jobs"),)
+            if "Lever" in query or "JazzHR" in query:
+                return (SearchResult("Orbit Labs jobs", lever, "Orbit Labs hiring"),)
+            if "Personio" in query:
+                return (SearchResult("Orbit Labs careers", personio, "Orbit Labs jobs"),)
+            return ()
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        search_provider=InventorySearch(),
+        crawler=FakeCrawler(page(official, "Orbit Labs")),
+    )
+
+    candidates = model("discovery.DiscoveryCandidate").objects.filter(kind="source")
+    assert outcome.status == "needs_review"
+    assert set(candidates.values_list("platform", "canonical_url")) == {
+        ("lever", lever),
+        ("personio", "https://orbitlabs.jobs.personio.de/"),
+    }
+
+
+def test_search_inventory_finds_ats_without_crawl_signal() -> None:
+    run_discovery = service_module().run_discovery
+    record = company("Northwind")
+    official = "https://northwind.example/"
+    workday = "https://northwind.wd3.myworkdayjobs.com/en-US/external/job/123"
+
+    class SearchOnlyAts:
+        def search(self, query: str, *, limit: int = 5) -> tuple[Any, ...]:
+            del limit
+            if query == '"Northwind" official website':
+                return (SearchResult("Northwind", official),)
+            if query == '"Northwind" careers jobs vacancies recruiting':
+                return (SearchResult("Northwind careers", official, "Northwind jobs"),)
+            if "Workday" in query:
+                return (SearchResult("Northwind jobs", workday, "Northwind careers"),)
+            return ()
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        search_provider=SearchOnlyAts(),
+        crawler=FakeCrawler(page(official, "Northwind")),
+    )
+
+    candidate = model("discovery.DiscoveryCandidate").objects.get(kind="source")
+    run = model("discovery.DiscoveryRun").objects.get(pk=outcome.run_id)
+    assert outcome.status == "unsupported"
+    assert (candidate.platform, candidate.canonical_url) == (
+        "workday",
+        "https://northwind.wd3.myworkdayjobs.com/",
+    )
+    assert run.careers_url == "https://northwind.wd3.myworkdayjobs.com/"
+
+
+def test_search_inventory_keeps_first_party_careers_and_unsupported_ats() -> None:
+    run_discovery = service_module().run_discovery
+    record = company("PQ Labs")
+    official = "https://pqlabs.example/"
+    careers = "https://pqlabs.example/careers/"
+    personio = "https://pqlabs.jobs.personio.de/job/123?language=en"
+
+    class MixedInventorySearch:
+        def search(self, query: str, *, limit: int = 5) -> tuple[Any, ...]:
+            del limit
+            if query == '"PQ Labs" official website':
+                return (SearchResult("PQ Labs", official),)
+            if query == '"PQ Labs" careers jobs vacancies recruiting':
+                return (SearchResult("PQ Labs careers", careers, "PQ Labs jobs"),)
+            if "Personio" in query:
+                return (SearchResult("PQ Labs jobs", personio, "PQ Labs careers"),)
+            return ()
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        search_provider=MixedInventorySearch(),
+        crawler=FakeCrawler(page(official, "PQ Labs")),
+    )
+
+    assert outcome.status == "unsupported"
+    assert model("discovery.DiscoveryCandidate").objects.filter(
+        kind="careers",
+        canonical_url=careers,
+    ).exists()
+    assert model("discovery.DiscoveryCandidate").objects.filter(
+        kind="source",
+        canonical_url="https://pqlabs.jobs.personio.de/",
+    ).exists()
+
+
+def test_search_inventory_rejects_privacy_result() -> None:
+    run_discovery = service_module().run_discovery
+    record = company("Privacy Search")
+    official = "https://privacy-search.example/"
+    privacy = "https://privacy-search.example/privacy-policy"
+
+    class PrivacySearch:
+        def search(self, query: str, *, limit: int = 5) -> tuple[Any, ...]:
+            del limit
+            if query == '"Privacy Search" official website':
+                return (SearchResult("Privacy Search", official),)
+            return (
+                SearchResult("Privacy Search", official, "Privacy Search"),
+                SearchResult("Privacy Search privacy", privacy, "Privacy Search careers"),
+            )
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        search_provider=PrivacySearch(),
+        crawler=FakeCrawler(page(official, "Privacy Search")),
+    )
+
+    assert outcome.status == "not_found"
+    assert not model("discovery.DiscoveryCandidate").objects.filter(
+        kind="careers",
+        canonical_url=privacy,
+    ).exists()
+
+
+def test_search_inventory_deduplicates_job_detail_urls_into_one_source() -> None:
+    run_discovery = service_module().run_discovery
+    record = company("Detail Dedup")
+    official = "https://detail-dedup.example/"
+    detail = "https://detail-dedup.jobs.personio.de/job/123?language=en"
+    apply = "https://detail-dedup.jobs.personio.de/job/456/apply"
+
+    class DedupSearch:
+        def search(self, query: str, *, limit: int = 5) -> tuple[Any, ...]:
+            del limit
+            if query == '"Detail Dedup" official website':
+                return (SearchResult("Detail Dedup", official),)
+            if query == '"Detail Dedup" careers jobs vacancies recruiting':
+                return (SearchResult("Detail Dedup", official, "Detail Dedup jobs"),)
+            if "Personio" in query:
+                return (
+                    SearchResult("Detail Dedup role one", detail, "Detail Dedup careers"),
+                    SearchResult("Detail Dedup role two", apply, "Detail Dedup jobs"),
+                )
+            return ()
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        search_provider=DedupSearch(),
+        crawler=FakeCrawler(page(official, "Detail Dedup")),
+    )
+
+    candidates = model("discovery.DiscoveryCandidate").objects.filter(kind="source")
+    assert outcome.status == "unsupported"
+    assert list(candidates.values_list("canonical_url", flat=True)) == [
+        "https://detail-dedup.jobs.personio.de/"
+    ]
 
 
 def test_new_acuity_discovers_jazzhr_and_embedded_darwinbox_source() -> None:
@@ -1120,8 +1345,8 @@ def test_new_acuity_discovers_jazzhr_and_embedded_darwinbox_source() -> None:
             if query == '"Acuity Analytics" official website':
                 return (SearchResult("Acuity Analytics", official),)
             if query in {
-                '"Acuity Analytics" official careers jobs',
-                "site:www.acuityanalytics.com careers jobs",
+                '"Acuity Analytics" careers jobs vacancies recruiting',
+                "site:www.acuityanalytics.com careers jobs vacancies",
             }:
                 return (
                     SearchResult(
@@ -1130,7 +1355,7 @@ def test_new_acuity_discovers_jazzhr_and_embedded_darwinbox_source() -> None:
                         "Acuity Analytics jobs and careers.",
                     ),
                 )
-            if query == '"Acuity Analytics" Darwinbox careers':
+            if "Darwinbox" in query:
                 return (
                     SearchResult(
                         "Acuity Knowledge Partners | Customer Success Story",
@@ -1173,7 +1398,7 @@ def test_new_acuity_discovers_jazzhr_and_embedded_darwinbox_source() -> None:
         "darwinbox": "found",
         "dreamjobs": "not_found",
         "jazzhr": "found",
-        "lever": "not_checked",
+        "lever": "not_found",
     }
     assert {item.candidate.platform for item in inventory if item.can_confirm} == {
         "darwinbox",
@@ -1260,7 +1485,11 @@ def test_existing_acuity_inventory_is_complete_and_idempotent_after_403() -> Non
             self.queries.append(query)
             if query == '"Acuity Analytics" official website':
                 return (SearchResult("Acuity Analytics", official),)
-            if "official careers" in query or query.startswith("site:"):
+            if (
+                query == '"Acuity Analytics" careers jobs vacancies recruiting'
+                or query.startswith("site:")
+                or "JazzHR" in query
+            ):
                 return (
                     SearchResult(
                         "Acuity Analytics jobs",
@@ -1298,7 +1527,7 @@ def test_existing_acuity_inventory_is_complete_and_idempotent_after_403() -> Non
         "jazzhr": "already_connected",
         "lever": "not_found",
     }
-    assert not any("Darwinbox" in query or "JazzHR" in query for query in provider.queries)
+    assert not any(query == '"Acuity Analytics" Darwinbox careers' for query in provider.queries)
 
 
 def test_previous_validated_candidate_remains_visible_on_discover_again() -> None:
@@ -1415,7 +1644,7 @@ def test_manual_confirmation_rejects_unsupported_candidate() -> None:
         confirm_candidate(candidate_id=candidate.pk, company_id=record.pk)
 
 
-def test_weak_supported_signal_never_auto_connects() -> None:
+def test_weak_vendor_text_does_not_classify_or_auto_connect() -> None:
     run_discovery = service_module().run_discovery
 
     record = company()
@@ -1425,8 +1654,8 @@ def test_weak_supported_signal_never_auto_connects() -> None:
         supplied_domain="datasentics.com",
         crawler=FakeCrawler(page(jobs, "api.dream.jobs")),
     )
-    candidate = model("discovery.DiscoveryCandidate").objects.get(kind="source")
-    assert (outcome.status, candidate.confidence) == ("needs_review", 88)
+    assert outcome.status == "not_found"
+    assert not model("discovery.DiscoveryCandidate").objects.filter(kind="source").exists()
     assert not model("companies.CompanySource").objects.exists()
 
 
@@ -1578,9 +1807,349 @@ def test_real_scrapling_background_path_materializes_responses_inside_session(
     assert (run.status, run.error_message) == ("connected", "")
     assert run.careers_url == jobs
     assert (source.source, source.source_jobs_url) == ("dreamjobs", jobs)
-    assert request_calls.count(search_module.TavilySearchProvider.endpoint) == 5
+    assert request_calls.count(search_module.TavilySearchProvider.endpoint) == 6
     assert [url for url in request_calls if url != search_module.TavilySearchProvider.endpoint] == [
         official,
         careers_home,
         jobs,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("url", "platform", "canonical_url"),
+    [
+        ("https://acme.wd3.myworkdayjobs.com/en-US/External", "workday", "https://acme.wd3.myworkdayjobs.com/"),
+        ("https://job-boards.greenhouse.io/acme/jobs/123", "greenhouse", "https://job-boards.greenhouse.io/acme"),
+        ("https://acme.jobs.personio.de/job/123?language=en", "personio", "https://acme.jobs.personio.de/"),
+        ("https://jobs.smartrecruiters.com/acme/123-role", "smartrecruiters", "https://jobs.smartrecruiters.com/acme"),
+        ("https://apply.workable.com/acme/j/123/", "workable", "https://apply.workable.com/acme"),
+        ("https://jobs.ashbyhq.com/acme/123", "ashby", "https://jobs.ashbyhq.com/acme"),
+        ("https://acme.teamtailor.com/jobs/123-role", "teamtailor", "https://acme.teamtailor.com/"),
+    ],
+)
+def test_unimplemented_catalog_platforms_are_detected_from_public_urls(
+    url: str, platform: str, canonical_url: str
+) -> None:
+    detection = detect_page(page(url))[0]
+
+    assert (detection.platform, detection.canonical_url, detection.supported) == (
+        platform,
+        canonical_url,
+        False,
+    )
+    assert detection.confidence >= 95
+
+
+def test_unknown_careers_source_is_visible_for_investigation() -> None:
+    run_discovery = service_module().run_discovery
+    presentation = importlib.import_module("discovery.presentation")
+    record = company()
+    careers = "https://careers.example.com/open-roles"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="datasentics.com",
+        crawler=FakeCrawler(page("https://datasentics.com/", links=(careers,))),
+    )
+    run = model("discovery.DiscoveryRun").objects.get(pk=outcome.run_id)
+    items = presentation.company_candidate_presentations(company_id=record.pk)
+    result = presentation.discovery_result_presentation(
+        run, items, presentation.discovery_coverage(run)
+    )
+
+    assert len(items) == 1
+    assert items[0].state == "investigation_required"
+    assert result is not None
+    assert result.summary_text != "No job sources found."
+
+
+def test_first_hop_external_careers_redirect_is_kept_but_second_hop_unknown_links_are_ignored(
+) -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("CERN")
+    official = "https://cern.ch/"
+    official_careers = "https://cern.ch/careers"
+    external_careers = "https://careers.cern/"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="cern.ch",
+        crawler=FakeCrawler(
+            page(official, "CERN", (official_careers,)),
+            page(
+                external_careers,
+                "CERN careers",
+                (
+                    "https://www.h-ka.de/en/careercontacts",
+                    "https://www.hva.nl/en/agenda/careerday",
+                    "https://www.fz-juelich.de/en/careers/jobs",
+                ),
+                depth=1,
+                requested_url=official_careers,
+            ),
+        ),
+    )
+
+    run = model("discovery.DiscoveryRun").objects.get(pk=outcome.run_id)
+    official_candidate = model("discovery.DiscoveryCandidate").objects.get(
+        run=run, kind="official_site"
+    )
+    candidates = model("discovery.DiscoveryCandidate").objects.filter(
+        run=run, kind="careers"
+    )
+
+    assert outcome.status == "unsupported"
+    assert run.careers_url == external_careers
+    assert list(candidates.values_list("canonical_url", flat=True)) == [external_careers]
+    assert any(
+        "Observed first-hop external careers redirect" in item
+        for item in official_candidate.evidence
+    )
+    assert any(
+        "Ignored second-hop careers-like URL" in item for item in official_candidate.evidence
+    )
+
+
+def test_unimplemented_ats_link_from_official_careers_page_is_still_classified() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("myneva")
+    official = "https://myneva.eu/"
+    careers = "https://myneva.eu/de/karriere"
+    personio = "https://myneva.jobs.personio.de/job/123?language=en"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="myneva.eu",
+        crawler=FakeCrawler(
+            page(official, "myneva", (careers,)),
+            page(careers, "myneva careers", (personio,), depth=1),
+        ),
+    )
+
+    candidates = model("discovery.DiscoveryCandidate").objects.filter(kind="source")
+    assert outcome.status == "unsupported"
+    assert list(candidates.values_list("platform", "canonical_url", "supported")) == [
+        ("personio", "https://myneva.jobs.personio.de/", False)
+    ]
+
+
+def test_incompatible_ats_tenant_on_first_hop_external_careers_page_is_rejected() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("CERN")
+    official = "https://home.cern/"
+    careers = "https://careers.cern/"
+    smartrecruiters = "https://jobs.smartrecruiters.com/CERN/physics-role"
+    workday = "https://triumf.wd10.myworkdayjobs.com/en-US/TRIUMF/job/123"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="cern.ch",
+        crawler=FakeCrawler(
+            page(official, "CERN", (careers,)),
+            page(
+                careers,
+                "CERN careers",
+                (smartrecruiters, workday),
+                depth=1,
+                requested_url=careers,
+            ),
+        ),
+    )
+
+    candidates = (
+        model("discovery.DiscoveryCandidate")
+        .objects.filter(kind="source")
+        .order_by("platform")
+    )
+    official_candidate = model("discovery.DiscoveryCandidate").objects.get(kind="official_site")
+
+    assert outcome.status == "unsupported"
+    assert list(candidates.values_list("platform", "canonical_url")) == [
+        ("smartrecruiters", "https://jobs.smartrecruiters.com/CERN")
+    ]
+    assert not model("discovery.DiscoveryCandidate").objects.filter(
+        canonical_url__contains="triumf.wd10.myworkdayjobs.com"
+    ).exists()
+    assert any(
+        "Ignored ATS candidate with incompatible company or tenant identity" in item
+        for item in official_candidate.evidence
+    )
+
+
+def test_matching_ats_tenant_directly_linked_from_official_page_is_retained() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("SmartRecruiters")
+    jobs = "https://jobs.smartrecruiters.com/SmartRecruiters/software-engineer"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="smartrecruiterscareers.com",
+        crawler=FakeCrawler(
+            page(
+                "https://www.smartrecruiterscareers.com/",
+                "SmartRecruiters",
+                (jobs,),
+            )
+        ),
+    )
+
+    candidate = model("discovery.DiscoveryCandidate").objects.get(kind="source")
+    assert outcome.status == "unsupported"
+    assert (candidate.platform, candidate.canonical_url) == (
+        "smartrecruiters",
+        "https://jobs.smartrecruiters.com/SmartRecruiters",
+    )
+
+
+def test_privacy_policy_never_becomes_unknown_custom_source() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("SmartRecruiters")
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="smartrecruiterscareers.com",
+        crawler=FakeCrawler(
+            page(
+                "https://www.smartrecruiterscareers.com/",
+                "SmartRecruiters",
+                ("https://www.smartrecruiterscareers.com/privacy-policy",),
+            )
+        ),
+    )
+
+    assert outcome.status == "not_found"
+    assert not model("discovery.DiscoveryCandidate").objects.filter(kind="careers").exists()
+
+
+def test_unrelated_university_careers_link_is_rejected_completely() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("Research Company")
+    official = "https://research.example/"
+    university = "https://www.ucl.ac.uk/work-at-ucl/search-ucl-jobs/details?jobId=45505"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="research.example",
+        crawler=FakeCrawler(page(official, "Research Company", (university,))),
+    )
+
+    assert outcome.status == "not_found"
+    assert not model("discovery.DiscoveryCandidate").objects.filter(
+        canonical_url=university
+    ).exists()
+
+
+def test_aggregator_job_detail_is_rejected_completely() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("Research Company")
+    official = "https://research.example/"
+    aggregator = "https://academicjobsonline.org/ajo/jobs/32375"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="research.example",
+        crawler=FakeCrawler(page(official, "Research Company", (aggregator,))),
+    )
+
+    assert outcome.status == "not_found"
+    assert not model("discovery.DiscoveryCandidate").objects.filter(
+        canonical_url=aggregator
+    ).exists()
+
+
+def test_rejected_ats_candidate_cannot_fall_back_to_unknown_custom() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("Research Company")
+    official = "https://research.example/"
+    workday = "https://triumf.wd10.myworkdayjobs.com/en-US/careers-at-triumf-job-postings/job/123"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="research.example",
+        crawler=FakeCrawler(page(official, "Research Company", (workday,))),
+    )
+
+    assert outcome.status == "not_found"
+    assert not model("discovery.DiscoveryCandidate").objects.filter(
+        canonical_url__contains="triumf.wd10.myworkdayjobs.com"
+    ).exists()
+
+
+def test_credible_first_party_careers_page_remains_unknown_custom() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("PQShield")
+    careers = "https://pqshield.com/careers/"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="pqshield.com",
+        crawler=FakeCrawler(page("https://pqshield.com/", "PQShield", (careers,))),
+    )
+
+    candidate = model("discovery.DiscoveryCandidate").objects.get(kind="careers")
+    assert outcome.status == "unsupported"
+    assert candidate.canonical_url == careers
+
+
+def test_supported_source_auto_connect_still_works_for_first_hop_external_redirect() -> None:
+    run_discovery = service_module().run_discovery
+
+    record = company("Auto Connect External")
+    official = "https://example.com/"
+    official_jobs = "https://example.com/jobs"
+    lever = "https://jobs.lever.co/example"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="example.com",
+        crawler=FakeCrawler(
+            page(official, "Auto Connect External", (official_jobs,)),
+            page(lever, depth=1, requested_url=official_jobs),
+        ),
+    )
+
+    source = model("companies.CompanySource").objects.get(company=record)
+    assert outcome.status == "connected"
+    assert (source.source, source.source_jobs_url, source.is_active) == ("lever", lever, True)
+
+
+def test_supported_and_unimplemented_platforms_are_both_retained() -> None:
+    run_discovery = service_module().run_discovery
+    record = company()
+    lever = "https://jobs.lever.co/datasentics"
+    personio = "https://datasentics.jobs.personio.de/job/123"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="datasentics.com",
+        crawler=FakeCrawler(page("https://datasentics.com/", links=(lever, personio))),
+    )
+
+    candidates = model("discovery.DiscoveryCandidate").objects.filter(kind="source")
+    assert outcome.status == "connected"
+    assert set(candidates.values_list("platform", flat=True)) == {"lever", "personio"}
+    assert candidates.get(platform="personio").supported is False
+
+
+def test_personio_detail_and_privacy_links_collapse_to_one_source() -> None:
+    run_discovery = service_module().run_discovery
+    record = company()
+    root = "https://datasentics.jobs.personio.de/"
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="datasentics.com",
+        crawler=FakeCrawler(
+            page(
+                "https://datasentics.com/",
+                links=(
+                    root,
+                    "https://datasentics.jobs.personio.de/job/123",
+                    "https://datasentics.jobs.personio.de/job/456/apply",
+                    "https://datasentics.jobs.personio.de/privacy-policy",
+                ),
+            )
+        ),
+    )
+
+    assert outcome.status == "unsupported"
+    candidates = model("discovery.DiscoveryCandidate").objects.filter(kind="source")
+    assert list(candidates.values_list("platform", "canonical_url")) == [
+        ("personio", root)
     ]

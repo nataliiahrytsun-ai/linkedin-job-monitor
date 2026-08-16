@@ -9,7 +9,11 @@ from django.core.exceptions import ValidationError
 
 from companies.forms import validate_source_configuration
 from companies.models import CompanySource
-from discovery.classification import JobSourceClassification, classify_job_source
+from discovery.classification import (
+    JobSourceClassification,
+    classify_job_source,
+    is_excluded_unknown_source_url,
+)
 from discovery.detectors import source_identity
 from discovery.models import DiscoveryAdapterCheck, DiscoveryCandidate, DiscoveryRun
 from discovery.network import UnsafeUrlError, canonicalize_url
@@ -59,6 +63,7 @@ class CandidatePresentation:
     platform_label: str
     short_url: str
     display_url: str
+    evidence: tuple[str, ...]
     origin_label: str
     canonical_identity: str
     display_name: str
@@ -132,10 +137,17 @@ _CATEGORY_LABELS = {
 }
 
 _PLATFORM_LABELS = {
+    "ashby": "Ashby",
     "darwinbox": "Darwinbox",
     "dreamjobs": "DreamJobs",
+    "greenhouse": "Greenhouse",
     "jazzhr": "JazzHR",
     "lever": "Lever",
+    "personio": "Personio",
+    "smartrecruiters": "SmartRecruiters",
+    "teamtailor": "Teamtailor",
+    "workable": "Workable",
+    "workday": "Workday",
 }
 
 _CHECK_LABELS = {
@@ -156,39 +168,6 @@ _CHECK_TONES = {
     DiscoveryAdapterCheck.Status.VALIDATION_FAILED: "attention",
 }
 
-_NON_LISTING_PATH_SEGMENTS = {
-    "article",
-    "articles",
-    "blog",
-    "blogs",
-    "event",
-    "events",
-    "employee",
-    "employees",
-    "insight",
-    "insights",
-    "news",
-    "people",
-    "person",
-    "press",
-    "press-release",
-    "press-releases",
-    "profile",
-    "profiles",
-    "resource",
-    "resources",
-}
-_NON_LISTING_HOSTS = {
-    "facebook.com",
-    "glassdoor.com",
-    "indeed.com",
-    "instagram.com",
-    "leadiq.com",
-    "linkedin.com",
-    "naukri.com",
-    "twitter.com",
-    "x.com",
-}
 _LISTING_EVIDENCE_MARKERS = (
     "ats api",
     "ats-specific asset",
@@ -245,12 +224,15 @@ def _effective_job_source(candidate: DiscoveryCandidate) -> JobSourceClassificat
 
 def _has_confirmed_listing(candidate: DiscoveryCandidate) -> bool:
     """Require persisted technical/listing evidence before offering adapter work."""
-    parsed = urlsplit(candidate.canonical_url or candidate.discovered_url)
-    host = (parsed.hostname or "").casefold().removeprefix("www.")
-    if any(host == blocked or host.endswith(f".{blocked}") for blocked in _NON_LISTING_HOSTS):
-        return False
-    path_segments = {segment for segment in parsed.path.casefold().split("/") if segment}
-    if path_segments & _NON_LISTING_PATH_SEGMENTS:
+    if (
+        candidate.kind == DiscoveryCandidate.Kind.SOURCE
+        and candidate.platform
+        and not candidate.supported
+        and candidate.job_source_eligibility
+        == DiscoveryCandidate.JobSourceEligibility.UNSUPPORTED_ATS
+    ):
+        return True
+    if is_excluded_unknown_source_url(candidate.canonical_url or candidate.discovered_url):
         return False
     evidence = " ".join(str(item).casefold() for item in candidate.evidence)
     return any(marker in evidence for marker in _LISTING_EVIDENCE_MARKERS)
@@ -383,8 +365,8 @@ def present_candidate(candidate: DiscoveryCandidate) -> CandidatePresentation:
     adapter_status = {
         "ready_to_connect": "Supported — ready to connect",
         "connected": "Already connected",
-        "adapter_required": "New adapter needed",
-        "investigation_required": "New adapter needed",
+        "adapter_required": "Adapter not implemented",
+        "investigation_required": "Unknown / Custom",
         "not_a_job_source": "Not a job source",
         "ignored": "Ignored by user",
         "needs_review": "Review required",
@@ -415,11 +397,12 @@ def present_candidate(candidate: DiscoveryCandidate) -> CandidatePresentation:
         platform_label=display_name,
         short_url=_short_url(display_url),
         display_url=display_url,
+        evidence=tuple(str(item) for item in candidate.evidence),
         origin_label=_origin_label(candidate),
         canonical_identity=_canonical_identity(candidate),
         display_name=display_name,
         category_label=_CATEGORY_LABELS[eligibility],
-        confidence_label="",
+        confidence_label=f"{candidate.confidence}% confidence",
         adapter_status_label=adapter_status,
         short_reason=job_source.reason,
         can_ignore=state not in {"connected", "ignored"},
@@ -600,7 +583,12 @@ def discovery_result_presentation(
     if run.status == DiscoveryRun.Status.RUNNING:
         summary_text = "Searching for job sources…"
     elif run.status == DiscoveryRun.Status.FAILED:
-        summary_text = "Discovery could not be completed. Existing sources remain connected."
+        summary_text = (
+            "Discovery needs search configuration. Supply the official domain to bypass "
+            "search, or configure the approved search provider."
+            if run.error_code == "SearchConfigurationError"
+            else "Discovery could not be completed. Existing sources remain connected."
+        )
     elif coverage is not None and coverage.partial:
         summary_text = "Search incomplete — some sources could not be checked."
     elif connected_source_count and additional_count:

@@ -1,21 +1,20 @@
-"""Extensible technical-signal detectors for supported and unknown ATS pages."""
+"""Conservative, source-neutral public ATS classification."""
+
+from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
-from discovery.network import CrawledPage, canonicalize_url
-from scraping.sources.base import SourceError
-from scraping.sources.darwinbox import darwinbox_source_from_url
-from scraping.sources.dreamjobs import dreamjobs_source_from_url
-from scraping.sources.jazzhr import jazzhr_source_from_url
-from scraping.sources.lever import lever_site_from_url
+from discovery.network import CrawledPage, UnsafeUrlError, canonicalize_url
 from scraping.sources.registry import registered_source_keys, user_selectable_source_keys
 
 
 @dataclass(frozen=True, slots=True)
 class Detection:
+    """A platform classification, independent of adapter implementation."""
+
     platform: str
     confidence: int
     evidence: tuple[str, ...]
@@ -26,8 +25,6 @@ class Detection:
 
 
 class PlatformDetector(Protocol):
-    """One independently extensible platform detector."""
-
     def detect(self, page: CrawledPage) -> tuple[Detection, ...]: ...
 
 
@@ -37,7 +34,7 @@ type TenantIdentity = Callable[[str], str]
 
 @dataclass(frozen=True, slots=True)
 class SourceDiscoveryHints:
-    """Adapter-owned safe clues used by bounded source discovery."""
+    """Adapter-owned hints used only for bounded registered-adapter search."""
 
     platform: str
     host_patterns: tuple[str, ...]
@@ -49,167 +46,341 @@ class SourceDiscoveryHints:
     tenant_identity: TenantIdentity
 
 
-def _validated(platform: str, url: str) -> str | None:
-    try:
-        return discovery_hints_for(platform).canonicalize(url)
-    except (KeyError, SourceError, AttributeError):
-        return None
+def _url_parts(url: str) -> tuple[str, str, tuple[str, ...]]:
+    canonical = canonicalize_url(url)
+    parsed = urlsplit(canonical)
+    return (
+        canonical,
+        (parsed.hostname or "").casefold(),
+        tuple(segment for segment in parsed.path.split("/") if segment),
+    )
 
 
-type SignalProbe = Callable[[str, str, str], tuple[int, tuple[str, ...]] | None]
+def _root(url: str, *parts: str) -> str:
+    canonical, host, _segments = _url_parts(url)
+    parsed = urlsplit(canonical)
+    path = "/" + "/".join(parts) if parts else "/"
+    return urlunsplit((parsed.scheme, host, path, "", ""))
+
+
+def _first_path_root(url: str) -> str:
+    canonical, _host, segments = _url_parts(url)
+    return _root(canonical, segments[0]) if segments else _root(canonical)
+
+
+def _host_root(url: str) -> str:
+    return _root(url)
+
+
+def _lever_canonicalize(url: str) -> str:
+    canonical, host, segments = _url_parts(url)
+    if host != "jobs.lever.co" or not segments:
+        raise ValueError("Lever URL must use jobs.lever.co with a tenant path")
+    return _root(canonical, segments[0])
+
+
+def _jazzhr_canonicalize(url: str) -> str:
+    canonical, host, _segments = _url_parts(url)
+    if not host.endswith(".applytojob.com"):
+        raise ValueError("JazzHR URL must use an applytojob tenant host")
+    return _root(canonical, "apply")
+
+
+def _darwinbox_canonicalize(url: str) -> str:
+    canonical, host, segments = _url_parts(url)
+    if (
+        not host.endswith("darwinbox.com")
+        or len(segments) < 2
+        or segments[:2]
+        != (
+            "ms",
+            "candidate",
+        )
+    ):
+        if (
+            not host.endswith("darwinbox.com")
+            or len(segments) < 4
+            or segments[0] != "ms"
+            or segments[1] != "candidatev2"
+            or segments[3] != "careers"
+        ):
+            raise ValueError("Darwinbox URL must use a public candidate careers route")
+        return _root(canonical, "ms", "candidatev2", segments[2], "careers")
+    return _root(canonical, "ms", "candidate", "careers")
+
+
+def _dreamjobs_canonicalize(url: str) -> str:
+    canonical, _host, segments = _url_parts(url)
+    if not segments or segments[0] != "jobs":
+        raise ValueError("DreamJobs URL must use a /jobs listing")
+    return _root(canonical, "jobs")
+
+
+def _host_tenant(url: str) -> str:
+    return urlsplit(url).hostname.casefold()  # type: ignore[union-attr]
+
+
+def _path_tenant(url: str) -> str:
+    _canonical, host, segments = _url_parts(url)
+    return f"{host}:{segments[0].casefold() if segments else ''}"
+
+
+def _darwinbox_tenant(url: str) -> str:
+    _canonical, host, segments = _url_parts(url)
+    company_id = segments[2] if len(segments) > 3 and segments[1] == "candidatev2" else "main"
+    return f"{host}:{company_id.casefold()}"
 
 
 @dataclass(frozen=True, slots=True)
-class RegisteredPlatformDetector:
+class CatalogPlatformDetector:
     platform: str
-    probe: SignalProbe
+    matcher: Callable[[str, str, tuple[str, ...], str], tuple[int, tuple[str, ...]] | None]
+    canonicalize: SourceCanonicalizer
+    tenant_identity: TenantIdentity
 
     def detect(self, page: CrawledPage) -> tuple[Detection, ...]:
         detections: list[Detection] = []
-        body = page.body.lower()
-        supported = self.platform in set(registered_source_keys())
         for url in (page.url, *page.links):
-            host = (urlsplit(url).hostname or "").lower()
-            signal = self.probe(host, url.lower(), body)
+            try:
+                canonical, host, segments = _url_parts(url)
+            except UnsafeUrlError:
+                continue
+            signal = self.matcher(host, canonical, segments, page.body)
             if signal is None:
                 continue
-            canonical = _validated(self.platform, url)
-            if canonical is None:
+            try:
+                listing_url = self.canonicalize(canonical)
+            except (UnsafeUrlError, ValueError):
                 continue
             confidence, evidence = signal
             detections.append(
                 Detection(
-                    self.platform,
-                    confidence,
-                    evidence,
-                    canonical,
-                    supported,
+                    platform=self.platform,
+                    confidence=confidence,
+                    evidence=evidence,
+                    canonical_url=listing_url,
+                    supported=self.platform in set(registered_source_keys()),
                     redirects=page.redirects,
                 )
             )
         return tuple(detections)
 
 
-def _lever_signal(host: str, _url: str, _body: str) -> tuple[int, tuple[str, ...]] | None:
-    return (98, ("jobs.lever.co host",)) if host == "jobs.lever.co" else None
+def _host_exact(
+    expected: str, label: str
+) -> Callable[[str, str, tuple[str, ...], str], tuple[int, tuple[str, ...]] | None]:
+    def match(
+        host: str, _url: str, segments: tuple[str, ...], _body: str
+    ) -> tuple[int, tuple[str, ...]] | None:
+        return (98, (label,)) if host == expected and bool(segments) else None
+
+    return match
 
 
-def _jazzhr_signal(host: str, _url: str, body: str) -> tuple[int, tuple[str, ...]] | None:
-    if host.endswith("applytojob.com") or "jazzhr" in body or "resumator" in body:
-        return 96 if host.endswith("applytojob.com") else 86, ("JazzHR technical signal",)
-    return None
+def _host_suffix(
+    expected: str, label: str
+) -> Callable[[str, str, tuple[str, ...], str], tuple[int, tuple[str, ...]] | None]:
+    def match(
+        host: str, _url: str, _segments: tuple[str, ...], _body: str
+    ) -> tuple[int, tuple[str, ...]] | None:
+        return (96, (label,)) if host.endswith(expected) and host != expected else None
+
+    return match
 
 
-def _dreamjobs_signal(host: str, _url: str, body: str) -> tuple[int, tuple[str, ...]] | None:
-    vendor_hosts = {"dream.jobs", "www.dream.jobs", "business.dream.jobs", "api.dream.jobs"}
-    if host in vendor_hosts:
+def _darwinbox_match(
+    host: str, _url: str, segments: tuple[str, ...], _body: str
+) -> tuple[int, tuple[str, ...]] | None:
+    if not host.endswith("darwinbox.com"):
         return None
+    if segments[:3] == ("ms", "candidate", "careers"):
+        return 98, ("Darwinbox public candidate careers route",)
     if (
-        host.endswith("dream.jobs")
-        or "api.dream.jobs" in body
-        or ("__next_data__" in body and "dream" in body)
+        len(segments) >= 4
+        and segments[0] == "ms"
+        and segments[1] == "candidatev2"
+        and segments[3] == "careers"
     ):
-        if host.endswith("dream.jobs"):
-            return 97, ("DreamJobs hosted domain",)
-        if "api.dream.jobs" in body and "__next_data__" in body:
-            return 95, ("DreamJobs API and Next.js metadata",)
-        return 88, ("DreamJobs technical signal",)
+        return 98, ("Darwinbox public candidate-v2 careers route",)
     return None
 
 
-def _darwinbox_signal(host: str, url: str, body: str) -> tuple[int, tuple[str, ...]] | None:
-    if "darwinbox" in host or "darwinbox" in body or "/ms/candidate" in url:
-        return 94, ("Darwinbox technical signal",)
+def _dreamjobs_match(
+    host: str, _url: str, segments: tuple[str, ...], body: str
+) -> tuple[int, tuple[str, ...]] | None:
+    if host in {"dream.jobs", "www.dream.jobs", "business.dream.jobs", "api.dream.jobs"}:
+        return None
+    if host.endswith(".dream.jobs") and segments[:1] == ("jobs",):
+        return 98, ("DreamJobs hosted /jobs listing",)
+    if (
+        segments[:1] == ("jobs",)
+        and "api.dream.jobs" in body.casefold()
+        and "__next_data__" in body.casefold()
+    ):
+        return 95, ("DreamJobs API and Next.js listing metadata",)
     return None
 
 
-def _lever_canonicalize(url: str) -> str:
-    return f"https://jobs.lever.co/{lever_site_from_url(url)}"
-
-
-def _jazzhr_canonicalize(url: str) -> str:
-    return jazzhr_source_from_url(url).listing_url
-
-
-def _dreamjobs_canonicalize(url: str) -> str:
-    return dreamjobs_source_from_url(url).listing_url
-
-
-def _darwinbox_canonicalize(url: str) -> str:
-    location = darwinbox_source_from_url(url)
-    if location.company_id == "main":
-        return f"{location.scheme}://{location.host}/ms/candidate/careers"
+def _workday_match(
+    host: str, _url: str, _segments: tuple[str, ...], _body: str
+) -> tuple[int, tuple[str, ...]] | None:
     return (
-        f"{location.scheme}://{location.host}/ms/candidatev2/"
-        f"{location.company_id}/careers"
+        (96, ("Workday public myworkdayjobs host",))
+        if host.endswith(".myworkdayjobs.com")
+        else None
     )
 
 
-def _lever_tenant(url: str) -> str:
-    return lever_site_from_url(url).casefold()
+def _greenhouse_match(
+    host: str, _url: str, segments: tuple[str, ...], _body: str
+) -> tuple[int, tuple[str, ...]] | None:
+    if host in {"boards.greenhouse.io", "job-boards.greenhouse.io"} and segments:
+        return 96, ("Greenhouse public job-board host",)
+    return None
 
 
-def _jazzhr_tenant(url: str) -> str:
-    return jazzhr_source_from_url(url).host.casefold()
+def _smartrecruiters_match(
+    host: str, _url: str, segments: tuple[str, ...], _body: str
+) -> tuple[int, tuple[str, ...]] | None:
+    if host == "jobs.smartrecruiters.com" and segments:
+        return 96, ("SmartRecruiters public jobs host",)
+    return None
 
 
-def _dreamjobs_tenant(url: str) -> str:
-    return dreamjobs_source_from_url(url).host.casefold()
+def _workable_match(
+    host: str, _url: str, segments: tuple[str, ...], _body: str
+) -> tuple[int, tuple[str, ...]] | None:
+    if host == "apply.workable.com" and segments:
+        return 96, ("Workable public apply host",)
+    return None
 
 
-def _darwinbox_tenant(url: str) -> str:
-    location = darwinbox_source_from_url(url)
-    return f"{location.host.casefold()}:{location.company_id.casefold()}"
+def _ashby_match(
+    host: str, _url: str, segments: tuple[str, ...], _body: str
+) -> tuple[int, tuple[str, ...]] | None:
+    if host == "jobs.ashbyhq.com" and segments:
+        return 96, ("Ashby public jobs host",)
+    return None
+
+
+_CATALOG: tuple[CatalogPlatformDetector, ...] = (
+    CatalogPlatformDetector(
+        "lever",
+        _host_exact("jobs.lever.co", "Lever public jobs host"),
+        _lever_canonicalize,
+        _path_tenant,
+    ),
+    CatalogPlatformDetector(
+        "darwinbox",
+        _darwinbox_match,
+        _darwinbox_canonicalize,
+        _darwinbox_tenant,
+    ),
+    CatalogPlatformDetector(
+        "jazzhr",
+        _host_suffix(".applytojob.com", "JazzHR technical signal"),
+        _jazzhr_canonicalize,
+        _host_tenant,
+    ),
+    CatalogPlatformDetector("dreamjobs", _dreamjobs_match, _dreamjobs_canonicalize, _host_tenant),
+    CatalogPlatformDetector("workday", _workday_match, _host_root, _host_tenant),
+    CatalogPlatformDetector("greenhouse", _greenhouse_match, _first_path_root, _path_tenant),
+    CatalogPlatformDetector(
+        "personio",
+        _host_suffix(".jobs.personio.de", "Personio public jobs host"),
+        _host_root,
+        _host_tenant,
+    ),
+    CatalogPlatformDetector(
+        "personio",
+        _host_suffix(".jobs.personio.com", "Personio public jobs host"),
+        _host_root,
+        _host_tenant,
+    ),
+    CatalogPlatformDetector(
+        "smartrecruiters",
+        _smartrecruiters_match,
+        _first_path_root,
+        _path_tenant,
+    ),
+    CatalogPlatformDetector("workable", _workable_match, _first_path_root, _path_tenant),
+    CatalogPlatformDetector("ashby", _ashby_match, _first_path_root, _path_tenant),
+    CatalogPlatformDetector(
+        "teamtailor",
+        _host_suffix(".teamtailor.com", "Teamtailor public careers host"),
+        _host_root,
+        _host_tenant,
+    ),
+)
 
 
 _DISCOVERY_HINTS: tuple[SourceDiscoveryHints, ...] = (
     SourceDiscoveryHints(
-        platform="darwinbox",
-        host_patterns=("*.darwinbox.com",),
-        url_patterns=("/ms/candidate/careers", "/ms/candidatev2/<company>/careers"),
-        search_hints=("Darwinbox careers",),
-        technical_signals=("darwinbox host", "/ms/candidate route"),
-        detector=RegisteredPlatformDetector("darwinbox", _darwinbox_signal),
-        canonicalize=_darwinbox_canonicalize,
-        tenant_identity=_darwinbox_tenant,
+        "darwinbox",
+        ("*.darwinbox.com",),
+        ("/ms/candidate/careers", "/ms/candidatev2/<company>/careers"),
+        ("Darwinbox careers",),
+        ("public candidate careers route",),
+        CatalogPlatformDetector(
+            "darwinbox",
+            _darwinbox_match,
+            _darwinbox_canonicalize,
+            _darwinbox_tenant,
+        ),
+        _darwinbox_canonicalize,
+        _darwinbox_tenant,
     ),
     SourceDiscoveryHints(
-        platform="dreamjobs",
-        host_patterns=("custom HTTPS host", "*.dream.jobs"),
-        url_patterns=("/jobs",),
-        search_hints=("DreamJobs careers",),
-        technical_signals=("DreamJobs API", "Next.js metadata"),
-        detector=RegisteredPlatformDetector("dreamjobs", _dreamjobs_signal),
-        canonicalize=_dreamjobs_canonicalize,
-        tenant_identity=_dreamjobs_tenant,
+        "dreamjobs",
+        ("custom HTTPS host", "*.dream.jobs"),
+        ("/jobs",),
+        ("DreamJobs careers",),
+        ("DreamJobs API", "Next.js metadata"),
+        CatalogPlatformDetector(
+            "dreamjobs",
+            _dreamjobs_match,
+            _dreamjobs_canonicalize,
+            _host_tenant,
+        ),
+        _dreamjobs_canonicalize,
+        _host_tenant,
     ),
     SourceDiscoveryHints(
-        platform="jazzhr",
-        host_patterns=("*.applytojob.com",),
-        url_patterns=("/apply", "/apply/jobs"),
-        search_hints=("JazzHR jobs",),
-        technical_signals=("JazzHR", "Resumator", "applytojob host"),
-        detector=RegisteredPlatformDetector("jazzhr", _jazzhr_signal),
-        canonicalize=_jazzhr_canonicalize,
-        tenant_identity=_jazzhr_tenant,
+        "jazzhr",
+        ("*.applytojob.com",),
+        ("/apply", "/apply/jobs"),
+        ("JazzHR jobs",),
+        ("applytojob host",),
+        CatalogPlatformDetector(
+            "jazzhr",
+            _host_suffix(".applytojob.com", "JazzHR technical signal"),
+            _jazzhr_canonicalize,
+            _host_tenant,
+        ),
+        _jazzhr_canonicalize,
+        _host_tenant,
     ),
     SourceDiscoveryHints(
-        platform="lever",
-        host_patterns=("jobs.lever.co",),
-        url_patterns=("/<tenant>",),
-        search_hints=("Lever jobs",),
-        technical_signals=("jobs.lever.co host",),
-        detector=RegisteredPlatformDetector("lever", _lever_signal),
-        canonicalize=_lever_canonicalize,
-        tenant_identity=_lever_tenant,
+        "lever",
+        ("jobs.lever.co",),
+        ("/<tenant>",),
+        ("Lever jobs",),
+        ("jobs.lever.co host",),
+        CatalogPlatformDetector(
+            "lever",
+            _host_exact("jobs.lever.co", "Lever public jobs host"),
+            _lever_canonicalize,
+            _path_tenant,
+        ),
+        _lever_canonicalize,
+        _path_tenant,
     ),
 )
 _DISCOVERY_HINTS_BY_PLATFORM = {hint.platform: hint for hint in _DISCOVERY_HINTS}
-SUPPORTED_DETECTORS = tuple(hint.detector for hint in _DISCOVERY_HINTS)
 
 
 def registered_discovery_hints() -> tuple[SourceDiscoveryHints, ...]:
-    """Return hints for every production adapter and fail if registry metadata lags."""
+    """Return adapter-search hints for each user-selectable production adapter."""
     expected = set(user_selectable_source_keys())
     actual = set(_DISCOVERY_HINTS_BY_PLATFORM)
     if expected != actual:
@@ -229,42 +400,22 @@ def source_identity(platform: str, url: str) -> tuple[str, str]:
     return hint.platform, hint.tenant_identity(canonical)
 
 
+def catalog_source_identity(platform: str, url: str) -> tuple[str, str]:
+    platform_key = platform.strip().casefold()
+    for detector in _CATALOG:
+        if detector.platform != platform_key:
+            continue
+        canonical = detector.canonicalize(url)
+        return detector.platform, detector.tenant_identity(canonical)
+    raise KeyError(platform)
+
+
 def detect_page(page: CrawledPage) -> tuple[Detection, ...]:
-    body = page.body.lower()
-    detections = [
-        detection for detector in SUPPORTED_DETECTORS for detection in detector.detect(page)
-    ]
-    unsupported_platform = next(
-        (
-            platform
-            for platform, token in (
-                ("greenhouse", "greenhouse.io"),
-                ("workable", "workable.com"),
-                ("smartrecruiters", "smartrecruiters.com"),
-                ("teamtailor", "teamtailor"),
-            )
-            if token in body or token in page.url.lower()
-        ),
-        None,
-    )
-    if not detections and unsupported_platform:
-        detections.append(
-            Detection(
-                unsupported_platform,
-                75,
-                ("Unregistered ATS asset or host",),
-                canonicalize_url(page.url),
-                False,
-                (
-                    "No registered adapter matches this platform; investigate its public "
-                    "contract and implement a new source adapter."
-                ),
-                page.redirects,
-            )
-        )
+    """Classify direct public vendor URLs; page text is never a sole signal."""
     unique: dict[tuple[str, str], Detection] = {}
-    for detection in detections:
-        key = (detection.platform, detection.canonical_url)
-        if key not in unique or unique[key].confidence < detection.confidence:
-            unique[key] = detection
+    for detector in _CATALOG:
+        for detection in detector.detect(page):
+            key = (detection.platform, detection.canonical_url)
+            if key not in unique or unique[key].confidence < detection.confidence:
+                unique[key] = detection
     return tuple(unique.values())

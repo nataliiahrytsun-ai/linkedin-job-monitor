@@ -8,7 +8,7 @@ reconciliation, or modify existing job postings.
 ## Flow and ownership
 
 `DiscoveryService` coordinates an injected `SearchProvider`, `BoundedCrawler`,
-platform detectors, adapter URL validation, and persistence. `DiscoveryRun`
+source-neutral platform catalog, adapter URL validation, and persistence. `DiscoveryRun`
 stores one attempt and its terminal state. `DiscoveryCandidate` stores safe URL,
 confidence, evidence, redirects, support/decision state, and an optional link to
 the resulting `CompanySource`. Full HTML and credentials are never persisted.
@@ -78,6 +78,48 @@ identity evidence. Search-fallback sources always require review unless they
 already match an existing source, whose approval and active state are
 preserved. Partial useful results remain reviewable if a later fallback query
 is rate-limited.
+
+## Platform inventory and adapter availability
+
+Platform classification is intentionally separate from the adapter registry.
+The catalog identifies only direct, public vendor URL signatures and does not
+infer a platform from a vendor word in page text, metadata, JavaScript, or a
+search snippet. The current catalog recognizes Lever, Darwinbox, JazzHR,
+DreamJobs, Workday, Greenhouse, Personio, SmartRecruiters, Workable, Ashby, and
+Teamtailor. The registry answers the separate question of whether a validated,
+executable adapter exists.
+
+Unsupported catalog detections are persisted as source candidates with their
+canonical listing/root URL, confidence, and URL-signature evidence. They are
+published in the Discovered inventory by their classified candidate state, not
+by a fragile per-platform evidence-string whitelist, so persisted Personio,
+Workday, Greenhouse, SmartRecruiters, Workable, Ashby, and Teamtailor
+candidates remain visible as **Adapter not implemented** and still cannot
+create a `CompanySource`. A credible public careers URL with no catalog match is
+retained once per host as **Unknown / Custom**, rather than being hidden as no
+source found. Detail, application, privacy, login, and social URLs are not
+separate inventory sources. Discovery retains every distinct credible platform
+candidate in a run; automatic connection remains restricted to one validated
+registered adapter under the existing threshold rules.
+
+Crawler ATS detections are attributed conservatively. A known ATS URL is kept
+only when it is observed on the confirmed official site or on a first-hop
+careers destination linked from that site, and when the canonical ATS tenant or
+path identity is compatible with the company or official-domain identity. This
+preserves legitimate cases such as `jobs.smartrecruiters.com/CERN` while
+rejecting unrelated tenants linked from the same external careers page.
+
+For bounded diagnostics, Discovery also records compact safe provenance notes on
+the selected official-site candidate when it observes a first-hop careers/source
+URL on the official site, prefers a first-hop external redirect destination over
+an intermediate official URL, or ignores second-hop careers-like links from an
+external careers page. These notes help explain why a URL was retained or
+excluded without storing full HTML.
+
+When name-only Discovery cannot initialize its configured search provider, the
+UI gives safe guidance to supply the official domain (which bypasses search) or
+configure the approved provider. It does not expose credentials or raw provider
+errors.
 
 ## Confidence and decisions
 

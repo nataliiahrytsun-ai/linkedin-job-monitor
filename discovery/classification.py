@@ -17,6 +17,71 @@ class JobSourceClassification:
 
 _JOB_TERMS = ("career", "careers", "job", "jobs", "vacan", "opening", "karriere")
 _NON_JOB_TERMS = ("/article", "/blog", "/news", "/contact", "/people", "/person/")
+_EXCLUDED_UNKNOWN_SOURCE_HOSTS = (
+    "facebook.com",
+    "glassdoor.com",
+    "indeed.com",
+    "instagram.com",
+    "leadiq.com",
+    "linkedin.com",
+    "naukri.com",
+    "twitter.com",
+    "x.com",
+    "youtube.com",
+)
+_EXCLUDED_UNKNOWN_SOURCE_SEGMENTS = {
+    "article",
+    "articles",
+    "blog",
+    "blogs",
+    "employee",
+    "employees",
+    "event",
+    "events",
+    "insight",
+    "insights",
+    "news",
+    "people",
+    "person",
+    "press",
+    "press-release",
+    "press-releases",
+    "profile",
+    "profiles",
+    "resource",
+    "resources",
+}
+_EXCLUDED_UNKNOWN_SOURCE_SEGMENT_FRAGMENTS = (
+    "application",
+    "apply",
+    "cookie",
+    "legal",
+    "login",
+    "privacy",
+    "signin",
+    "sign-in",
+    "terms",
+    "wp-login",
+)
+
+
+def is_excluded_unknown_source_url(url: str) -> bool:
+    """Reject URLs that should never become unknown/custom inventory sources."""
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").casefold().removeprefix("www.")
+    if any(
+        host == blocked or host.endswith(f".{blocked}")
+        for blocked in _EXCLUDED_UNKNOWN_SOURCE_HOSTS
+    ):
+        return True
+    segments = tuple(segment.casefold() for segment in parsed.path.split("/") if segment)
+    if set(segments) & _EXCLUDED_UNKNOWN_SOURCE_SEGMENTS:
+        return True
+    return any(
+        fragment in segment
+        for segment in segments
+        for fragment in _EXCLUDED_UNKNOWN_SOURCE_SEGMENT_FRAGMENTS
+    )
 
 
 def classify_job_source(
