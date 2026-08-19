@@ -16,7 +16,7 @@ Discovery
 -> GenericSourceAdapter
 -> HTTP fetch
 -> deterministic candidate extraction
--> OpenAIJobExtractionProvider
+-> deterministic title extraction (default) or explicit optional provider
 -> deterministic validation
 -> SourceBatch
 -> existing normalization/persistence/reconciliation pipeline
@@ -29,7 +29,9 @@ unchanged and continue to be selected first for their source keys.
 
 - Deterministic candidate extraction on synthetic and real-structure fixtures.
 - URL provenance: LLM output never becomes authoritative for URLs.
-- Provider boundary with strict structured schema and fail-closed validation.
+- Free deterministic extraction uses normalized anchor text first and a safe,
+  human-readable URL-slug fallback second.
+- Optional provider boundary with strict structured schema and fail-closed validation.
 - Discovery eligibility gate (`is_generic_fallback_eligible`) with conservative
   policy and explicit denials for non-public/noisy sources.
 - Registry wiring for explicit internal `generic` source key.
@@ -40,8 +42,12 @@ unchanged and continue to be selected first for their source keys.
   - HTTP fetch errors
   - unsupported pagination/completeness risk
   - no deterministic candidates
-  - provider configuration/response validation failures
+  - explicit provider configuration/response validation failures
   - empty validated job set
+
+`GenericSourceAdapter` does not construct an OpenAI provider implicitly and does
+not require `GENERIC_AI_OPENAI_API_KEY` for normal production execution.
+`OpenAIJobExtractionProvider` remains available when explicitly injected.
 
 ## Eligibility policy (single source of truth)
 

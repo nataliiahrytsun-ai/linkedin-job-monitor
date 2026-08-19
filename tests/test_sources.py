@@ -26,6 +26,9 @@ from scraping.sources.registry import (
     user_selectable_source_keys,
     user_visible_source_keys,
 )
+from scraping.sources.zoho_recruit import ZohoRecruitSourceAdapter
+
+GENERIC_FIXTURES = Path(__file__).parent / "fixtures" / "generic"
 
 
 @dataclass
@@ -180,6 +183,21 @@ def test_registry_keeps_generic_hidden_but_registered_for_explicit_source() -> N
     assert "generic" not in user_selectable_source_keys()
 
 
+def test_registry_keeps_zoho_recruit_registered_selectable_and_executable() -> None:
+    adapter = get_source_adapter(
+        CompanyStub(
+            source=" Zoho_Recruit ",
+            source_jobs_url="https://jobs.example.com/jobs/Careers",
+        )
+    )
+
+    assert isinstance(adapter, ZohoRecruitSourceAdapter)
+    assert "zoho_recruit" in registered_source_keys()
+    assert "zoho_recruit" in user_visible_source_keys()
+    assert "zoho_recruit" in user_selectable_source_keys()
+    assert "zoho_recruit" in executable_source_keys()
+
+
 def test_generic_source_adapter_returns_valid_batch_from_minimal_fixture() -> None:
     job_url = "https://example.com/jobs/123"
     candidate_id = candidate_id_for_url(job_url)
@@ -226,6 +244,131 @@ def test_generic_source_adapter_returns_valid_batch_from_minimal_fixture() -> No
     )
 
 
+def test_generic_source_adapter_uses_deterministic_jobs_without_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GENERIC_AI_OPENAI_API_KEY", raising=False)
+    body = (GENERIC_FIXTURES / "abylon_careers.html").read_bytes()
+
+    class DummyResponse:
+        status = 200
+
+        def __init__(self) -> None:
+            self.body = body
+
+    class DummySession:
+        def __enter__(self) -> DummySession:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: object,
+            exc_value: object,
+            traceback: object,
+        ) -> Literal[False]:
+            return False
+
+        def get(self, url: str) -> DummyResponse:
+            assert url == "https://abylon.io/career/"
+            return DummyResponse()
+
+    adapter = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: DummySession(),
+    )
+    batch = adapter.fetch(
+        company=CompanyStub(source="generic", source_jobs_url="https://abylon.io/career/")
+    )
+
+    expected_titles = {
+        "https://abylon.io/career/ai-solutions-architect-enterprise-ai/": (
+            "AI Solutions Architect"
+        ),
+        "https://abylon.io/career/data-platform-engineer-azure-databricks-devops/": (
+            "Data Platform Engineer"
+        ),
+        "https://abylon.io/career/junior-business-analyst-london-abylon/": (
+            "Junior Business Analyst — London"
+        ),
+        "https://abylon.io/career/senior-data-engineer/": "Senior Data Engineer",
+    }
+    assert batch.requests_made == 1
+    assert len(batch.records) == 4
+    assert {
+        record["source_job_url"]: record["title"] for record in batch.records
+    } == expected_titles
+    assert all(record["source"] == "generic" for record in batch.records)
+    assert all(
+        record["source_job_id"] == candidate_id_for_url(str(record["source_job_url"]))
+        for record in batch.records
+    )
+
+
+def test_generic_source_adapter_uses_safe_url_slug_title_fallback() -> None:
+    job_url = "https://example.com/career/senior-data-engineer/"
+
+    class DummyResponse:
+        status = 200
+        body = b"<html><body><a href='/career/senior-data-engineer/'>Apply now</a></body></html>"
+
+    class DummySession:
+        def __enter__(self) -> DummySession:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: object,
+            exc_value: object,
+            traceback: object,
+        ) -> Literal[False]:
+            return False
+
+        def get(self, url: str) -> DummyResponse:
+            assert url == "https://example.com/careers"
+            return DummyResponse()
+
+    batch = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: DummySession(),
+    ).fetch(company=CompanyStub(source="generic", source_jobs_url="https://example.com/careers"))
+
+    assert batch.records == (
+        {
+            "source": "generic",
+            "source_job_id": candidate_id_for_url(job_url),
+            "title": "Senior Data Engineer",
+            "source_job_url": job_url,
+        },
+    )
+
+
+def test_generic_source_adapter_rejects_candidate_without_safe_title() -> None:
+    class DummyResponse:
+        status = 200
+        body = b"<html><body><a href='/jobs/12345'>Apply now</a></body></html>"
+
+    class DummySession:
+        def __enter__(self) -> DummySession:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: object,
+            exc_value: object,
+            traceback: object,
+        ) -> Literal[False]:
+            return False
+
+        def get(self, url: str) -> DummyResponse:
+            assert url == "https://example.com/careers"
+            return DummyResponse()
+
+    adapter = GenericSourceAdapter(session_factory=lambda timeout_seconds: DummySession())
+
+    with pytest.raises(SourceError, match="no validated jobs"):
+        adapter.fetch(
+            company=CompanyStub(source="generic", source_jobs_url="https://example.com/careers")
+        )
+
+
 def test_generic_source_adapter_fails_closed_on_http_error() -> None:
     class DummyResponse:
         status = 503
@@ -247,10 +390,7 @@ def test_generic_source_adapter_fails_closed_on_http_error() -> None:
             assert url == "https://example.com/careers"
             return DummyResponse()
 
-    adapter = GenericSourceAdapter(
-        provider=FakeJobExtractionProvider(mapping={}),
-        session_factory=lambda timeout_seconds: DummySession(),
-    )
+    adapter = GenericSourceAdapter(session_factory=lambda timeout_seconds: DummySession())
     with pytest.raises(SourceError, match="HTTP 503"):
         adapter.fetch(company=CompanyStub(source="generic", source_jobs_url="https://example.com/careers"))
 
@@ -276,10 +416,7 @@ def test_generic_source_adapter_fails_closed_when_no_candidates_are_found() -> N
             assert url == "https://example.com/careers"
             return DummyResponse()
 
-    adapter = GenericSourceAdapter(
-        provider=FakeJobExtractionProvider(mapping={}),
-        session_factory=lambda timeout_seconds: DummySession(),
-    )
+    adapter = GenericSourceAdapter(session_factory=lambda timeout_seconds: DummySession())
     with pytest.raises(SourceError, match="no public job-like candidates"):
         adapter.fetch(company=CompanyStub(source="generic", source_jobs_url="https://example.com/careers"))
 
@@ -310,10 +447,7 @@ def test_generic_source_adapter_fails_closed_on_pagination_signal() -> None:
             assert url == "https://example.com/careers"
             return DummyResponse()
 
-    adapter = GenericSourceAdapter(
-        provider=FakeJobExtractionProvider(mapping={}),
-        session_factory=lambda timeout_seconds: DummySession(),
-    )
+    adapter = GenericSourceAdapter(session_factory=lambda timeout_seconds: DummySession())
     with pytest.raises(SourceError, match="pagination"):
         adapter.fetch(company=CompanyStub(source="generic", source_jobs_url="https://example.com/careers"))
 

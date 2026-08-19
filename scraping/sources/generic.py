@@ -9,7 +9,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 from lxml import html as lxml_html  # type: ignore[import-untyped]
 from lxml.html import HtmlElement  # type: ignore[import-untyped]
@@ -106,7 +106,29 @@ _BLOCKED_TEXT_HINTS = (
     "after applying",
 )
 _MAX_NEARBY_TEXT = 240
+_MAX_DETERMINISTIC_TITLE = 200
 _PAGINATION_QUERY_RE = re.compile(r"(?:^|&)(?:page|offset|start|cursor)=", flags=re.IGNORECASE)
+_UNSUITABLE_TITLE_LABELS = frozenset(
+    {
+        "apply",
+        "apply now",
+        "career",
+        "careers",
+        "details",
+        "job",
+        "job details",
+        "jobs",
+        "learn more",
+        "open position",
+        "open positions",
+        "open role",
+        "open roles",
+        "read more",
+        "view job",
+        "view position",
+        "view role",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +338,51 @@ def validate_extracted_jobs(
     return tuple(validated)
 
 
+def _is_safe_deterministic_title(value: str | None) -> bool:
+    title = _clean_text(value)
+    if title is None or len(title) > _MAX_DETERMINISTIC_TITLE:
+        return False
+    lowered = title.casefold()
+    if lowered in _UNSUITABLE_TITLE_LABELS or _contains_any(lowered, _BLOCKED_TEXT_HINTS):
+        return False
+    if "://" in title or title.startswith(("/", "\\")):
+        return False
+    return any(character.isalpha() for character in title)
+
+
+def _title_from_url_slug(url: str) -> str | None:
+    path_segments = [segment for segment in urlsplit(url).path.split("/") if segment]
+    if not path_segments:
+        return None
+
+    slug = unquote(path_segments[-1])
+    if not slug or "." in slug:
+        return None
+    tokens = re.split(r"[-_]+", slug)
+    if not tokens or any(not token.isalnum() for token in tokens):
+        return None
+
+    title = " ".join(tokens).title()
+    return title if _is_safe_deterministic_title(title) else None
+
+
+def _extract_deterministic_jobs(
+    candidates: Sequence[GenericCandidate],
+) -> tuple[ExtractedJob, ...]:
+    jobs: list[ExtractedJob] = []
+    for candidate in candidates:
+        anchor_title = _clean_text(candidate.anchor_text)
+        title = (
+            anchor_title
+            if _is_safe_deterministic_title(anchor_title)
+            else _title_from_url_slug(candidate.url)
+        )
+        if title is None:
+            continue
+        jobs.append(ExtractedJob(candidate_id=candidate.candidate_id, title=title))
+    return validate_extracted_jobs(candidates, jobs)
+
+
 class FakeJobExtractionProvider:
     """Test stub that returns a fixed mapping for candidate IDs."""
 
@@ -393,9 +460,6 @@ class GenericSourceAdapter:
         try:
             canonical_source_url = canonicalize_url(source_url)
             validate_public_url(canonical_source_url)
-            provider = self.provider or OpenAIJobExtractionProvider(
-                timeout_seconds=self.timeout_seconds
-            )
             with self._open_session() as session:
                 response = session.get(canonical_source_url)
                 requests_made += 1
@@ -425,8 +489,11 @@ class GenericSourceAdapter:
                     requests_made=requests_made,
                 )
 
-            provider_result = provider.extract_jobs(candidates=candidates)
-            validated_jobs = validate_extracted_jobs(candidates, provider_result.jobs)
+            if self.provider is None:
+                validated_jobs = _extract_deterministic_jobs(candidates)
+            else:
+                provider_result = self.provider.extract_jobs(candidates=candidates)
+                validated_jobs = validate_extracted_jobs(candidates, provider_result.jobs)
             if not validated_jobs:
                 raise SourceError(
                     "Generic fallback produced no validated jobs",
@@ -451,7 +518,7 @@ class GenericSourceAdapter:
             raise
         except (GenericExtractionError, UnsafeUrlError, ValueError, TypeError) as exc:
             raise SourceError(
-                f"Generic fallback failed to validate provider output: {exc}",
+                f"Generic fallback failed to validate extraction output: {exc}",
                 requests_made=requests_made,
             ) from exc
 
@@ -530,7 +597,7 @@ class OpenAIJobExtractionProvider:
 
         if self._client is None:
             try:
-                from openai import OpenAI
+                from openai import OpenAI  # type: ignore[import-not-found]
             except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
                 raise ProviderConfigurationError(
                     "openai package is required to use OpenAIJobExtractionProvider"

@@ -150,6 +150,7 @@ _PLATFORM_LABELS = {
     "teamtailor": "Teamtailor",
     "workable": "Workable",
     "workday": "Workday",
+    "zoho_recruit": "Zoho Recruit",
 }
 
 _CHECK_LABELS = {
@@ -477,6 +478,7 @@ def company_candidate_presentations(
             continue
         if presentation.state in {
             "ready_to_connect",
+            "generic_available",
             "adapter_required",
             "investigation_required",
             "needs_review",
@@ -546,7 +548,7 @@ def discovery_result_presentation(
         if item.linked_source is None
         and (
             item.listing_confirmed
-            or item.state == "ready_to_connect"
+            or item.can_connect
             or item.can_confirm
         )
     )
