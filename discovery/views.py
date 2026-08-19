@@ -23,6 +23,17 @@ def _manager_url(company_pk: int, tab: str) -> str:
     )
 
 
+def _connected_source_label(candidate: DiscoveryCandidate) -> str:
+    source_key = (
+        candidate.company_source.source
+        if candidate.company_source_id is not None
+        else candidate.platform
+    ).strip()
+    if source_key == "generic":
+        return "Generic fallback"
+    return source_key.title() if source_key else "Source"
+
+
 @require_POST
 def start(request: HttpRequest, company_pk: int) -> HttpResponse:
     company = get_object_or_404(Company, pk=company_pk)
@@ -57,7 +68,10 @@ def confirm(request: HttpRequest, company_pk: int, candidate_pk: int) -> HttpRes
     ):
         messages.error(request, "This discovery candidate cannot be confirmed.")
     else:
-        messages.success(request, f"{confirmed.platform.title()} was connected successfully.")
+        messages.success(
+            request,
+            f"{_connected_source_label(confirmed)} was connected successfully.",
+        )
         return redirect(_manager_url(company.pk, "connected"))
     return redirect(_manager_url(company.pk, "discovered"))
 
@@ -81,7 +95,10 @@ def connect(request: HttpRequest, company_pk: int, candidate_pk: int) -> HttpRes
     ):
         messages.error(request, "This discovery candidate could not be connected.")
         return redirect(_manager_url(company.pk, "discovered"))
-    messages.success(request, f"{connected.platform.title()} was connected successfully.")
+    messages.success(
+        request,
+        f"{_connected_source_label(connected)} was connected successfully.",
+    )
     return redirect(_manager_url(company.pk, "connected"))
 
 
@@ -125,7 +142,8 @@ def connect_selected(request: HttpRequest, company_pk: int) -> HttpResponse:
             connected_count += 1
             messages.success(
                 request,
-                f"{connected.platform.title()} candidate #{candidate_id} was connected.",
+                f"{_connected_source_label(connected)} candidate #{candidate_id} "
+                "was connected.",
             )
     return redirect(
         _manager_url(company.pk, "connected" if connected_count else "discovered")

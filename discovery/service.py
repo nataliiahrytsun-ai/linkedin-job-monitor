@@ -17,7 +17,11 @@ from django.utils import timezone
 
 from companies.forms import validate_source_configuration
 from companies.models import Company, CompanySource
-from discovery.classification import classify_job_source, is_excluded_unknown_source_url
+from discovery.classification import (
+    classify_job_source,
+    is_excluded_unknown_source_url,
+    is_generic_fallback_eligible,
+)
 from discovery.detectors import (
     Detection,
     SourceDiscoveryHints,
@@ -34,6 +38,7 @@ from discovery.network import (
     ScraplingTransport,
     UnsafeUrlError,
     canonicalize_url,
+    validate_public_url,
 )
 from discovery.search import (
     SearchConfigurationError,
@@ -2158,33 +2163,51 @@ def _company_candidate(*, candidate_id: int, company_id: int) -> DiscoveryCandid
     )
 
 
+def _candidate_source_key(candidate: DiscoveryCandidate) -> str | None:
+    normalized_platform = candidate.platform.strip().casefold()
+    if normalized_platform and normalized_platform in set(registered_source_keys()):
+        return normalized_platform
+    if is_generic_fallback_eligible(candidate):
+        return "generic"
+    return None
+
+
 def confirm_candidate(*, candidate_id: int, company_id: int) -> DiscoveryCandidate:
     candidate = _company_candidate(candidate_id=candidate_id, company_id=company_id)
-    if not candidate.supported or candidate.decision not in {
+    source_key = _candidate_source_key(candidate)
+    if source_key is None:
+        raise ValueError("Candidate is not eligible for confirmation")
+    if candidate.decision not in {
         DiscoveryCandidate.Decision.NEEDS_REVIEW,
         DiscoveryCandidate.Decision.SELECTED,
+        DiscoveryCandidate.Decision.UNSUPPORTED,
     }:
         raise ValueError("Candidate is not eligible for confirmation")
-    validate_source_configuration(
-        source=candidate.platform,
-        source_jobs_url=candidate.canonical_url,
-    )
+    source_url = candidate.canonical_url
+    if source_key == "generic":
+        source_url = canonicalize_url(candidate.canonical_url)
+        validate_public_url(source_url)
+    else:
+        validate_source_configuration(
+            source=source_key,
+            source_jobs_url=source_url,
+        )
     existing = None
     for source in CompanySource.objects.filter(
         company=candidate.run.company,
-        source=candidate.platform,
+        source=source_key,
     ):
         try:
-            source_url = canonicalize_url(source.source_jobs_url or "").rstrip("/")
+            existing_source_url = canonicalize_url(source.source_jobs_url or "").rstrip("/")
         except UnsafeUrlError:
             continue
-        if source_url == candidate.canonical_url.rstrip("/"):
+        if existing_source_url == source_url.rstrip("/"):
             existing = source
             break
     source = existing or CompanySource.objects.create(
         company=candidate.run.company,
-        source=candidate.platform,
-        source_jobs_url=candidate.canonical_url,
+        source=source_key,
+        source_jobs_url=source_url,
         approval_status=CompanySource.ApprovalStatus.APPROVED,
         is_active=True,
     )
@@ -2211,9 +2234,9 @@ def confirm_candidate(*, candidate_id: int, company_id: int) -> DiscoveryCandida
         else DiscoveryRun.Status.CONNECTED
     )
     candidate.run.summary = (
-        f"Existing {candidate.platform} source was linked without changing its state."
+        f"Existing {source_key} source was linked without changing its state."
         if existing is not None
-        else f"{candidate.platform} was connected after manual confirmation."
+        else f"{source_key} was connected after manual confirmation."
     )
     candidate.run.save(update_fields=("status", "summary"))
     return candidate
