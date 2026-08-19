@@ -8,6 +8,7 @@ from scraping.sources.base import SourceAdapter, SourceConfiguration, SourceErro
 from scraping.sources.darwinbox import DarwinboxSourceAdapter
 from scraping.sources.dreamjobs import DreamJobsSourceAdapter
 from scraping.sources.fixture import FixtureSourceAdapter
+from scraping.sources.generic import GenericSourceAdapter
 from scraping.sources.jazzhr import JazzHRSourceAdapter
 from scraping.sources.lever import LeverSourceAdapter
 
@@ -25,6 +26,7 @@ _ADAPTER_FACTORIES: dict[str, Callable[[], SourceAdapter]] = {
     "darwinbox": DarwinboxSourceAdapter,
     "dreamjobs": DreamJobsSourceAdapter,
     "fixture": FixtureSourceAdapter,
+    "generic": GenericSourceAdapter,
     "jazzhr": JazzHRSourceAdapter,
     "lever": LeverSourceAdapter,
 }

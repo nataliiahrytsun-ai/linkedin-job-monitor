@@ -13,6 +13,7 @@ from discovery.classification import (
     JobSourceClassification,
     classify_job_source,
     is_excluded_unknown_source_url,
+    is_generic_fallback_eligible,
 )
 from discovery.detectors import source_identity
 from discovery.models import DiscoveryAdapterCheck, DiscoveryCandidate, DiscoveryRun
@@ -118,6 +119,7 @@ class DiscoveryResultPresentation:
 
 _STATE_LABELS = {
     "ready_to_connect": "Ready to connect",
+    "generic_available": "Generic fallback available",
     "connected": "Connected",
     "adapter_required": "New adapter needed",
     "investigation_required": "New adapter needed",
@@ -324,6 +326,8 @@ def present_candidate(candidate: DiscoveryCandidate) -> CandidatePresentation:
         state = "ignored"
     elif linked_source is not None:
         state = "connected"
+    elif is_generic_fallback_eligible(candidate):
+        state = "generic_available"
     elif eligibility in {
         DiscoveryCandidate.JobSourceEligibility.UNSUPPORTED_ATS,
         DiscoveryCandidate.JobSourceEligibility.EXTERNAL_JOB_BOARD,
@@ -348,7 +352,7 @@ def present_candidate(candidate: DiscoveryCandidate) -> CandidatePresentation:
         state = "ready_to_connect"
     else:
         state = "not_a_job_source"
-    can_connect = state == "ready_to_connect"
+    can_connect = state in {"ready_to_connect", "generic_available"}
     can_confirm = (
         state == "needs_review"
         and candidate.kind == DiscoveryCandidate.Kind.SOURCE
@@ -364,6 +368,7 @@ def present_candidate(candidate: DiscoveryCandidate) -> CandidatePresentation:
     )
     adapter_status = {
         "ready_to_connect": "Supported — ready to connect",
+        "generic_available": "Generic fallback available",
         "connected": "Already connected",
         "adapter_required": "Adapter not implemented",
         "investigation_required": "Unknown / Custom",

@@ -154,7 +154,7 @@ class ScraplingTransport:
         del timeout_seconds
         if self._active_session is None:
             raise RuntimeError("Scrapling transport requires an active crawl session")
-        response = cast(_ScraplingResponse, self._active_session.get(url))
+        response = self._active_session.get(url)
         headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
         body = bytes(response.body)
         return HttpResponse(

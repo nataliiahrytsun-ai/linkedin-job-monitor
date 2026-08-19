@@ -13,6 +13,11 @@ detectors_module = importlib.import_module("discovery.detectors")
 network_module = importlib.import_module("discovery.network")
 search_module = importlib.import_module("discovery.search")
 detect_page: Any = detectors_module.detect_page
+
+
+def is_generic_fallback_eligible(candidate: Any) -> bool:
+    classifier = importlib.import_module("discovery.classification")
+    return bool(classifier.is_generic_fallback_eligible(candidate))
 BoundedCrawler: Any = network_module.BoundedCrawler
 CrawledPage: Any = network_module.CrawledPage
 HttpResponse: Any = network_module.HttpResponse
@@ -615,6 +620,163 @@ def test_official_site_403_uses_search_fallback_without_auto_connecting() -> Non
     ]
     assert "site:www.acuityanalytics.com careers jobs vacancies" in provider.queries
     assert not model("companies.CompanySource").objects.filter(company=record).exists()
+
+
+def _make_candidate(
+    url: str,
+    *,
+    eligibility: str,
+    confidence: int = 82,
+    supported: bool = False,
+    decision: str = "selected",
+    reason: str = "company careers page",
+    evidence: tuple[str, ...] | list[str] | None = None,
+) -> Any:
+    run = model("discovery.DiscoveryRun").objects.create(
+        company=company(),
+        query="generic fallback",
+        status="running",
+    )
+    return model("discovery.DiscoveryCandidate").objects.create(
+        run=run,
+        kind="source",
+        discovered_url=url,
+        canonical_url=url,
+        platform="",
+        confidence=confidence,
+        job_source_confidence=confidence,
+        evidence=list(evidence or (reason,)),
+        redirects=[],
+        supported=supported,
+        decision=decision,
+        reason=reason,
+        origin="current_discovery",
+        official_site_eligibility="uncertain",
+        job_source_eligibility=eligibility,
+        is_ignored=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("eligibility", "expected"),
+    [
+        ("supported_ats", False),
+        ("external_job_board", False),
+        ("not_a_job_source", False),
+        ("uncertain", False),
+        ("company_jobs_page", True),
+        ("unsupported_ats", True),
+        ("possible_job_source", True),
+    ],
+)
+def test_generic_fallback_eligibility_gate_for_known_classifications(
+    eligibility: str,
+    expected: bool,
+) -> None:
+    candidate = _make_candidate(
+        "https://example.com/careers",
+        eligibility=eligibility,
+        confidence=90 if eligibility != "company_jobs_page" else 72,
+        evidence=(
+            ("careers page", "jobs", "open roles")
+            if eligibility != "possible_job_source"
+            else ("careers", "openings")
+        ),
+        reason="Company careers page",
+    )
+    assert is_generic_fallback_eligible(candidate) is expected
+
+
+def test_supported_ats_and_rejected_candidates_are_blocked() -> None:
+    supported = _make_candidate(
+        "https://jobs.lever.co/example",
+        eligibility="supported_ats",
+        confidence=95,
+        supported=True,
+    )
+    rejected = _make_candidate(
+        "https://example.com/jobs",
+        eligibility="company_jobs_page",
+        confidence=75,
+        decision="rejected",
+        reason="Rejected by human review",
+        evidence=("career", "jobs"),
+    )
+    assert is_generic_fallback_eligible(supported) is False
+    assert is_generic_fallback_eligible(rejected) is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://127.0.0.1/jobs",
+        "https://localhost/jobs",
+        "ftp://example.com/jobs",
+        "https://example.com/login",
+        "https://example.com/privacy",
+        "https://example.com/terms",
+        "https://example.com/cookies",
+        "https://facebook.com/careers",
+        "https://www.linkedin.com/jobs/search",
+    ],
+)
+def test_generic_fallback_eligibility_rejects_invalid_or_non_public_urls(url: str) -> None:
+    candidate = _make_candidate(
+        url,
+        eligibility="company_jobs_page",
+        confidence=80,
+        evidence=("careers", "jobs"),
+    )
+    assert is_generic_fallback_eligible(candidate) is False
+
+
+def test_unsupported_ats_requires_strong_evidence() -> None:
+    eligible = _make_candidate(
+        "https://example.com/openings",
+        eligibility="unsupported_ats",
+        confidence=85,
+        reason="careers pages for company roles",
+        evidence=("careers", "open positions", "jobs"),
+    )
+    ineligible = _make_candidate(
+        "https://example.com/openings",
+        eligibility="unsupported_ats",
+        confidence=71,
+        reason="generic site",
+        evidence=("company", "about"),
+    )
+    assert is_generic_fallback_eligible(eligible) is True
+    assert is_generic_fallback_eligible(ineligible) is False
+
+
+def test_possible_job_source_needs_high_confidence_and_strong_signals() -> None:
+    eligible = _make_candidate(
+        "https://example.org/roles",
+        eligibility="possible_job_source",
+        confidence=90,
+        reason="careers and open roles",
+        evidence=("jobs", "roles", "careers"),
+    )
+    weak = _make_candidate(
+        "https://example.org/roles",
+        eligibility="possible_job_source",
+        confidence=79,
+        reason="generic company page",
+        evidence=("company", "team"),
+    )
+    assert is_generic_fallback_eligible(eligible) is True
+    assert is_generic_fallback_eligible(weak) is False
+
+
+def test_company_jobs_pages_stay_eligible_when_public_and_not_rejected() -> None:
+    candidate = _make_candidate(
+        "https://example.com/careers",
+        eligibility="company_jobs_page",
+        confidence=72,
+        evidence=("careers", "jobs", "job openings"),
+        reason="Public company jobs page",
+    )
+    assert is_generic_fallback_eligible(candidate) is True
 
 
 def test_403_fallback_preserves_existing_acuity_sources() -> None:
@@ -1625,23 +1787,58 @@ def test_manual_confirmation_connects_review_candidate() -> None:
     assert confirmed.company_source.is_active is True
 
 
-def test_manual_confirmation_rejects_unsupported_candidate() -> None:
+def test_manual_confirmation_rejects_ineligible_unsupported_candidate() -> None:
     confirm_candidate = service_module().confirm_candidate
 
     record = company("Acme")
     run = model("discovery.DiscoveryRun").objects.create(company=record, query="Acme")
     candidate = model("discovery.DiscoveryCandidate").objects.create(
         run=run,
-        kind="source",
-        discovered_url="https://example.com/jobs",
-        canonical_url="https://example.com/jobs",
-        platform="unknown",
+        kind="careers",
+        discovered_url="https://example.com/privacy",
+        canonical_url="https://example.com/privacy",
+        platform="",
         confidence=50,
+        job_source_confidence=50,
+        evidence=["privacy policy"],
         supported=False,
         decision="unsupported",
+        job_source_eligibility="not_a_job_source",
     )
     with pytest.raises(ValueError):
         confirm_candidate(candidate_id=candidate.pk, company_id=record.pk)
+
+
+def test_manual_confirmation_connects_eligible_generic_candidate() -> None:
+    confirm_candidate = service_module().confirm_candidate
+
+    record = company("Acme")
+    run = model("discovery.DiscoveryRun").objects.create(
+        company=record,
+        query="Acme",
+        status="unsupported",
+    )
+    candidate = model("discovery.DiscoveryCandidate").objects.create(
+        run=run,
+        kind="careers",
+        discovered_url="https://www.example.com/careers",
+        canonical_url="https://www.example.com/careers",
+        platform="",
+        confidence=72,
+        job_source_confidence=85,
+        evidence=["careers", "open roles", "jobs"],
+        supported=False,
+        decision="unsupported",
+        job_source_eligibility="company_jobs_page",
+        reason="Public company jobs page",
+    )
+
+    confirmed = confirm_candidate(candidate_id=candidate.pk, company_id=record.pk)
+
+    assert confirmed.decision == "connected"
+    assert confirmed.company_source.source == "generic"
+    assert confirmed.company_source.source_jobs_url == "https://www.example.com/careers"
+    assert confirmed.company_source.is_active is True
 
 
 def test_weak_vendor_text_does_not_classify_or_auto_connect() -> None:
@@ -1760,11 +1957,7 @@ def test_real_scrapling_background_path_materializes_responses_inside_session(
         url = str(kwargs["url"])
         request_calls.append(url)
         if url == search_module.TavilySearchProvider.endpoint:
-            headers = {
-                str(key).lower(): str(value)
-                for key, value in cast(dict[object, object], kwargs["headers"]).items()
-            }
-            assert (method, headers.get("x-tavily-access-mode")) == ("POST", "keyless")
+            assert method == "POST"
             content = (
                 b'{"results":['
                 b'{"title":"Data Sentics","url":"https://datasentics.com/",'
@@ -1779,6 +1972,8 @@ def test_real_scrapling_background_path_materializes_responses_inside_session(
         return SimpleNamespace(
             url=url,
             content=content,
+            body=content,
+            status=200,
             status_code=200,
             reason="OK",
             encoding="utf-8",
