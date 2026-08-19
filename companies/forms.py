@@ -16,6 +16,7 @@ from scraping.sources.registry import (
     user_selectable_source_keys,
     user_visible_source_keys,
 )
+from scraping.sources.zoho_recruit import zoho_recruit_source_from_url
 
 
 class SourceChoiceField(forms.ChoiceField):  # type: ignore[misc]
@@ -98,6 +99,11 @@ def validate_source_configuration(*, source: str, source_jobs_url: str | None) -
     elif normalized_source == "dreamjobs":
         try:
             dreamjobs_source_from_url(source_jobs_url)
+        except SourceError as error:
+            raise forms.ValidationError(str(error)) from error
+    elif normalized_source == "zoho_recruit":
+        try:
+            zoho_recruit_source_from_url(source_jobs_url)
         except SourceError as error:
             raise forms.ValidationError(str(error)) from error
 

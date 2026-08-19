@@ -22,7 +22,7 @@ SOURCE_DISCOVERY_TAVILY_API_KEY=<secret>
 SOURCE_DISCOVERY_TAVILY_KEYLESS_DIAGNOSTIC=false
 SOURCE_DISCOVERY_SEARCH_TIMEOUT_SECONDS=10
 SOURCE_DISCOVERY_SEARCH_RETRIES=1
-SOURCE_DISCOVERY_SEARCH_MAX_QUERIES=6
+SOURCE_DISCOVERY_SEARCH_MAX_QUERIES=7
 SOURCE_DISCOVERY_SEARCH_MAX_RESULTS=6
 SOURCE_DISCOVERY_SEARCH_MAX_RESPONSE_BYTES=1000000
 SOURCE_DISCOVERY_TOTAL_TIMEOUT_SECONDS=45
@@ -53,9 +53,9 @@ and searches only registered adapters that are still missing. Each adapter
 owns discovery hints (hosts, URL patterns, technical signals, canonicalization,
 tenant identity, and one bounded search hint). A blocked official page may use
 one additional `site:<official-domain> careers jobs` request. Results are cached
-within the run. The default shared budget is six searches: two general queries
-plus at most four missing-adapter checks; the 403 fallback shares that budget,
-so some platforms may remain explicitly `not_checked`.
+within the run. The default shared budget is seven searches shared by two general
+queries, the three bounded inventory queries, adapter-specific checks, and the
+403 fallback. Exhausted coverage remains explicitly `not_checked`.
 Each response excludes
 answers, raw content, and images. Only URL, title, content snippet, and optional
 score cross the provider boundary. Search time, total attempts, query count,
@@ -85,8 +85,8 @@ Platform classification is intentionally separate from the adapter registry.
 The catalog identifies only direct, public vendor URL signatures and does not
 infer a platform from a vendor word in page text, metadata, JavaScript, or a
 search snippet. The current catalog recognizes Lever, Darwinbox, JazzHR,
-DreamJobs, Workday, Greenhouse, Personio, SmartRecruiters, Workable, Ashby, and
-Teamtailor. The registry answers the separate question of whether a validated,
+DreamJobs, Zoho Recruit, Workday, Greenhouse, Personio, SmartRecruiters,
+Workable, Ashby, and Teamtailor. The registry answers the separate question of whether a validated,
 executable adapter exists.
 
 Unsupported catalog detections are persisted as source candidates with their

@@ -952,7 +952,10 @@ def _inventory_search_queries(company_name: str, official_url: str) -> tuple[str
             f"site:{official_host} careers jobs vacancies"
             if official_host
             else "",
-            f'"{company_name}" jobs Lever JazzHR Darwinbox DreamJobs Workable Ashby Teamtailor',
+            (
+                f'"{company_name}" jobs Lever JazzHR Darwinbox DreamJobs Zoho Recruit '
+                "Workable Ashby Teamtailor"
+            ),
             f'"{company_name}" jobs Personio Workday Greenhouse SmartRecruiters',
         )
         if query
@@ -974,8 +977,9 @@ def _merge_search_results(
 def _covered_registered_platforms_from_query(query: str) -> tuple[str, ...]:
     query_lower = query.casefold()
     covered: list[str] = []
-    for platform in ("darwinbox", "dreamjobs", "jazzhr", "lever"):
-        if platform in query_lower:
+    for platform in ("darwinbox", "dreamjobs", "jazzhr", "lever", "zoho_recruit"):
+        query_signal = "zoho recruit" if platform == "zoho_recruit" else platform
+        if query_signal in query_lower:
             covered.append(platform)
     return tuple(covered)
 

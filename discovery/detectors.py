@@ -116,6 +116,13 @@ def _dreamjobs_canonicalize(url: str) -> str:
     return _root(canonical, "jobs")
 
 
+def _zoho_recruit_canonicalize(url: str) -> str:
+    canonical, _host, segments = _url_parts(url)
+    if len(segments) < 2 or segments[0].casefold() != "jobs":
+        raise ValueError("Zoho Recruit URL must use a /jobs/<page> listing")
+    return _root(canonical, "jobs", segments[1])
+
+
 def _host_tenant(url: str) -> str:
     return urlsplit(url).hostname.casefold()  # type: ignore[union-attr]
 
@@ -221,6 +228,26 @@ def _dreamjobs_match(
     return None
 
 
+def _zoho_recruit_match(
+    host: str, _url: str, segments: tuple[str, ...], body: str
+) -> tuple[int, tuple[str, ...]] | None:
+    if len(segments) < 2 or segments[0].casefold() != "jobs":
+        return None
+    if host.endswith(".zohorecruit.com"):
+        return 98, ("Zoho Recruit public career-site host",)
+
+    lowered = body.casefold()
+    signals = (
+        "static.zohocdn.com/recruit/" in lowered,
+        'id="jobs"' in lowered,
+        'id="meta"' in lowered,
+        'id="career-website-main"' in lowered,
+    )
+    if all(signals):
+        return 96, ("Zoho Recruit embedded jobs and career-site assets",)
+    return None
+
+
 def _workday_match(
     host: str, _url: str, _segments: tuple[str, ...], _body: str
 ) -> tuple[int, tuple[str, ...]] | None:
@@ -283,6 +310,12 @@ _CATALOG: tuple[CatalogPlatformDetector, ...] = (
         _host_tenant,
     ),
     CatalogPlatformDetector("dreamjobs", _dreamjobs_match, _dreamjobs_canonicalize, _host_tenant),
+    CatalogPlatformDetector(
+        "zoho_recruit",
+        _zoho_recruit_match,
+        _zoho_recruit_canonicalize,
+        _host_tenant,
+    ),
     CatalogPlatformDetector("workday", _workday_match, _host_root, _host_tenant),
     CatalogPlatformDetector("greenhouse", _greenhouse_match, _first_path_root, _path_tenant),
     CatalogPlatformDetector(
@@ -374,6 +407,21 @@ _DISCOVERY_HINTS: tuple[SourceDiscoveryHints, ...] = (
         ),
         _lever_canonicalize,
         _path_tenant,
+    ),
+    SourceDiscoveryHints(
+        "zoho_recruit",
+        ("*.zohorecruit.com", "custom HTTPS host"),
+        ("/jobs/<page>",),
+        ("Zoho Recruit careers",),
+        ("Zoho Recruit assets", "embedded jobs metadata"),
+        CatalogPlatformDetector(
+            "zoho_recruit",
+            _zoho_recruit_match,
+            _zoho_recruit_canonicalize,
+            _host_tenant,
+        ),
+        _zoho_recruit_canonicalize,
+        _host_tenant,
     ),
 )
 _DISCOVERY_HINTS_BY_PLATFORM = {hint.platform: hint for hint in _DISCOVERY_HINTS}

@@ -5,7 +5,7 @@ import os
 from collections.abc import Iterator
 from threading import Event
 from types import SimpleNamespace
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 import pytest
 
@@ -103,6 +103,15 @@ def page(
         ("https://acme.applytojob.com/apply", "", "jazzhr"),
         ("https://acme.dream.jobs/jobs", "", "dreamjobs"),
         ("https://acme.darwinbox.com/ms/candidate/careers", "", "darwinbox"),
+        (
+            "https://jobs.acme.com/jobs/Careers",
+            (
+                '<input id="jobs"><input id="meta">'
+                '<div id="career-website-main"></div>'
+                '<script src="https://static.zohocdn.com/recruit/app.js"></script>'
+            ),
+            "zoho_recruit",
+        ),
     ],
 )
 def test_supported_platform_detectors(url: str, body: str, platform: str) -> None:
@@ -118,6 +127,34 @@ def test_every_user_selectable_adapter_exposes_discovery_hints() -> None:
 
     assert {hint.platform for hint in hints} == set(registry.user_selectable_source_keys())
     assert all(hint.search_hints and hint.technical_signals for hint in hints)
+
+
+def test_zoho_recruit_custom_domain_is_supported_ats_and_auto_connects() -> None:
+    run_discovery = service_module().run_discovery
+    record = company("BGTS")
+    official = "https://bgts.com/"
+    jobs = "https://jobs.bgts.com/jobs/Careers"
+    zoho_body = (
+        '<input id="jobs"><input id="meta">'
+        '<div id="career-website-main"></div>'
+        '<script src="https://static.zohocdn.com/recruit/app.js"></script>'
+    )
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        search_provider=FakeSearch(SearchResult("BGTS", official)),
+        crawler=FakeCrawler(page(official, "BGTS", (jobs,)), page(jobs, zoho_body)),
+    )
+
+    candidate = model("discovery.DiscoveryCandidate").objects.get(
+        kind="source", platform="zoho_recruit"
+    )
+    source = model("companies.CompanySource").objects.get(company=record)
+    assert outcome.status == "connected"
+    assert candidate.supported is True
+    assert candidate.job_source_eligibility == "supported_ats"
+    assert (source.source, source.source_jobs_url) == ("zoho_recruit", jobs)
+    assert is_generic_fallback_eligible(candidate) is False
 
 
 def test_unsupported_platform_detector_preserves_evidence() -> None:
@@ -1306,6 +1343,7 @@ def test_registry_driven_sweep_finds_second_platform_and_records_coverage() -> N
         "dreamjobs": "not_found",
         "jazzhr": "found",
         "lever": "found",
+        "zoho_recruit": "not_found",
     }
     assert record.sources.count() == 0
     assert '"Two Source Company" careers jobs vacancies recruiting' in provider.queries
@@ -1561,6 +1599,7 @@ def test_new_acuity_discovers_jazzhr_and_embedded_darwinbox_source() -> None:
         "dreamjobs": "not_found",
         "jazzhr": "found",
         "lever": "not_found",
+        "zoho_recruit": "not_found",
     }
     assert {item.candidate.platform for item in inventory if item.can_confirm} == {
         "darwinbox",
@@ -1688,6 +1727,7 @@ def test_existing_acuity_inventory_is_complete_and_idempotent_after_403() -> Non
         "dreamjobs": "not_found",
         "jazzhr": "already_connected",
         "lever": "not_found",
+        "zoho_recruit": "not_found",
     }
     assert not any(query == '"Acuity Analytics" Darwinbox careers' for query in provider.queries)
 
@@ -1748,7 +1788,7 @@ def test_query_limit_records_partial_adapter_coverage(
     assert run.summary.startswith(
         "Partial discovery — some registered platforms were not checked."
     )
-    assert run.adapter_checks.filter(status="not_checked").count() == 3
+    assert run.adapter_checks.filter(status="not_checked").count() == 4
 
 
 def test_manual_domain_fallback_does_not_call_search() -> None:
@@ -2002,7 +2042,7 @@ def test_real_scrapling_background_path_materializes_responses_inside_session(
     assert (run.status, run.error_message) == ("connected", "")
     assert run.careers_url == jobs
     assert (source.source, source.source_jobs_url) == ("dreamjobs", jobs)
-    assert request_calls.count(search_module.TavilySearchProvider.endpoint) == 6
+    assert request_calls.count(search_module.TavilySearchProvider.endpoint) == 7
     assert [url for url in request_calls if url != search_module.TavilySearchProvider.endpoint] == [
         official,
         careers_home,

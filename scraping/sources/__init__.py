@@ -33,6 +33,11 @@ from scraping.sources.generic import (
     extract_jobs_from_html,
     validate_extracted_jobs,
 )
+from scraping.sources.zoho_recruit import (
+    ZohoRecruitSourceAdapter,
+    parse_zoho_recruit_listing,
+    zoho_recruit_source_from_url,
+)
 
 __all__ = [
     "CandidateValidationError",
@@ -57,9 +62,12 @@ __all__ = [
     "SourceCompany",
     "SourceError",
     "SourceRecord",
+    "ZohoRecruitSourceAdapter",
     "candidate_id_for_url",
     "extract_generic_candidates",
     "extract_jobs_from_html",
     "load_fixture_records",
+    "parse_zoho_recruit_listing",
     "validate_extracted_jobs",
+    "zoho_recruit_source_from_url",
 ]

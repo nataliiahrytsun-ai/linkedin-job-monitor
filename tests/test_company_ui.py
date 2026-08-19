@@ -1831,6 +1831,24 @@ def test_add_source_creates_approved_active_dreamjobs_custom_domain() -> None:
     assert "DreamJobs" in client().get(response.url).content.decode()
 
 
+def test_add_source_creates_approved_active_zoho_recruit_custom_domain() -> None:
+    company = model("companies.Company").objects.create(name="BGTS")
+    jobs_url = "https://jobs.bgts.com/jobs/Careers"
+
+    response = client().post(
+        reverse("companies:source_create", args=(company.pk,)),
+        valid_source_data(source="zoho_recruit", source_jobs_url=jobs_url),
+    )
+
+    assert response.status_code == 302
+    source = company.sources.get()
+    assert source.source == "zoho_recruit"
+    assert source.source_jobs_url == jobs_url
+    assert source.approval_status == "approved"
+    assert source.is_active is True
+    assert "Zoho Recruit" in client().get(response.url).content.decode()
+
+
 def test_existing_darwinbox_source_is_visible_and_presented_as_active() -> None:
     company = model("companies.Company").objects.create(name="Darwinbox Existing")
     source = company.sources.create(

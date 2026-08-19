@@ -57,7 +57,7 @@ def test_django_settings_import_and_configuration(tmp_path: Path) -> None:
         "'django.db.backends.sqlite3'; "
         "assert settings.DATABASES['default']['OPTIONS']['timeout'] == 30.0; "
         "assert settings.JOB_MONITOR_BACKGROUND_MAX_WORKERS == 2; "
-        "assert settings.SOURCE_DISCOVERY_SEARCH_MAX_QUERIES == 6; "
+        "assert settings.SOURCE_DISCOVERY_SEARCH_MAX_QUERIES == 7; "
         "assert settings.SOURCE_DISCOVERY_TAVILY_KEYLESS_DIAGNOSTIC is False; "
         "assert settings.TIME_ZONE == 'Europe/Vienna'; "
         "assert settings.USE_TZ is True; "

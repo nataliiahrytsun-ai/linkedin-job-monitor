@@ -17,7 +17,8 @@ Company
 
 The schema, source ownership, source-scoped persistence/reconciliation, Company
 multi-source orchestration, and source-management UI are implemented. Lever,
-Darwinbox, and JazzHR are production-approved/user-selectable adapters.
+Darwinbox, JazzHR, DreamJobs, and Zoho Recruit are production-approved/user-selectable
+adapters.
 Darwinbox executes through its verified normal headful-browser transport;
 JazzHR uses ordinary server-rendered HTTP. Production Source Discovery is a
 separate orchestration layer; additional ATS adapters are not implemented.
@@ -168,7 +169,7 @@ equivalent CompanySource approval/active state is preserved. The dialog is
 responsive on narrow viewports.
 
 Manual **Add source** obtains its platform choices from the registry's
-user-selectable API. Lever, Darwinbox, JazzHR, and DreamJobs are the current user-selectable
+user-selectable API. Lever, Darwinbox, JazzHR, DreamJobs, and Zoho Recruit are the current user-selectable
 adapters. A valid public jobs URL is required and checked server-side. A manually
 created source starts as `approval_status=approved` and `is_active=True`.
 Fixture remains registered and executable for internal tests but is not offered
@@ -321,6 +322,20 @@ The 2026-08-13 audit verified this contract for Data Sentics at
 `https://careers.datasentics.com/jobs`. It does not prove every DreamJobs site
 or future frontend/API version. Source Discovery remains outside this adapter.
 
+## Zoho Recruit adapter boundary
+
+`ZohoRecruitSourceAdapter` uses one ordinary Scrapling HTTP GET for a public
+HTTPS `/jobs/<page>` career site. It validates independent Zoho Recruit asset,
+DOM, metadata, module, and jobs-layout signals before mapping the embedded
+published jobs JSON. Zoho record IDs are stable source-local IDs; detail URLs
+use the public `/jobs/<page>/<record-id>` route without a generated slug.
+
+The public career-site display limit is 750 jobs. A snapshot at or above that
+limit, visible pagination, empty or malformed payloads, conflicting metadata,
+or missing platform signals fail closed without reconciliation. The adapter
+does not use Zoho Recruit REST API/OAuth or any authenticated transport. See
+[`docs/ZOHO_RECRUIT_SPIKE.md`](ZOHO_RECRUIT_SPIKE.md).
+
 ## Not implemented
 
 - LinkedIn-derived discovery (name/domain discovery is implemented without LinkedIn);
@@ -350,7 +365,7 @@ it to users, then reuse it for other companies on that ATS.
 ## Source Discovery status
 
 Production Source Discovery now locates a probable official site from a company
-name or supplied domain, performs a bounded safe careers crawl, detects the four
+name or supplied domain, performs a bounded safe careers crawl, detects the five
 registered production ATS platforms, and either connects one high-confidence
 source or persists review/unsupported candidates. It is deliberately separate
 from adapters and reconciliation. A LinkedIn reference is not executable

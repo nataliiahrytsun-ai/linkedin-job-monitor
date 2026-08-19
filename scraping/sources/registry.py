@@ -11,6 +11,7 @@ from scraping.sources.fixture import FixtureSourceAdapter
 from scraping.sources.generic import GenericSourceAdapter
 from scraping.sources.jazzhr import JazzHRSourceAdapter
 from scraping.sources.lever import LeverSourceAdapter
+from scraping.sources.zoho_recruit import ZohoRecruitSourceAdapter
 
 
 class UnknownSourceError(SourceError):
@@ -29,9 +30,14 @@ _ADAPTER_FACTORIES: dict[str, Callable[[], SourceAdapter]] = {
     "generic": GenericSourceAdapter,
     "jazzhr": JazzHRSourceAdapter,
     "lever": LeverSourceAdapter,
+    "zoho_recruit": ZohoRecruitSourceAdapter,
 }
-_USER_VISIBLE_SOURCE_KEYS = frozenset({"darwinbox", "dreamjobs", "jazzhr", "lever", "linkedin"})
-_USER_SELECTABLE_SOURCE_KEYS = frozenset({"darwinbox", "dreamjobs", "jazzhr", "lever"})
+_USER_VISIBLE_SOURCE_KEYS = frozenset(
+    {"darwinbox", "dreamjobs", "jazzhr", "lever", "linkedin", "zoho_recruit"}
+)
+_USER_SELECTABLE_SOURCE_KEYS = frozenset(
+    {"darwinbox", "dreamjobs", "jazzhr", "lever", "zoho_recruit"}
+)
 _EXECUTION_BLOCKED_SOURCE_KEYS: frozenset[str] = frozenset()
 _SOURCE_UNAVAILABILITY_MESSAGES: dict[str, str] = {
     "linkedin": (
