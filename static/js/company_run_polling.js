@@ -51,8 +51,18 @@
         expectedRunIds.every((runId) => runsById.get(runId)?.is_terminal === true);
       const submissionComplete =
         mode === "submission" && payload.submission_complete === true;
-      if (runningWatchComplete || submissionComplete) {
+      if (runningWatchComplete) {
         window.location.reload();
+        return;
+      }
+
+      if (submissionComplete) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("watch_after");
+        cleanUrl.searchParams.delete("watch_sources");
+        window.location.replace(
+          `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`,
+        );
         return;
       }
     } catch (_error) {

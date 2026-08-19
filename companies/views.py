@@ -413,7 +413,9 @@ def company_source_toggle_active(
     """Safely activate or deactivate one source scoped to its Company."""
     company = get_object_or_404(Company, pk=company_pk)
     source = get_object_or_404(CompanySource, pk=source_pk, company=company)
-    if normalize_source_key(source.source) not in user_selectable_source_keys():
+    manageable_source_keys = set(user_selectable_source_keys()) | {"generic"}
+
+    if normalize_source_key(source.source) not in manageable_source_keys:
         messages.error(request, "This internal source is not user-manageable.")
         return redirect(_manage_sources_url(company.pk))
     if source.scrape_runs.filter(status=ScrapeRun.Status.RUNNING).exists():

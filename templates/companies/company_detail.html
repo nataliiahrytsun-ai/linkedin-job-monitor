@@ -134,7 +134,32 @@
                       {% if row.availability_message %}<span class="source-summary-status">{{ row.availability_message }}</span>{% else %}<span class="status-badge">{{ source.get_approval_status_display|upper }}</span><span class="status-badge {% if source.is_active %}status-active{% else %}status-inactive{% endif %}">{% if source.is_active %}ACTIVE{% else %}INACTIVE{% endif %}</span>{% if row.has_running_run %}<span class="status-badge status-running">RUNNING</span>{% endif %}{% endif %}
                     </div>
                     <p class="source-url external-url">{% if source.source_jobs_url %}<a href="{{ source.source_jobs_url }}" title="{{ source.source_jobs_url }}" target="_blank" rel="noopener noreferrer">{{ source.source_jobs_url|cut:"https://"|cut:"http://" }}</a>{% else %}Not configured{% endif %}</p>
-                    {% if row.is_manageable %}<div class="row-actions source-row-actions"><button class="button button-secondary button-compact" type="button" data-source-form-toggle="{{ row.edit_dialog_id }}">Edit</button>{% if source.approval_status == 'approved' %}<form method="post" action="{% url 'companies:source_toggle_active' company.pk source.pk %}">{% csrf_token %}<button class="button button-secondary button-compact" type="submit"{% if row.has_running_run %} disabled{% endif %}>{% if source.is_active %}Deactivate{% else %}Activate{% endif %}</button></form>{% endif %}</div>{% endif %}
+                    <div class="row-actions source-row-actions">
+                      {% if row.is_manageable %}
+                        <button 
+                          class="button button-secondary button-compact" 
+                          type="button" 
+                          data-source-form-toggle="{{ row.edit_dialog_id }}"
+                        >
+                          Edit
+                        </button>
+                      {% endif %}
+                      {% if source.approval_status == 'approved' %}
+                        <form method="post" action="{% url 'companies:source_toggle_active' company.pk source.pk %}">
+                          {% csrf_token %}
+                          <button
+                            class="button button-secondary button-compact"
+                            type="submit"
+                            {% if row.has_running_run %}disabled{% endif %}
+                            {% if source.is_active %}
+                              onclick="return confirm('Disconnect this job source? It will stop participating in job updates, but its history will be preserved.');"
+                            {% endif %}
+                          >
+                            {% if source.is_active %}Disconnect{% else %}Reconnect{% endif %}
+                          </button>
+                        </form>
+                      {% endif %}
+                    </div>
                   </div>
                   {% if row.is_manageable %}
                     <div id="{{ row.edit_dialog_id }}" class="source-inline-form"{% if not row.is_auto_open %} hidden{% endif %}>
