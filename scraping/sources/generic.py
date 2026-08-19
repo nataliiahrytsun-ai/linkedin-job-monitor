@@ -228,7 +228,7 @@ def _looks_like_job_link(url: str, anchor_text: str | None, nearby_text: str | N
     if segments and all(segment in job_root_segments for segment in segments):
         return False
 
-    if path.startswith("/careers/") and not any(character.isdigit() for character in path):
+    if path.rstrip("/") in {"/career", "/careers"}:
         return False
 
     if _contains_any(path, _JOB_PATH_HINTS):

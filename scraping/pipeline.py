@@ -229,6 +229,10 @@ def _normalize_source_record(
 
 
 def _safe_failure_message(error: Exception) -> str:
+    if type(error) is SourceError:
+        detail = str(error).strip()
+        if detail:
+            return f"Source pipeline failed: {detail}"
     return f"Source pipeline failed: {type(error).__name__}"
 
 
