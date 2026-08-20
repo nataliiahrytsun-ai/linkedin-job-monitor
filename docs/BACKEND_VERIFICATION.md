@@ -70,16 +70,16 @@ transitional legacy source fields. CompanySource configuration is managed
 separately from Company fields through one responsive Manage sources dialog.
 Its Connected/Discovered tabs combine manual source management with the latest
 Discovery run and candidate actions without nested dialogs. Tests cover the
-compact empty/summary states, multiple source rows, registry-backed Add source,
-server-side Lever URL validation, duplicate handling, immutable source
+compact empty/summary states, multiple source rows, URL-only auto-detected Add
+source, bounded custom-domain signature detection, duplicate handling, immutable source
 provenance, company scoping, POST-only activation changes, and RUNNING-source
 edit/deactivation protection.
 
-Manual source creation accepts only user-selectable registry adapters, currently
-Lever, and creates an approved active CompanySource. Fixture remains available
-to internal pipeline tests but cannot be assigned through this UI. Existing
-internal or unsupported rows remain visible without being exposed as ordinary
-user-manageable source options.
+Source creation accepts one public Jobs URL, reuses Discovery detectors and
+Generic eligibility, and creates an approved active CompanySource only after a
+fail-closed classification. Fixture remains available to internal pipeline tests
+but cannot be assigned through this UI. Existing internal or unsupported rows
+remain visible without being exposed through auto-detection.
 
 ## Lever multi-page integration proof
 

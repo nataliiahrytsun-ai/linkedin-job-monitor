@@ -171,12 +171,17 @@ def valid_company_data(**overrides: str) -> dict[str, str]:
 
 def valid_source_data(**overrides: str) -> dict[str, str]:
     values = {
-        "source": "lever",
         "source_jobs_url": "https://jobs.lever.co/example",
-        "is_active": "on",
     }
     values.update(overrides)
     return values
+
+
+def detected_source(source: str, source_jobs_url: str) -> Any:
+    result_type = importlib.import_module(
+        "companies.source_detection"
+    ).DetectedCompanySource
+    return result_type(source=source, source_jobs_url=source_jobs_url)
 
 
 def test_company_list_empty_state_navigation_and_template_contract() -> None:
@@ -1432,29 +1437,14 @@ def test_create_get_has_csrf_labels_and_only_user_managed_fields() -> None:
     assert model("companies.Company").objects.count() == 0
 
 
-def test_create_source_options_come_from_user_selectable_registry_api() -> None:
+def test_create_source_form_requires_only_url_and_auto_detects_platform() -> None:
     company = create_company()
     response = client().get(reverse("companies:source_create", args=(company.pk,)))
-    source_field = response.context["form"].fields["source"]
-    rendered_values = tuple(value for value, _label in source_field.choices)
-    selectable_values = importlib.import_module(
-        "scraping.sources.registry"
-    ).user_selectable_source_keys()
+    form = response.context["form"]
 
-    assert rendered_values == selectable_values
-    assert ("lever", "Lever") in tuple(source_field.choices)
-    assert ("darwinbox", "Darwinbox") in tuple(source_field.choices)
-    assert ("jazzhr", "JazzHR") in tuple(source_field.choices)
-    assert ("dreamjobs", "DreamJobs") in tuple(source_field.choices)
-    assert all(value != "fixture" for value, _label in source_field.choices)
-    assert response.context["form"].unavailable_source_choices == (
-        (
-            "LinkedIn",
-            "Technical adapter ready · Production disabled · "
-            "Requires approved LinkedIn access",
-        ),
-    )
-    assert "is_active" not in response.context["form"].fields
+    assert tuple(form.fields) == ("source_jobs_url",)
+    assert form.fields["source_jobs_url"].label == "Jobs URL"
+    assert "Detect automatically" in form.fields["source_jobs_url"].help_text
 
 
 def test_valid_create_uses_redirect_normalizes_source_and_refresh_does_not_duplicate() -> None:
@@ -1657,32 +1647,15 @@ def test_company_without_sources_renders_source_empty_state_and_add_action() -> 
     assert company.sources.count() == 0
 
 
-def test_company_detail_connected_tab_add_form_is_compact_and_registry_driven() -> None:
+def test_company_detail_connected_tab_add_form_is_url_only_and_auto_detected() -> None:
     company = model("companies.Company").objects.create(name="Dialog Add")
 
     html = client().get(reverse("companies:detail", args=(company.pk,))).content.decode()
     add_dialog = html[html.index('id="add-source-form"') :]
 
     assert "Add source" in add_dialog
-    assert "Darwinbox" in add_dialog
-    assert "Live access unavailable" not in add_dialog
-    assert '<option value="darwinbox">Darwinbox</option>' in add_dialog
-    assert '<option value="jazzhr">JazzHR</option>' in add_dialog
-    assert '<option value="dreamjobs">DreamJobs</option>' in add_dialog
-    assert '<option value="lever">Lever</option>' in add_dialog
-    assert (
-        '<option value="linkedin" disabled>LinkedIn — Production disabled</option>'
-        in add_dialog
-    )
-    assert "Fixture" not in add_dialog
-    assert "JazzHR" in add_dialog
-    assert "LinkedIn" in add_dialog
-    assert "Technical adapter ready" in add_dialog
-    assert "Production disabled" in add_dialog
-    assert "Requires approved LinkedIn access" in add_dialog
-    assert "Unsupported" not in add_dialog
-    assert 'class="help-text source-option-disabled" aria-disabled="true"' in add_dialog
-    assert 'name="source"' in add_dialog
+    assert "Detect automatically" in add_dialog
+    assert 'name="source"' not in add_dialog
     assert 'name="source_jobs_url"' in add_dialog
     assert "Jobs URL" in add_dialog
     assert 'name="is_active"' not in add_dialog
@@ -1730,31 +1703,21 @@ def test_company_source_dialog_script_supports_open_close_and_escape() -> None:
     assert 'data-source-tab="connected"' in script
 
 
-def test_add_source_uses_registry_choices_and_creates_approved_active_lever() -> None:
+def test_add_source_auto_detects_and_creates_approved_active_lever() -> None:
     company = model("companies.Company").objects.create(name="Source Company")
+    browser = client()
     add_url = reverse("companies:source_create", args=(company.pk,))
-    get_response = client().get(add_url)
+    get_response = browser.get(add_url)
     html = get_response.content.decode()
 
-    assert '<option value="lever">Lever</option>' in html
-    assert '<option value="darwinbox">Darwinbox</option>' in html
-    assert '<option value="jazzhr">JazzHR</option>' in html
-    assert '<option value="dreamjobs">DreamJobs</option>' in html
-    assert (
-        '<option value="linkedin" disabled>LinkedIn — Production disabled</option>'
-        in html
-    )
-    assert "Darwinbox" in html
-    assert "Live access unavailable" not in html
-    assert "Fixture" not in html
-    assert "JazzHR" in html
-    assert "LinkedIn" in html
-    assert "Technical adapter ready" in html
-    assert "Production disabled" in html
-    assert "Requires approved LinkedIn access" in html
-    assert "Unsupported" not in html
-    assert 'class="help-text source-option-disabled" aria-disabled="true"' in html
-    response = client().post(add_url, valid_source_data())
+    assert 'name="source"' not in html
+    assert 'name="source_jobs_url"' in html
+    assert "Detect automatically" in html
+    with patch(
+        "companies.views.detect_company_source_url",
+        return_value=detected_source("lever", "https://jobs.lever.co/example"),
+    ):
+        response = browser.post(add_url, valid_source_data())
 
     assert response.status_code == 302
     assert response.url.endswith("?manage_sources=1&source_tab=connected")
@@ -1763,7 +1726,8 @@ def test_add_source_uses_registry_choices_and_creates_approved_active_lever() ->
     assert source.source_jobs_url == "https://jobs.lever.co/example"
     assert source.approval_status == "approved"
     assert source.is_active is True
-    detail = client().get(response.url).content.decode()
+    detail = browser.get(response.url).content.decode()
+    assert "Job source added as Lever." in detail
     summary_html = detail[: detail.index('<dialog class="source-dialog"')]
     assert "1 active" in summary_html
     assert "1 configured" in summary_html
@@ -1777,13 +1741,12 @@ def test_add_source_creates_approved_active_darwinbox() -> None:
     company = model("companies.Company").objects.create(name="Darwinbox Company")
     add_url = reverse("companies:source_create", args=(company.pk,))
 
-    response = client().post(
-        add_url,
-        valid_source_data(
-            source="darwinbox",
-            source_jobs_url="https://tenant.darwinbox.com/ms/candidate/careers",
-        ),
-    )
+    url = "https://tenant.darwinbox.com/ms/candidate/careers"
+    with patch(
+        "companies.views.detect_company_source_url",
+        return_value=detected_source("darwinbox", url),
+    ):
+        response = client().post(add_url, valid_source_data(source_jobs_url=url))
 
     assert response.status_code == 302
     source = company.sources.get()
@@ -1797,18 +1760,21 @@ def test_add_source_creates_approved_active_jazzhr() -> None:
     company = model("companies.Company").objects.create(name="JazzHR Company")
     add_url = reverse("companies:source_create", args=(company.pk,))
 
-    response = client().post(
-        add_url,
-        valid_source_data(
-            source="jazzhr",
-            source_jobs_url="https://example.applytojob.com/apply/jobs/",
-        ),
-    )
+    submitted_url = "https://example.applytojob.com/apply/jobs/"
+    canonical_url = "https://example.applytojob.com/apply"
+    with patch(
+        "companies.views.detect_company_source_url",
+        return_value=detected_source("jazzhr", canonical_url),
+    ):
+        response = client().post(
+            add_url,
+            valid_source_data(source_jobs_url=submitted_url),
+        )
 
     assert response.status_code == 302
     source = company.sources.get()
     assert source.source == "jazzhr"
-    assert source.source_jobs_url == "https://example.applytojob.com/apply/jobs/"
+    assert source.source_jobs_url == canonical_url
     assert source.approval_status == "approved"
     assert source.is_active is True
     assert "JazzHR" in client().get(response.url).content.decode()
@@ -1817,13 +1783,15 @@ def test_add_source_creates_approved_active_jazzhr() -> None:
 def test_add_source_creates_approved_active_dreamjobs_custom_domain() -> None:
     company = model("companies.Company").objects.create(name="Data Sentics")
 
-    response = client().post(
-        reverse("companies:source_create", args=(company.pk,)),
-        valid_source_data(
-            source="dreamjobs",
-            source_jobs_url="https://careers.datasentics.com/jobs",
-        ),
-    )
+    url = "https://careers.datasentics.com/jobs"
+    with patch(
+        "companies.views.detect_company_source_url",
+        return_value=detected_source("dreamjobs", url),
+    ):
+        response = client().post(
+            reverse("companies:source_create", args=(company.pk,)),
+            valid_source_data(source_jobs_url=url),
+        )
 
     assert response.status_code == 302
     source = company.sources.get()
@@ -1838,10 +1806,14 @@ def test_add_source_creates_approved_active_zoho_recruit_custom_domain() -> None
     company = model("companies.Company").objects.create(name="BGTS")
     jobs_url = "https://jobs.bgts.com/jobs/Careers"
 
-    response = client().post(
-        reverse("companies:source_create", args=(company.pk,)),
-        valid_source_data(source="zoho_recruit", source_jobs_url=jobs_url),
-    )
+    with patch(
+        "companies.views.detect_company_source_url",
+        return_value=detected_source("zoho_recruit", jobs_url),
+    ):
+        response = client().post(
+            reverse("companies:source_create", args=(company.pk,)),
+            valid_source_data(source_jobs_url=jobs_url),
+        )
 
     assert response.status_code == 302
     source = company.sources.get()
@@ -1850,6 +1822,28 @@ def test_add_source_creates_approved_active_zoho_recruit_custom_domain() -> None
     assert source.approval_status == "approved"
     assert source.is_active is True
     assert "Zoho Recruit" in client().get(response.url).content.decode()
+
+
+def test_add_source_creates_auto_detected_generic_without_dropdown_option() -> None:
+    company = model("companies.Company").objects.create(name="Custom Careers")
+    url = "https://www.example.com/careers/"
+    browser = client()
+
+    with patch(
+        "companies.views.detect_company_source_url",
+        return_value=detected_source("generic", url),
+    ):
+        response = browser.post(
+            reverse("companies:source_create", args=(company.pk,)),
+            valid_source_data(source_jobs_url=url),
+        )
+
+    assert response.status_code == 302
+    source = company.sources.get()
+    assert (source.source, source.source_jobs_url) == ("generic", url)
+    html = browser.get(response.url).content.decode()
+    assert "Job source added as Generic." in html
+    assert '<option value="generic">' not in html
 
 
 def test_existing_darwinbox_source_is_visible_and_presented_as_active() -> None:
@@ -1897,34 +1891,40 @@ def test_update_jobs_submits_active_darwinbox_source_without_network() -> None:
     assert b"Job update started." in browser.get(response.url).content
 
 
-@pytest.mark.parametrize(
-    ("source", "url"),
-    [
-        ("fixture", "https://jobs.example.test/internal"),
-        ("darwinbox", "https://careers.example.test/jobs"),
-        ("darwinbox", "https://tenant.darwinbox.com/not-careers"),
-        ("jazzhr", "https://example.com/apply"),
-        ("jazzhr", "https://example.applytojob.com/not-apply"),
-        ("dreamjobs", "https://careers.datasentics.com/not-jobs"),
-        ("lever", ""),
-        ("lever", "https://example.com/not-lever"),
-    ],
-)
-def test_add_source_rejects_internal_unsupported_blank_and_invalid_config(
-    source: str,
-    url: str,
-) -> None:
+@pytest.mark.parametrize("url", ["", "not a URL"])
+def test_add_source_rejects_blank_or_invalid_url_before_detection(url: str) -> None:
     company = model("companies.Company").objects.create(name="Invalid Source")
 
-    response = client().post(
-        reverse("companies:source_create", args=(company.pk,)),
-        valid_source_data(source=source, source_jobs_url=url),
-    )
+    with patch("companies.views.detect_company_source_url") as detect:
+        response = client().post(
+            reverse("companies:source_create", args=(company.pk,)),
+            valid_source_data(source_jobs_url=url),
+        )
 
     assert response.status_code == 200
     assert response.context["form"].errors
     assert 'id="add-source-form"' in response.content.decode()
     assert 'data-auto-open' in response.content.decode()
+    assert company.sources.count() == 0
+    detect.assert_not_called()
+
+
+def test_add_source_shows_fail_closed_detection_error() -> None:
+    company = model("companies.Company").objects.create(name="Unknown Source")
+    error_type = importlib.import_module(
+        "companies.source_detection"
+    ).SourceAutoDetectionError
+    with patch(
+        "companies.views.detect_company_source_url",
+        side_effect=error_type("No supported job platform was detected."),
+    ):
+        response = client().post(
+            reverse("companies:source_create", args=(company.pk,)),
+            valid_source_data(source_jobs_url="https://www.example.com/about"),
+        )
+
+    assert response.status_code == 200
+    assert "No supported job platform was detected" in response.content.decode()
     assert company.sources.count() == 0
 
 
@@ -1937,14 +1937,18 @@ def test_duplicate_source_is_a_form_error_and_same_url_is_allowed_for_other_comp
         approval_status="approved",
         is_active=True,
     )
-    data = valid_source_data(source_jobs_url="https://jobs.lever.co/shared")
-
-    duplicate = client().post(
-        reverse("companies:source_create", args=(first.pk,)), data
-    )
-    other_owner = client().post(
-        reverse("companies:source_create", args=(second.pk,)), data
-    )
+    url = "https://jobs.lever.co/shared/"
+    data = valid_source_data(source_jobs_url=url)
+    with patch(
+        "companies.views.detect_company_source_url",
+        return_value=detected_source("lever", "https://jobs.lever.co/shared"),
+    ):
+        duplicate = client().post(
+            reverse("companies:source_create", args=(first.pk,)), data
+        )
+        other_owner = client().post(
+            reverse("companies:source_create", args=(second.pk,)), data
+        )
 
     assert duplicate.status_code == 200
     assert "already configured" in duplicate.content.decode()
@@ -2091,17 +2095,23 @@ def test_unregistered_approved_source_cannot_be_activated() -> None:
 def test_linkedin_cannot_be_created_or_activated_by_crafted_post() -> None:
     company = model("companies.Company").objects.create(name="LinkedIn Disabled")
     add_url = reverse("companies:source_create", args=(company.pk,))
-
-    create_response = client().post(
-        add_url,
-        valid_source_data(
-            source="linkedin",
-            source_jobs_url="https://www.linkedin.com/jobs/example-jobs?f_C=16691",
-        ),
-    )
+    error_type = importlib.import_module(
+        "companies.source_detection"
+    ).SourceAutoDetectionError
+    with patch(
+        "companies.views.detect_company_source_url",
+        side_effect=error_type("No supported job platform was detected."),
+    ):
+        create_response = client().post(
+            add_url,
+            valid_source_data(
+                source="linkedin",
+                source_jobs_url="https://www.linkedin.com/jobs/example-jobs?f_C=16691",
+            ),
+        )
 
     assert create_response.status_code == 200
-    assert "source" in create_response.context["form"].errors
+    assert "source_jobs_url" in create_response.context["form"].errors
     assert company.sources.count() == 0
 
     source = company.sources.create(

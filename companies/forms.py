@@ -192,3 +192,17 @@ class CompanySourceForm(forms.ModelForm):
     class Meta:
         model = CompanySource
         fields = ("source", "source_jobs_url")
+
+
+class CompanySourceAutoForm(forms.Form):  # type: ignore[misc]
+    """Accept one public jobs URL for backend platform detection."""
+
+    source_jobs_url = forms.URLField(
+        label="Jobs URL",
+        required=True,
+        assume_scheme="https",
+        help_text="Detect automatically from the public careers or jobs URL.",
+        widget=forms.URLInput(
+            attrs={"placeholder": "https://company.example/careers"}
+        ),
+    )

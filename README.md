@@ -6,9 +6,9 @@ reconciliation, run history, and the UI source-neutral.
 
 ## Current source status
 
-- **Current production-approved source:** Lever. Users add a CompanySource through the
-  source-management UI, select `Lever`, and configure a jobs URL in the form
-  `https://jobs.lever.co/<site>`.
+- **Current production-approved source:** Lever. Users paste a public jobs URL such
+  as `https://jobs.lever.co/<site>` into Add source; the platform is detected
+  automatically.
 - **Current approved source:** Darwinbox. Its adapter uses a temporary normal
   headful system-Chrome session through Scrapling `DynamicFetcher`, opens the
   public candidate-v2 careers UI, and captures the listing/detail JSON emitted
@@ -108,8 +108,9 @@ One Company can own and manage multiple CompanySource configurations, and one
 platform adapter can serve many companies. Background execution, run ownership,
 and reconciliation are source-scoped; a Company update can launch several
 eligible sources independently. Company detail provides a compact source
-summary and one **Manage sources** dialog. Its **Connected** tab contains Add,
-Edit, Activate, and Deactivate; its **Discovered** tab contains name-only
+summary and one **Manage sources** dialog. Its **Connected** tab contains
+URL-only auto-detected Add, Edit, Disconnect, Reconnect, and Delete; its
+**Discovered** tab contains name-only
 Discovery status, candidates, revalidation, connection actions, and
 saved-evidence task drafts. See the
 [multi-source architecture](docs/MULTI_SOURCE_ARCHITECTURE.md) for the exact

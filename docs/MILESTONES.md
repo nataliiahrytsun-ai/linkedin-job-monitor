@@ -111,10 +111,10 @@ slices:
   checks passed.
 - **Slice 4 — source-management UI: Completed.** Company detail now provides a
   compact source summary and one responsive Manage sources dialog with
-  Connected/Discovered tabs and inline Add/Edit forms. Users can add
-  registry-approved production sources, edit source configuration without
-  changing immutable platform provenance, and independently activate or
-  deactivate eligible sources. RUNNING-source safety and POST-only state
+Connected/Discovered tabs and inline Add/Edit forms. Users add a source from one
+public Jobs URL through bounded registry/Discovery auto-detection, edit source
+configuration without changing immutable platform provenance, and independently
+disconnect or reconnect eligible sources. RUNNING-source safety and POST-only state
   changes are enforced. Its quality gate passed with 487 tests and the existing
   150 third-party `lxml` warnings; all other checks passed.
 

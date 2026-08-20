@@ -168,19 +168,27 @@ nested dialogs. Candidate connection is server-revalidated and company-scoped;
 equivalent CompanySource approval/active state is preserved. The dialog is
 responsive on narrow viewports.
 
-Manual **Add source** obtains its platform choices from the registry's
-user-selectable API. Lever, Darwinbox, JazzHR, DreamJobs, and Zoho Recruit are the current user-selectable
-adapters. A valid public jobs URL is required and checked server-side. A manually
-created source starts as `approval_status=approved` and `is_active=True`.
-Fixture remains registered and executable for internal tests but is not offered
-or accepted as a normal user-managed source.
+**Add source** accepts one public Jobs URL and detects the platform server-side.
+Hosted Lever, Darwinbox, JazzHR, and Zoho Recruit routes use the existing URL
+detectors without an HTTP request. Custom-domain detection performs one bounded,
+depth-zero Scrapling crawl and reuses the existing HTML-signature detectors for
+DreamJobs and Zoho Recruit. A non-ATS page becomes Generic only when the existing
+production eligibility gate accepts it and deterministic Generic extraction finds
+at least one job link. Unknown, ambiguous, inaccessible, private, and internal
+sources fail closed. Canonical source identity prevents an equivalent source from
+being added twice to one Company. The source starts as
+`approval_status=approved` and `is_active=True`.
+
+The registry's user-selectable API remains the explicit/manual platform catalog;
+auto-detection is a separate concern and does not add Generic or Fixture to that
+catalog. Fixture remains registered and executable for internal tests only.
 
 The source platform is immutable after creation because CompanySource is both a
 provenance and execution boundary. **Edit source** can update the supported
 source configuration, including its URL, but cannot silently convert the row to
 another platform. A different platform requires a new CompanySource.
 
-Activate and Deactivate are separate POST-only actions. An unapproved or
+Disconnect and Reconnect are separate POST-only actions. An unapproved or
 unregistered source cannot be made executable. The conservative management
 policy also blocks unsafe editing, deactivation, or deletion while that source
 has a RUNNING ScrapeRun. Run cancellation is not implemented.

@@ -118,8 +118,8 @@
             <form method="post" action="{% url 'companies:source_create' company.pk %}" novalidate>
               {% csrf_token %}
               {% if add_source_form.non_field_errors %}<div class="form-errors" role="alert">{{ add_source_form.non_field_errors }}</div>{% endif %}
-              <div class="form-field{% if add_source_form.source.errors %} form-field-error{% endif %}"><label for="{{ add_source_form.source.id_for_label }}">Source</label>{{ add_source_form.source }}{% if add_source_form.source.errors %}<div class="field-errors" role="alert">{{ add_source_form.source.errors }}</div>{% endif %}{% for source_label, availability_message in add_source_form.unavailable_source_choices %}<p class="help-text source-option-disabled" aria-disabled="true"><strong>{{ source_label }}</strong> — {{ availability_message }}</p>{% endfor %}</div>
               <div class="form-field{% if add_source_form.source_jobs_url.errors %} form-field-error{% endif %}"><label for="{{ add_source_form.source_jobs_url.id_for_label }}">Jobs URL</label>{{ add_source_form.source_jobs_url }}{% if add_source_form.source_jobs_url.errors %}<div class="field-errors" role="alert">{{ add_source_form.source_jobs_url.errors }}</div>{% endif %}</div>
+              <p class="help-text">Detect automatically — paste the public careers or jobs URL.</p>
               <button class="button button-primary button-compact" type="submit">Add source</button>
             </form>
           </div>
@@ -130,7 +130,7 @@
                 <article class="source-row" id="company-source-{{ source.pk }}">
                   <div class="source-row-main">
                     <div class="source-row-identity">
-                      <h3>{% if source.source == 'dreamjobs' %}DreamJobs{% elif source.source == 'jazzhr' %}JazzHR{% elif source.source == 'darwinbox' %}Darwinbox{% elif source.source == 'lever' %}Lever{% else %}{{ source.source|title }}{% endif %}</h3>
+                      <h3>{% if source.source == 'dreamjobs' %}DreamJobs{% elif source.source == 'jazzhr' %}JazzHR{% elif source.source == 'darwinbox' %}Darwinbox{% elif source.source == 'lever' %}Lever{% elif source.source == 'zoho_recruit' %}Zoho Recruit{% else %}{{ source.source|title }}{% endif %}</h3>
                       {% if row.availability_message %}<span class="source-summary-status">{{ row.availability_message }}</span>{% else %}<span class="status-badge">{{ source.get_approval_status_display|upper }}</span><span class="status-badge {% if source.is_active %}status-active{% else %}status-inactive{% endif %}">{% if source.is_active %}ACTIVE{% else %}INACTIVE{% endif %}</span>{% if row.has_running_run %}<span class="status-badge status-running">RUNNING</span>{% endif %}{% endif %}
                     </div>
                     <p class="source-url external-url">{% if source.source_jobs_url %}<a href="{{ source.source_jobs_url }}" title="{{ source.source_jobs_url }}" target="_blank" rel="noopener noreferrer">{{ source.source_jobs_url|cut:"https://"|cut:"http://" }}</a>{% else %}Not configured{% endif %}</p>

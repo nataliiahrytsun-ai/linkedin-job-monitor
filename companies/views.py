@@ -19,8 +19,18 @@ from companies.deletion import (
     delete_company,
     delete_company_source,
 )
-from companies.forms import CompanyForm, CompanySourceForm, validate_source_configuration
+from companies.forms import (
+    CompanyForm,
+    CompanySourceAutoForm,
+    CompanySourceForm,
+    validate_source_configuration,
+)
 from companies.models import Company, CompanySource
+from companies.source_detection import (
+    SourceAutoDetectionError,
+    detect_company_source_url,
+    source_configuration_identity,
+)
 from discovery.models import DiscoveryRun
 from discovery.presentation import (
     company_candidate_presentations,
@@ -65,7 +75,7 @@ def company_detail(
     request: HttpRequest,
     pk: int,
     *,
-    add_source_form: CompanySourceForm | None = None,
+    add_source_form: CompanySourceAutoForm | None = None,
     edit_source_form: CompanySourceForm | None = None,
     edit_source_pk: int | None = None,
     auto_open_source_dialog: str | None = None,
@@ -145,10 +155,7 @@ def company_detail(
         for source in company_sources
     )
     if add_source_form is None:
-        add_source_form = CompanySourceForm(
-            company=company,
-            auto_id="id_add_source_%s",
-        )
+        add_source_form = CompanySourceAutoForm(auto_id="id_add_source_%s")
     watch_after_run_id = _watch_after_run_id(request)
     watched_source_ids = _watch_source_ids(request, company_id=company.pk)
     running_run_ids = tuple(
@@ -345,17 +352,47 @@ def company_toggle_active(request: HttpRequest, pk: int) -> HttpResponse:
 
 
 def company_source_create(request: HttpRequest, company_pk: int) -> HttpResponse:
-    """Create one manually approved CompanySource using PRG."""
+    """Auto-detect and create one approved CompanySource from a public URL."""
     company = get_object_or_404(Company, pk=company_pk)
-    form = CompanySourceForm(request.POST or None, company=company)
+    form = CompanySourceAutoForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         try:
+            detected = detect_company_source_url(
+                str(form.cleaned_data["source_jobs_url"])
+            )
             with transaction.atomic():
-                form.save()
+                wanted_identity = source_configuration_identity(
+                    detected.source,
+                    detected.source_jobs_url,
+                )
+                existing_sources = CompanySource.objects.select_for_update().filter(
+                    company=company
+                )
+                for existing in existing_sources:
+                    try:
+                        existing_identity = source_configuration_identity(
+                            existing.source,
+                            existing.source_jobs_url or "",
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if existing_identity == wanted_identity:
+                        raise SourceAutoDetectionError(
+                            "This job source is already configured."
+                        )
+                CompanySource.objects.create(
+                    company=company,
+                    source=detected.source,
+                    source_jobs_url=detected.source_jobs_url,
+                    approval_status=CompanySource.ApprovalStatus.APPROVED,
+                    is_active=True,
+                )
+        except SourceAutoDetectionError as error:
+            form.add_error("source_jobs_url", str(error))
         except IntegrityError:
             form.add_error(None, "This job source could not be saved safely.")
         else:
-            messages.success(request, "Job source was added.")
+            messages.success(request, f"Job source added as {detected.label}.")
             return redirect(_manage_sources_url(company.pk))
     if request.method == "POST":
         return company_detail(
