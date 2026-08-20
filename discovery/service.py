@@ -17,6 +17,11 @@ from django.utils import timezone
 
 from companies.forms import validate_source_configuration
 from companies.models import Company, CompanySource
+from discovery.canonicalization import (
+    canonicalize_source_candidate_url,
+    logical_source_identity,
+    source_candidate_rank,
+)
 from discovery.classification import (
     classify_job_source,
     is_excluded_unknown_source_url,
@@ -601,13 +606,41 @@ def _persist_official_candidate(
 
 def _source_key(platform: str, url: str) -> tuple[str, str]:
     try:
-        return source_identity(platform, url)
-    except (KeyError, SourceError, UnsafeUrlError, ValueError, AttributeError):
-        try:
-            fallback_url = canonicalize_url(url).rstrip("/")
-        except UnsafeUrlError:
-            fallback_url = url.strip().rstrip("/")
-        return platform.strip().casefold(), fallback_url
+        return logical_source_identity(platform, url)
+    except UnsafeUrlError:
+        return platform.strip().casefold(), url.strip().rstrip("/")
+
+
+def _normalized_detection(detection: Detection) -> Detection:
+    canonical_url = canonicalize_source_candidate_url(detection.canonical_url)
+    return Detection(
+        detection.platform,
+        detection.confidence,
+        detection.evidence,
+        canonical_url,
+        detection.supported,
+        detection.reason,
+        detection.redirects,
+    )
+
+
+def _deduplicate_detections(detections: Sequence[Detection]) -> tuple[Detection, ...]:
+    winners: dict[tuple[str, str], Detection] = {}
+    for raw_detection in detections:
+        detection = _normalized_detection(raw_detection)
+        identity = _source_key(detection.platform, detection.canonical_url)
+        existing = winners.get(identity)
+        if existing is None or source_candidate_rank(
+            platform=detection.platform,
+            url=raw_detection.canonical_url,
+            supported=detection.supported,
+        ) < source_candidate_rank(
+            platform=existing.platform,
+            url=existing.canonical_url,
+            supported=existing.supported,
+        ):
+            winners[identity] = detection
+    return tuple(winners[key] for key in sorted(winners))
 
 
 def _candidate_by_source_key(
@@ -640,6 +673,7 @@ def _upsert_source_candidate(
     decision: str | None = None,
     reason: str = "",
 ) -> DiscoveryCandidate:
+    detection = _normalized_detection(detection)
     source_identity(detection.platform, detection.canonical_url)
     validate_source_configuration(
         source=detection.platform,
@@ -1011,7 +1045,7 @@ def _persist_search_inventory_candidates(
     official_host = (urlsplit(official_url).hostname or "").removeprefix("www.")
     for result in results:
         try:
-            canonical = canonicalize_url(result.url)
+            canonical = canonicalize_source_candidate_url(result.url)
         except UnsafeUrlError:
             continue
         if canonical in seen:
@@ -1052,7 +1086,12 @@ def _persist_search_inventory_candidates(
                 )
                 if not attribution.accepted:
                     continue
-                source_key = f"{detection.platform}:{detection.canonical_url}"
+                source_key = repr(
+                    logical_source_identity(
+                        detection.platform,
+                        detection.canonical_url,
+                    )
+                )
                 if source_key in seen_sources:
                     continue
                 seen_sources.add(source_key)
@@ -1435,7 +1474,8 @@ def _record_crawled_detections(
     *, run: DiscoveryRun, detections: Sequence[Detection]
 ) -> tuple[DiscoveryCandidate, ...]:
     candidates: list[DiscoveryCandidate] = []
-    for detection in detections:
+    for raw_detection in detections:
+        detection = _normalized_detection(raw_detection)
         if not detection.supported:
             job_source = classify_job_source(
                 detection.canonical_url,
@@ -1531,7 +1571,7 @@ def _unknown_careers_urls(
     official_hosts = _official_hosts(pages=pages, official_url=official_url)
 
     unknown: list[str] = []
-    seen_hosts: set[str] = set()
+    seen_identities: set[tuple[str, str]] = set()
     noted_audit: set[str] = set()
 
     def note(message: str) -> None:
@@ -1547,13 +1587,18 @@ def _unknown_careers_urls(
         first_hop_external: bool = False,
         page_identity: bool = False,
     ) -> None:
+        try:
+            url = canonicalize_source_candidate_url(url)
+        except UnsafeUrlError:
+            return
         parsed = urlsplit(url)
         host = (parsed.hostname or "").casefold()
+        identity = logical_source_identity("", url)
 
         if (
             not host
             or host in detected_hosts
-            or host in seen_hosts
+            or identity in seen_identities
             or is_excluded_unknown_source_url(url)
         ):
             return
@@ -1581,7 +1626,7 @@ def _unknown_careers_urls(
             return
 
         unknown.append(url)
-        seen_hosts.add(host)
+        seen_identities.add(identity)
 
     for page in pages:
         page_host = (urlsplit(page.url).hostname or "").casefold()
@@ -1607,8 +1652,8 @@ def _unknown_careers_urls(
 
         if page.requested_url in unknown:
             unknown.remove(page.requested_url)
-            seen_hosts = {
-                (urlsplit(candidate).hostname or "").casefold() for candidate in unknown
+            seen_identities = {
+                logical_source_identity("", candidate) for candidate in unknown
             }
             note(
                 "Preferred first-hop external destination over the official redirect URL: "
@@ -1995,9 +2040,7 @@ def run_discovery(
                 probe_source=crawl.crawl,
             )
             _mark_inventory_covered_checks(run, inventory_covered_platforms)
-        detections = tuple(
-            {(item.platform, item.canonical_url): item for item in detections}.values()
-        )
+        detections = _deduplicate_detections(detections)
         unknown_careers = _unknown_careers_urls(
             company_name=company.name,
             pages=pages,
@@ -2017,6 +2060,7 @@ def run_discovery(
                 )
                 official_record.save(update_fields=("evidence",))
         for career_url in unknown_careers:
+            career_url = canonicalize_source_candidate_url(career_url)
             DiscoveryCandidate.objects.update_or_create(
                 run=run,
                 kind=DiscoveryCandidate.Kind.CAREERS,
@@ -2189,7 +2233,7 @@ def confirm_candidate(*, candidate_id: int, company_id: int) -> DiscoveryCandida
         raise ValueError("Candidate is not eligible for confirmation")
     source_url = candidate.canonical_url
     if source_key == "generic":
-        source_url = canonicalize_url(candidate.canonical_url)
+        source_url = canonicalize_source_candidate_url(candidate.canonical_url)
         validate_public_url(source_url)
     else:
         validate_source_configuration(
@@ -2202,10 +2246,13 @@ def confirm_candidate(*, candidate_id: int, company_id: int) -> DiscoveryCandida
         source=source_key,
     ):
         try:
-            existing_source_url = canonicalize_url(source.source_jobs_url or "").rstrip("/")
+            existing_identity = logical_source_identity(
+                source.source,
+                source.source_jobs_url or "",
+            )
         except UnsafeUrlError:
             continue
-        if existing_source_url == source_url.rstrip("/"):
+        if existing_identity == logical_source_identity(source_key, source_url):
             existing = source
             break
     source = existing or CompanySource.objects.create(

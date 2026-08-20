@@ -3,22 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import groupby
 from urllib.parse import urlsplit
 
 from django.core.exceptions import ValidationError
 
 from companies.forms import validate_source_configuration
 from companies.models import CompanySource
+from discovery.canonicalization import (
+    canonicalize_source_candidate_url,
+    logical_source_identity,
+    source_candidate_rank,
+)
 from discovery.classification import (
     JobSourceClassification,
     classify_job_source,
     is_excluded_unknown_source_url,
     is_generic_fallback_eligible,
 )
-from discovery.detectors import source_identity
 from discovery.models import DiscoveryAdapterCheck, DiscoveryCandidate, DiscoveryRun
-from discovery.network import UnsafeUrlError, canonicalize_url
-from scraping.sources.base import SourceError
+from discovery.network import UnsafeUrlError
 from scraping.sources.registry import registered_source_keys
 
 
@@ -26,7 +30,7 @@ def _url_key(url: str | None) -> str:
     if not url:
         return ""
     try:
-        return canonicalize_url(url).rstrip("/")
+        return canonicalize_source_candidate_url(url)
     except UnsafeUrlError:
         return url.strip().rstrip("/")
 
@@ -34,15 +38,16 @@ def _url_key(url: str | None) -> str:
 def equivalent_source(candidate: DiscoveryCandidate) -> CompanySource | None:
     if candidate.company_source_id is not None:
         return candidate.company_source
-    candidate_key = _url_key(candidate.canonical_url)
+    candidate_platform = candidate.platform.strip().casefold()
+    if not candidate_platform and is_generic_fallback_eligible(candidate):
+        candidate_platform = "generic"
+    candidate_key = logical_source_identity(candidate_platform, candidate.canonical_url)
     return next(
         (
             source
-            for source in CompanySource.objects.filter(
-                company_id=candidate.run.company_id,
-                source=candidate.platform.strip().casefold(),
-            )
-            if _url_key(source.source_jobs_url) == candidate_key
+            for source in CompanySource.objects.filter(company_id=candidate.run.company_id)
+            if source.source_jobs_url
+            and logical_source_identity(source.source, source.source_jobs_url) == candidate_key
         ),
         None,
     )
@@ -273,13 +278,20 @@ def _origin_label(candidate: DiscoveryCandidate) -> str:
 
 
 def _canonical_identity(candidate: DiscoveryCandidate) -> str:
-    if not candidate.platform:
-        return _url_key(candidate.canonical_url)
-    try:
-        platform, tenant = source_identity(candidate.platform, candidate.canonical_url)
-    except (KeyError, SourceError, ValueError, AttributeError):
-        return f"{candidate.platform}:{_url_key(candidate.canonical_url)}"
-    return f"{platform}:{tenant}"
+    platform, identity = logical_source_identity(
+        candidate.platform,
+        candidate.canonical_url,
+    )
+    return f"{platform}:{identity}"
+
+
+def _candidate_rank(candidate: DiscoveryCandidate) -> tuple[object, ...]:
+    rank = source_candidate_rank(
+        platform=candidate.platform,
+        url=candidate.canonical_url,
+        supported=candidate.supported,
+    )
+    return (*rank[:-1], -candidate.confidence, rank[-1], candidate.pk)
 
 
 def _task_draft(candidate: DiscoveryCandidate, state: str) -> str:
@@ -381,7 +393,7 @@ def present_candidate(candidate: DiscoveryCandidate) -> CandidatePresentation:
         candidate.discovered_url
         if candidate.kind == DiscoveryCandidate.Kind.OFFICIAL_SITE
         and eligibility != DiscoveryCandidate.JobSourceEligibility.UNCERTAIN
-        else candidate.canonical_url
+        else _url_key(candidate.canonical_url)
     )
     display_name = _display_name(candidate, eligibility)
     return CandidatePresentation(
@@ -457,9 +469,17 @@ def company_candidate_presentations(
         .select_related("company_source", "run__company")
         .order_by("-run__started_at", "-run_id", "-pk")
     )
-    candidates = (
+    ordered_candidates = (
         *finished_candidates.exclude(run_id__in=incomplete_run_ids),
         *finished_candidates.filter(run_id__in=incomplete_run_ids),
+    )
+    candidates = tuple(
+        candidate
+        for _run_id, run_candidates in groupby(
+            ordered_candidates,
+            key=lambda candidate: candidate.run_id,
+        )
+        for candidate in sorted(run_candidates, key=_candidate_rank)
     )
     seen: set[str] = set()
     published: list[CandidatePresentation] = []
@@ -504,10 +524,7 @@ def discovery_coverage(run: DiscoveryRun | None) -> DiscoveryCoverage | None:
     )
     found_keys: set[tuple[str, str]] = set()
     for candidate in run.candidates.filter(kind=DiscoveryCandidate.Kind.SOURCE):
-        try:
-            found_keys.add(source_identity(candidate.platform, candidate.canonical_url))
-        except (KeyError, SourceError, ValueError, AttributeError):
-            found_keys.add((candidate.platform, _url_key(candidate.canonical_url)))
+        found_keys.add(logical_source_identity(candidate.platform, candidate.canonical_url))
     incomplete_statuses = {
         DiscoveryAdapterCheck.Status.NOT_CHECKED,
         DiscoveryAdapterCheck.Status.SEARCH_FAILED,

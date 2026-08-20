@@ -31,6 +31,10 @@ def service_module() -> Any:
     return importlib.import_module("discovery.service")
 
 
+def canonicalization_module() -> Any:
+    return importlib.import_module("discovery.canonicalization")
+
+
 @pytest.fixture(scope="module", autouse=True)
 def migrated_database(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     apps = importlib.import_module("django.apps").apps
@@ -189,6 +193,219 @@ def test_canonicalize_rejects_unsafe_url_shapes(url: str) -> None:
 
 def test_canonicalize_normalizes_host_path_and_fragment() -> None:
     assert canonicalize_url("HTTPS://Example.COM/jobs#open") == "https://example.com/jobs"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("HTTPS://Jobs.Example.COM/jobs/", "https://jobs.example.com/jobs"),
+        ("https://jobs.example.com/jobs?page=2", "https://jobs.example.com/jobs"),
+        ("https://jobs.example.com/jobs?page=3", "https://jobs.example.com/jobs"),
+        ("https://jobs.example.com/jobs?p=2", "https://jobs.example.com/jobs"),
+        ("https://jobs.example.com/jobs/page/2/", "https://jobs.example.com/jobs"),
+        ("https://jobs.example.com/page/2/", "https://jobs.example.com/"),
+        (
+            "https://jobs.example.com/jobs?utm_source=linkedin&fbclid=abc#openings",
+            "https://jobs.example.com/jobs",
+        ),
+        (
+            "https://jobs.example.com/jobs?department=engineering&page=2",
+            "https://jobs.example.com/jobs?department=engineering",
+        ),
+        ("https://example.com/portal?page=2", "https://example.com/portal?page=2"),
+    ],
+)
+def test_source_candidate_canonicalization_is_bounded(url: str, expected: str) -> None:
+    canonicalize = canonicalization_module().canonicalize_source_candidate_url
+    assert canonicalize(url) == expected
+
+
+def test_source_candidate_identity_preserves_real_distinctions() -> None:
+    identity = canonicalization_module().logical_source_identity
+
+    assert identity("", "https://example.com/careers/engineering") != identity(
+        "", "https://example.com/careers/design"
+    )
+    assert identity("generic", "https://example.com/careers") != identity(
+        "lever", "https://jobs.lever.co/example"
+    )
+    assert identity("lever", "https://jobs.lever.co/example") != identity(
+        "jazzhr", "https://example.applytojob.com/apply"
+    )
+
+
+@pytest.mark.parametrize(
+    "links",
+    [
+        (
+            "https://jobs.example.com/jobs?page=2",
+            "https://jobs.example.com/jobs?page=3",
+            "https://jobs.example.com/jobs",
+        ),
+        (
+            "https://jobs.example.com/jobs",
+            "https://jobs.example.com/jobs?page=3",
+            "https://jobs.example.com/jobs?page=2",
+        ),
+        (
+            "https://jobs.example.com/jobs?utm_source=linkedin",
+            "https://jobs.example.com/jobs",
+        ),
+        (
+            "https://jobs.example.com/jobs#openings",
+            "https://jobs.example.com/jobs",
+        ),
+        (
+            "https://jobs.example.com/jobs/page/2/",
+            "https://jobs.example.com/jobs/",
+        ),
+    ],
+)
+def test_discovery_collapses_listing_variants_independent_of_link_order(
+    links: tuple[str, ...],
+) -> None:
+    run_discovery = service_module().run_discovery
+    record = company("Example")
+    official = "https://example.com/"
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="example.com",
+        crawler=FakeCrawler(page(official, "Example", links)),
+    )
+
+    assert outcome.status == "unsupported"
+    candidates = model("discovery.DiscoveryCandidate").objects.filter(
+        run_id=outcome.run_id,
+        kind="careers",
+    )
+    assert list(candidates.values_list("canonical_url", flat=True)) == [
+        "https://jobs.example.com/jobs"
+    ]
+
+
+def test_discovery_preserves_distinct_careers_routes_on_one_domain() -> None:
+    run_discovery = service_module().run_discovery
+    record = company("Example")
+    official = "https://example.com/"
+    links = (
+        "https://example.com/careers/engineering",
+        "https://example.com/careers/design",
+    )
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="example.com",
+        crawler=FakeCrawler(page(official, "Example", links)),
+    )
+
+    assert set(
+        model("discovery.DiscoveryCandidate")
+        .objects.filter(run_id=outcome.run_id, kind="careers")
+        .values_list("canonical_url", flat=True)
+    ) == set(links)
+
+
+def test_codilime_pagination_url_is_not_a_separate_candidate() -> None:
+    run_discovery = service_module().run_discovery
+    record = company("Codilime")
+    official = "https://codilime.com/"
+    listing = "https://jobs.codilime.com/jobs"
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        supplied_domain="codilime.com",
+        crawler=FakeCrawler(
+            page(
+                official,
+                "Codilime",
+                (
+                    "https://codilime.com/careers/",
+                    f"{listing}?page=2",
+                    listing,
+                ),
+            )
+        ),
+    )
+
+    urls = list(
+        model("discovery.DiscoveryCandidate")
+        .objects.filter(run_id=outcome.run_id, kind="careers")
+        .values_list("canonical_url", flat=True)
+    )
+    assert urls.count(listing) == 1
+    assert f"{listing}?page=2" not in urls
+
+
+def test_connected_generic_equivalent_is_not_published_as_connectable() -> None:
+    presentation = importlib.import_module("discovery.presentation")
+    record = company("Connected Generic")
+    source = model("companies.CompanySource").objects.create(
+        company=record,
+        source="generic",
+        source_jobs_url="https://www.example.com/jobs",
+        approval_status="approved",
+        is_active=True,
+    )
+    run = model("discovery.DiscoveryRun").objects.create(
+        company=record,
+        query="Connected Generic",
+        status="unsupported",
+    )
+    candidate = model("discovery.DiscoveryCandidate").objects.create(
+        run=run,
+        kind="careers",
+        discovered_url="https://www.example.com/jobs?page=2",
+        canonical_url="https://www.example.com/jobs?page=2",
+        confidence=72,
+        job_source_confidence=85,
+        evidence=["Confirmed careers listing candidate"],
+        supported=False,
+        decision="unsupported",
+        job_source_eligibility="company_jobs_page",
+    )
+
+    assert presentation.equivalent_source(candidate) == source
+    assert presentation.company_candidate_presentations(company_id=record.pk) == ()
+
+
+def test_presentation_chooses_canonical_ats_winner_not_insertion_order() -> None:
+    presentation = importlib.import_module("discovery.presentation")
+    record = company("ATS Winner")
+    run = model("discovery.DiscoveryRun").objects.create(
+        company=record,
+        query="ATS Winner",
+        status="needs_review",
+    )
+    model("discovery.DiscoveryCandidate").objects.create(
+        run=run,
+        kind="source",
+        discovered_url="https://jobs.lever.co/ats-winner/jobs/123?utm_source=test",
+        canonical_url="https://jobs.lever.co/ats-winner/jobs/123?utm_source=test",
+        platform="lever",
+        confidence=90,
+        job_source_confidence=90,
+        evidence=["jobs.lever.co host"],
+        supported=True,
+        decision="selected",
+        job_source_eligibility="supported_ats",
+    )
+    canonical = model("discovery.DiscoveryCandidate").objects.create(
+        run=run,
+        kind="source",
+        discovered_url="https://jobs.lever.co/ats-winner",
+        canonical_url="https://jobs.lever.co/ats-winner",
+        platform="lever",
+        confidence=90,
+        job_source_confidence=90,
+        evidence=["jobs.lever.co host"],
+        supported=True,
+        decision="selected",
+        job_source_eligibility="supported_ats",
+    )
+
+    items = presentation.company_candidate_presentations(company_id=record.pk)
+    assert tuple(item.candidate for item in items) == (canonical,)
 
 
 class FakeTransport:
@@ -634,7 +851,9 @@ def test_official_site_403_uses_search_fallback_without_auto_connecting() -> Non
         run=run, kind="source", canonical_url=ats
     )
     linkedin_candidate = model("discovery.DiscoveryCandidate").objects.get(
-        run=run, kind="careers", canonical_url=linkedin
+        run=run,
+        kind="careers",
+        canonical_url="https://www.linkedin.com/jobs/search?keywords=acuity",
     )
     assert outcome.status == "needs_review"
     assert run.error_code == "TavilyRateLimitError"
@@ -1447,7 +1666,7 @@ def test_search_inventory_keeps_first_party_careers_and_unsupported_ats() -> Non
     assert outcome.status == "unsupported"
     assert model("discovery.DiscoveryCandidate").objects.filter(
         kind="careers",
-        canonical_url=careers,
+        canonical_url=careers.rstrip("/"),
     ).exists()
     assert model("discovery.DiscoveryCandidate").objects.filter(
         kind="source",
@@ -2322,7 +2541,7 @@ def test_credible_first_party_careers_page_remains_unknown_custom() -> None:
 
     candidate = model("discovery.DiscoveryCandidate").objects.get(kind="careers")
     assert outcome.status == "unsupported"
-    assert candidate.canonical_url == careers
+    assert candidate.canonical_url == careers.rstrip("/")
 
 
 def test_supported_source_auto_connect_still_works_for_first_hop_external_redirect() -> None:

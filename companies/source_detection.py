@@ -12,8 +12,9 @@ from django.core.exceptions import ValidationError
 from lxml import etree  # type: ignore[import-untyped]
 
 from companies.forms import source_label, validate_source_configuration
+from discovery.canonicalization import logical_source_identity
 from discovery.classification import classify_job_source, is_generic_fallback_eligible
-from discovery.detectors import Detection, detect_page, source_identity
+from discovery.detectors import Detection, detect_page
 from discovery.models import DiscoveryCandidate
 from discovery.network import (
     BoundedCrawler,
@@ -191,6 +192,4 @@ def detect_company_source_url(
 
 def source_configuration_identity(source: str, url: str) -> tuple[str, str]:
     """Return the same canonical identity used by source discovery deduplication."""
-    if source == "generic":
-        return source, canonicalize_url(url).rstrip("/")
-    return source_identity(source, url)
+    return logical_source_identity(source, url)

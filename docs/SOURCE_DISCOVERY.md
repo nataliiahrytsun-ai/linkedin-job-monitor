@@ -109,6 +109,15 @@ path identity is compatible with the company or official-domain identity. This
 preserves legitimate cases such as `jobs.smartrecruiters.com/CERN` while
 rejecting unrelated tenants linked from the same external careers page.
 
+Candidate URLs are sanitized before persistence, presentation, and connection.
+Fragments, explicit tracking parameters, trailing-slash variants, and bounded
+listing pagination forms such as `?page=2`, `?p=2`, and `/page/2/` collapse to
+one logical source. Registered and catalogued ATS candidates additionally use
+their platform/tenant identity. The deterministic winner prefers a supported,
+clean canonical listing route. Equivalence remains conservative: unknown query
+parameters, different careers subpaths or business units, different ATS tenants,
+and an unproven first-party landing page plus ATS source remain distinct.
+
 For bounded diagnostics, Discovery also records compact safe provenance notes on
 the selected official-site candidate when it observes a first-hop careers/source
 URL on the official site, prefers a first-hop external redirect destination over
