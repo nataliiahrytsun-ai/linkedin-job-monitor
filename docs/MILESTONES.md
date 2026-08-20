@@ -157,8 +157,11 @@ Found 6, Created 6, Failed 0, and Requests 7; the working database was not used.
 
 Production Source Discovery is implemented as a separate bounded orchestration
 layer with offline coverage and manual review. LinkedIn adapters, cross-source
-vacancy deduplication, hard source deletion, run cancellation, and final legacy
-cleanup are not implemented. Lever remains unchanged and selectable.
+vacancy deduplication, run cancellation, and final legacy cleanup are not
+implemented. User-owned connected sources, including discovery-connected Generic,
+support confirmed hard deletion with source-owned job cleanup and retained
+ScrapeRun history; internal adapters remain protected. Lever remains unchanged and
+selectable.
 The current architecture and boundaries are documented in
 [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 

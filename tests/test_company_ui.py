@@ -1034,6 +1034,9 @@ def test_update_jobs_submits_source_neutral_background_task_and_redirects() -> N
     javascript = Path("static/js/company_run_polling.js").read_text(encoding="utf-8")
     assert "maxSubmissionChecks = 24" in javascript
     assert "remainingSubmissionChecks <= 0" in javascript
+    assert 'cleanUrl.searchParams.delete("watch_after")' in javascript
+    assert 'cleanUrl.searchParams.delete("watch_sources")' in javascript
+    assert "window.location.replace" in javascript
 
 
 def test_update_jobs_view_does_not_inspect_configured_fixture_path(
@@ -1985,8 +1988,8 @@ def test_source_detail_is_company_scoped_and_displays_two_independent_sources() 
     assert dialog_html.count("APPROVED") == 2
     assert "INACTIVE" in dialog_html
     assert "Edit" in dialog_html
-    assert "Deactivate" in dialog_html
-    assert "Activate" in dialog_html
+    assert "Disconnect" in dialog_html
+    assert "Reconnect" in dialog_html
     assert reverse("companies:source_create", args=(first.pk,)) in dialog_html
 
 
@@ -2242,6 +2245,276 @@ def test_source_forms_have_csrf_protection_under_existing_anonymous_policy() -> 
 
     assert response.status_code == 403
     assert company.sources.count() == 0
+
+
+@pytest.mark.parametrize("is_active", [True, False])
+def test_approved_source_can_be_permanently_deleted(is_active: bool) -> None:
+    company = model("companies.Company").objects.create(name="Delete Source")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/delete-source",
+        approval_status="approved",
+        is_active=is_active,
+    )
+
+    response = client().post(
+        reverse("companies:source_delete", args=(company.pk, source.pk))
+    )
+
+    assert response.status_code == 302
+    assert response.url.endswith(
+        f"/companies/{company.pk}/?manage_sources=1&source_tab=connected"
+    )
+    assert not company.sources.filter(pk=source.pk).exists()
+
+
+def test_source_delete_preserves_runs_and_cleans_only_owned_jobs() -> None:
+    company = model("companies.Company").objects.create(name="Selective Cleanup")
+    deleted_source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/delete-owned",
+        approval_status="approved",
+        is_active=True,
+    )
+    kept_source = company.sources.create(
+        source="jazzhr",
+        source_jobs_url="https://selective.applytojob.com/apply",
+        approval_status="approved",
+        is_active=True,
+    )
+    owned_job = model("jobs.JobPosting").objects.create(
+        company=company,
+        company_source=deleted_source,
+        source="lever",
+        source_job_id="owned",
+        title="Home",
+        source_job_url="https://jobs.example.test/shared-role",
+        content_hash="a" * 64,
+        dedupe_key="b" * 64,
+    )
+    duplicate_from_other_source = model("jobs.JobPosting").objects.create(
+        company=company,
+        company_source=kept_source,
+        source="jazzhr",
+        source_job_id="shared",
+        title="Home",
+        source_job_url="https://jobs.example.test/shared-role",
+        content_hash="c" * 64,
+        dedupe_key="d" * 64,
+    )
+    run = create_scrape_run(
+        company,
+        company_source=deleted_source,
+        status="success",
+        started_at=datetime(2026, 8, 20, 10, tzinfo=UTC),
+        error_message="retained diagnostic",
+    )
+    run.jobs_found = 7
+    run.jobs_created = 3
+    run.jobs_updated = 2
+    run.requests_made = 4
+    run.save()
+
+    response = client().post(
+        reverse("companies:source_delete", args=(company.pk, deleted_source.pk)),
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert "permanently deleted" in response.content.decode()
+    assert not model("jobs.JobPosting").objects.filter(pk=owned_job.pk).exists()
+    assert model("jobs.JobPosting").objects.filter(
+        pk=duplicate_from_other_source.pk,
+        company_source=kept_source,
+    ).exists()
+    run.refresh_from_db()
+    assert run.company_source_id is None
+    assert run.company_id == company.pk
+    assert run.status == "success"
+    assert (run.jobs_found, run.jobs_created, run.jobs_updated, run.requests_made) == (
+        7,
+        3,
+        2,
+        4,
+    )
+    assert run.error_message == "retained diagnostic"
+    assert run.finished_at is not None
+
+
+def test_running_source_delete_is_blocked_without_partial_cleanup() -> None:
+    company = model("companies.Company").objects.create(name="Running Delete")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/running-delete",
+        approval_status="approved",
+        is_active=True,
+    )
+    posting = create_job(company, company_source=source, source="lever")
+    run = create_scrape_run(
+        company,
+        company_source=source,
+        status="running",
+        started_at=datetime(2026, 8, 20, 11, tzinfo=UTC),
+    )
+
+    response = client().post(
+        reverse("companies:source_delete", args=(company.pk, source.pk)),
+        follow=True,
+    )
+
+    assert "currently running" in response.content.decode()
+    assert company.sources.filter(pk=source.pk).exists()
+    assert model("jobs.JobPosting").objects.filter(pk=posting.pk).exists()
+    assert model("scrape_runs.ScrapeRun").objects.filter(pk=run.pk).exists()
+
+
+def test_source_delete_is_post_only_company_scoped_and_csrf_protected() -> None:
+    company = model("companies.Company").objects.create(name="Delete Scope")
+    other = model("companies.Company").objects.create(name="Other Scope")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/delete-scope",
+        approval_status="approved",
+        is_active=True,
+    )
+    delete_url = reverse("companies:source_delete", args=(company.pk, source.pk))
+
+    assert client().get(delete_url).status_code == 405
+    assert client().post(
+        reverse("companies:source_delete", args=(other.pk, source.pk))
+    ).status_code == 404
+    csrf_client = importlib.import_module("django.test").Client(
+        enforce_csrf_checks=True
+    )
+    assert csrf_client.post(delete_url).status_code == 403
+    assert company.sources.filter(pk=source.pk).exists()
+
+
+def test_connected_source_ui_shows_confirmed_delete_but_keeps_disconnect() -> None:
+    company = model("companies.Company").objects.create(name="Delete UI")
+    source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/delete-ui",
+        approval_status="approved",
+        is_active=True,
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,)) + "?manage_sources=1"
+    ).content.decode()
+
+    assert reverse("companies:source_delete", args=(company.pk, source.pk)) in html
+    assert reverse("companies:source_toggle_active", args=(company.pk, source.pk)) in html
+    assert "Delete" in html
+    assert "Permanently delete this job source?" in html
+    assert "Jobs belonging only to this source will be removed." in html
+    assert "Run history will be preserved." in html
+    assert "Disconnect" in html
+
+
+def test_internal_source_cannot_be_deleted_by_crafted_post() -> None:
+    company = model("companies.Company").objects.create(name="Internal Source")
+    source = company.sources.create(
+        source="fixture",
+        source_jobs_url="https://jobs.example.test/internal",
+        approval_status="approved",
+        is_active=False,
+    )
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,)) + "?manage_sources=1"
+    ).content.decode()
+
+    response = client().post(
+        reverse("companies:source_delete", args=(company.pk, source.pk)),
+        follow=True,
+    )
+
+    assert reverse("companies:source_delete", args=(company.pk, source.pk)) not in html
+    assert "internal source is not user-manageable" in response.content.decode()
+    assert company.sources.filter(pk=source.pk).exists()
+
+
+def test_discovery_connected_generic_source_shows_delete_but_not_manual_edit() -> None:
+    company = model("companies.Company").objects.create(name="techbar")
+    source = company.sources.create(
+        source="generic",
+        source_jobs_url="https://techbarsw.com/careers/",
+        approval_status="approved",
+        is_active=True,
+    )
+    run = discovery_run(company)
+    discovery_candidate(
+        run,
+        url=source.source_jobs_url,
+        platform="generic",
+        company_source=source,
+    )
+
+    html = client().get(
+        reverse("companies:detail", args=(company.pk,)) + "?manage_sources=1"
+    ).content.decode()
+    row_start = html.index(f'id="company-source-{source.pk}"')
+    row_html = html[row_start : html.index("</article>", row_start)]
+
+    assert reverse("companies:source_delete", args=(company.pk, source.pk)) in row_html
+    assert reverse("companies:source_toggle_active", args=(company.pk, source.pk)) in row_html
+    assert reverse("companies:source_edit", args=(company.pk, source.pk)) not in row_html
+    assert "Delete" in row_html
+    assert "Disconnect" in row_html
+
+
+def test_inactive_generic_source_can_be_permanently_deleted() -> None:
+    company = model("companies.Company").objects.create(name="Inactive Generic")
+    source = company.sources.create(
+        source="generic",
+        source_jobs_url="https://techbarsw.com/",
+        approval_status="approved",
+        is_active=False,
+    )
+
+    response = client().post(
+        reverse("companies:source_delete", args=(company.pk, source.pk)),
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    assert "permanently deleted" in response.content.decode()
+    assert not company.sources.filter(pk=source.pk).exists()
+
+
+def test_update_jobs_does_not_submit_a_deleted_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    company = model("companies.Company").objects.create(name="Delete Then Update")
+    deleted_source = company.sources.create(
+        source="lever",
+        source_jobs_url="https://jobs.lever.co/delete-then-update",
+        approval_status="approved",
+        is_active=True,
+    )
+    kept_source = company.sources.create(
+        source="jazzhr",
+        source_jobs_url="https://keep.applytojob.com/apply",
+        approval_status="approved",
+        is_active=True,
+    )
+    assert client().post(
+        reverse("companies:source_delete", args=(company.pk, deleted_source.pk))
+    ).status_code == 302
+    sentinel = object()
+    monkeypatch.setattr(
+        "scraping.background.run_source_pipeline",
+        lambda **_kwargs: sentinel,
+    )
+
+    background = importlib.import_module("scraping.background")
+    with background.ControlledBackgroundExecutor() as executor:
+        submission = executor.submit_company(company=company)
+        for handle in submission.submitted:
+            assert handle.future.result(timeout=5) is sentinel
+
+    assert submission.submitted_source_ids == (kept_source.pk,)
+    assert deleted_source.pk not in submission.submitted_source_ids
 
 
 def test_toggle_requires_post_and_changes_only_active_state_and_timestamp() -> None:

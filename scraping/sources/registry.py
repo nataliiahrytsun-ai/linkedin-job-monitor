@@ -38,6 +38,7 @@ _USER_VISIBLE_SOURCE_KEYS = frozenset(
 _USER_SELECTABLE_SOURCE_KEYS = frozenset(
     {"darwinbox", "dreamjobs", "jazzhr", "lever", "zoho_recruit"}
 )
+_USER_DELETABLE_SOURCE_KEYS = _USER_SELECTABLE_SOURCE_KEYS | {"generic"}
 _EXECUTION_BLOCKED_SOURCE_KEYS: frozenset[str] = frozenset()
 _SOURCE_UNAVAILABILITY_MESSAGES: dict[str, str] = {
     "linkedin": (
@@ -58,6 +59,19 @@ def user_selectable_source_keys() -> tuple[str, ...]:
         source_key
         for source_key in registered_source_keys()
         if source_key in _USER_SELECTABLE_SOURCE_KEYS
+    )
+
+
+def user_deletable_source_keys() -> tuple[str, ...]:
+    """Return connected sources users may permanently remove.
+
+    Generic is discovery-managed rather than manually selectable, but remains
+    user-owned after connection. Internal adapters such as fixture stay excluded.
+    """
+    return tuple(
+        source_key
+        for source_key in registered_source_keys()
+        if source_key in _USER_DELETABLE_SOURCE_KEYS
     )
 
 

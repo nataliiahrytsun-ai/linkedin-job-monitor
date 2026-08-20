@@ -159,6 +159,19 @@
                           </button>
                         </form>
                       {% endif %}
+                      {% if row.is_deletable %}
+                        <form method="post" action="{% url 'companies:source_delete' company.pk source.pk %}">
+                          {% csrf_token %}
+                          <button
+                            class="button button-danger button-compact"
+                            type="submit"
+                            {% if row.has_running_run %}disabled{% endif %}
+                            onclick="return confirm('Permanently delete this job source? Jobs belonging only to this source will be removed. Run history will be preserved.');"
+                          >
+                            Delete
+                          </button>
+                        </form>
+                      {% endif %}
                     </div>
                   </div>
                   {% if row.is_manageable %}

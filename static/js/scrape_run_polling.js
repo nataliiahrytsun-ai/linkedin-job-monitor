@@ -10,11 +10,11 @@
 
   const runIds = JSON.parse(idsElement.textContent);
   const initialLatestRun = JSON.parse(latestElement.textContent);
-if (!Array.isArray(runIds) || runIds.length === 0) {
-  return;
-}
+  if (!Array.isArray(runIds) || runIds.length === 0) {
+    return;
+  }
 
-const intervalMs = Number.parseInt(pollingRoot.dataset.intervalMs || "5000", 10);
+  const intervalMs = Number.parseInt(pollingRoot.dataset.intervalMs || "5000", 10);
   const statusUrl = new URL(pollingRoot.dataset.statusUrl, window.location.origin);
   statusUrl.searchParams.set("ids", runIds.join(","));
   const initialRunningIds = new Set(runIds);

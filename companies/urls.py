@@ -25,4 +25,9 @@ urlpatterns = [
         views.company_source_toggle_active,
         name="source_toggle_active",
     ),
+    path(
+        "<int:company_pk>/sources/<int:source_pk>/delete/",
+        views.company_source_delete,
+        name="source_delete",
+    ),
 ]

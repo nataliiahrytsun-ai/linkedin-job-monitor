@@ -23,6 +23,7 @@ from scraping.sources.registry import (
     get_source_adapter,
     registered_source_keys,
     source_unavailability_message,
+    user_deletable_source_keys,
     user_selectable_source_keys,
     user_visible_source_keys,
 )
@@ -181,6 +182,9 @@ def test_registry_keeps_generic_hidden_but_registered_for_explicit_source() -> N
     assert "generic" in executable_source_keys()
     assert "generic" not in user_visible_source_keys()
     assert "generic" not in user_selectable_source_keys()
+    assert "generic" in user_deletable_source_keys()
+    assert "fixture" not in user_deletable_source_keys()
+    assert "zoho_recruit" in user_deletable_source_keys()
 
 
 def test_registry_keeps_zoho_recruit_registered_selectable_and_executable() -> None:

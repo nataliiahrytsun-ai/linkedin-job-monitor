@@ -274,6 +274,33 @@ def test_false_positive_navigation_page_is_rejected() -> None:
     assert metrics["recall"] == 1.0
 
 
+def test_careers_slug_jobs_without_numeric_ids_are_preserved() -> None:
+    slugs_and_titles = (
+        ("senior-python-developer", "Senior Python Developer"),
+        ("lead-data-engineer", "Lead Data Engineer"),
+        ("business-analysis-specialist", "Business Analysis Specialist"),
+        ("quality-assurance-engineer", "Quality Assurance Engineer"),
+        ("devops-cloud-engineer", "DevOps Cloud Engineer"),
+        ("mobile-application-developer", "Mobile Application Developer"),
+        ("technical-project-manager", "Technical Project Manager"),
+        ("user-experience-designer", "User Experience Designer"),
+    )
+    links = "".join(
+        f'<article class="job-card"><a href="/careers/{slug}/">{title}</a></article>'
+        for slug, title in slugs_and_titles
+    )
+
+    actual = extract_generic_candidates(
+        f"<html><body><main><h1>Open positions</h1>{links}</main></body></html>",
+        base_url="https://itexus.example/careers/",
+    )
+
+    assert len(actual) == 8
+    assert {candidate.anchor_text for candidate in actual} == {
+        title for _slug, title in slugs_and_titles
+    }
+
+
 def test_apply_links_are_not_treated_as_jobs() -> None:
     expected = {
         "https://www.example.com/job/123",

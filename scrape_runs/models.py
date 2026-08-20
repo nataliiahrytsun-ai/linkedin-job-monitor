@@ -27,7 +27,7 @@ class ScrapeRun(models.Model):
     )
     company_source = models.ForeignKey(
         "companies.CompanySource",
-        on_delete=models.PROTECT,
+        on_delete=models.SET_NULL,
         related_name="scrape_runs",
         null=True,
         blank=True,

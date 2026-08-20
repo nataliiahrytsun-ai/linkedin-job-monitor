@@ -1,15 +1,24 @@
 """Server-rendered company management views."""
 
+import logging
+
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Exists, OuterRef
+from django.db.models.deletion import ProtectedError
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods, require_POST
 
-from companies.deletion import CompanyDeletionBlockedError, delete_company
+from companies.deletion import (
+    CompanyDeletionBlockedError,
+    CompanySourceDeletionBlockedError,
+    CompanySourceDeletionError,
+    delete_company,
+    delete_company_source,
+)
 from companies.forms import CompanyForm, CompanySourceForm, validate_source_configuration
 from companies.models import Company, CompanySource
 from discovery.models import DiscoveryRun
@@ -32,8 +41,11 @@ from scraping.sources.registry import (
     executable_source_keys,
     normalize_source_key,
     source_unavailability_message,
+    user_deletable_source_keys,
     user_selectable_source_keys,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _manage_sources_url(company_pk: int) -> str:
@@ -98,6 +110,7 @@ def company_detail(
     if auto_open_source_dialog is None and request.GET.get("manage_sources") == "1":
         auto_open_source_dialog = "job-sources-dialog"
     selectable_sources = set(user_selectable_source_keys())
+    deletable_sources = set(user_deletable_source_keys())
     executable_sources = set(executable_source_keys())
     source_rows = []
     for source in company_sources:
@@ -119,6 +132,8 @@ def company_detail(
                 == f"edit-source-dialog-{source.pk}",
                 "is_manageable": normalize_source_key(source.source)
                 in selectable_sources,
+                "is_deletable": normalize_source_key(source.source)
+                in deletable_sources,
                 "availability_message": source_unavailability_message(source.source),
                 "has_running_run": source.has_running_run,
             }
@@ -413,7 +428,7 @@ def company_source_toggle_active(
     """Safely activate or deactivate one source scoped to its Company."""
     company = get_object_or_404(Company, pk=company_pk)
     source = get_object_or_404(CompanySource, pk=source_pk, company=company)
-    manageable_source_keys = set(user_selectable_source_keys()) | {"generic"}
+    manageable_source_keys = set(user_deletable_source_keys())
 
     if normalize_source_key(source.source) not in manageable_source_keys:
         messages.error(request, "This internal source is not user-manageable.")
@@ -443,6 +458,44 @@ def company_source_toggle_active(
     source.is_active = True
     source.save(update_fields=("is_active", "updated_at"))
     messages.success(request, "Job source was activated.")
+    return redirect(_manage_sources_url(company.pk))
+
+
+@require_POST
+def company_source_delete(
+    request: HttpRequest,
+    company_pk: int,
+    source_pk: int,
+) -> HttpResponse:
+    """Permanently remove one user-managed source and its exclusively owned jobs."""
+    company = get_object_or_404(Company, pk=company_pk)
+    try:
+        result = delete_company_source(
+            company_id=company.pk,
+            company_source_id=source_pk,
+        )
+    except CompanySource.DoesNotExist as error:
+        raise Http404("Company source does not exist") from error
+    except CompanySourceDeletionBlockedError:
+        messages.error(
+            request,
+            "This source is currently running. Wait until it finishes.",
+        )
+    except CompanySourceDeletionError as error:
+        messages.error(request, str(error))
+    except (IntegrityError, ProtectedError, ValidationError):
+        logger.exception(
+            "CompanySource %s for Company %s could not be deleted safely.",
+            source_pk,
+            company.pk,
+        )
+        messages.error(request, "This job source could not be deleted safely.")
+    else:
+        messages.success(
+            request,
+            f"Job source was permanently deleted. Removed {result.jobs_deleted} "
+            f"source-owned job(s); preserved {result.runs_preserved} run(s).",
+        )
     return redirect(_manage_sources_url(company.pk))
 
 

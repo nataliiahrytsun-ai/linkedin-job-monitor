@@ -239,7 +239,11 @@ class ScrapeRunHistoryTests(TestCase):  # type: ignore[misc]
         assert 'data-interval-ms="5000"' in html
         assert 'id="running-run-ids"' in html
         assert 'id="latest-run-state"' in html
-        assert "runIds.length === 0" not in javascript
+        assert "runIds.length === 0" in javascript
+        assert 'statusUrl.searchParams.set("ids", runIds.join(","))' in javascript
+        assert javascript.index("runIds.length === 0") < javascript.index(
+            'statusUrl.searchParams.set("ids", runIds.join(","))'
+        )
         assert "document.hidden" in javascript
         assert "latestSignature(payload.latest_run)" in javascript
 

@@ -129,6 +129,23 @@ _UNSUITABLE_TITLE_LABELS = frozenset(
         "view role",
     }
 )
+_CAREER_CATEGORY_LABELS = frozenset(
+    {
+        "business",
+        "design",
+        "engineering",
+        "early careers",
+        "graduates",
+        "internships",
+        "internships and early careers",
+        "marketing",
+        "operations",
+        "product",
+        "sales",
+        "students",
+        "technology",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +215,16 @@ def _is_blocked_path(url: str) -> bool:
     return _contains_any(path, _BLOCKED_PATH_HINTS)
 
 
+def _is_navigation_anchor(anchor: HtmlElement) -> bool:
+    """Reject links owned by page navigation rather than vacancy listings."""
+    parent = anchor.getparent()
+    while parent is not None:
+        if getattr(parent, "tag", "").casefold() in {"aside", "footer", "header", "nav"}:
+            return True
+        parent = parent.getparent()
+    return False
+
+
 def _looks_like_job_link(url: str, anchor_text: str | None, nearby_text: str | None) -> bool:
     if _is_blocked_path(url):
         return False
@@ -255,6 +282,8 @@ def _context_text(anchor: HtmlElement) -> str | None:
 
 
 def _build_candidate_from_anchor(anchor: HtmlElement, *, base_url: str) -> GenericCandidate | None:
+    if _is_navigation_anchor(anchor):
+        return None
     href = getattr(anchor, "get", lambda *_args, **_kwargs: None)("href")
     if not href or not isinstance(href, str):
         return None
@@ -272,6 +301,8 @@ def _build_candidate_from_anchor(anchor: HtmlElement, *, base_url: str) -> Gener
     anchor_text = _clean_text(
         " ".join(part.strip() for part in anchor.itertext() if part and part.strip())
     )
+    if anchor_text is not None and anchor_text.casefold() in _CAREER_CATEGORY_LABELS:
+        return None
     nearby_text = _context_text(anchor)
     if not _looks_like_job_link(resolved, anchor_text, nearby_text):
         return None

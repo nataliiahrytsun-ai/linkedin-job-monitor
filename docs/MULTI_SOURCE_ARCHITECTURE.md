@@ -182,8 +182,8 @@ another platform. A different platform requires a new CompanySource.
 
 Activate and Deactivate are separate POST-only actions. An unapproved or
 unregistered source cannot be made executable. The conservative management
-policy also blocks unsafe editing or deactivation while that source has a
-RUNNING ScrapeRun. Hard deletion and run cancellation are not implemented.
+policy also blocks unsafe editing, deactivation, or deletion while that source
+has a RUNNING ScrapeRun. Run cancellation is not implemented.
 
 A Company may exist with no CompanySource. The UI exposes the configuration
 action, while **Update jobs** still fails closed when there is no executable
@@ -342,7 +342,7 @@ does not use Zoho Recruit REST API/OAuth or any authenticated transport. See
 - Greenhouse/Ashby adapters or `LinkedInSourceAdapter`;
 - cross-source vacancy matching/deduplication or `CanonicalVacancy`;
 - final removal of legacy Company fields or final non-null ownership cleanup;
-- hard deletion of CompanySource or run cancellation;
+- run cancellation;
 - a parent/group ScrapeRun.
 
 ## Acuity reference case
@@ -353,6 +353,21 @@ The configured JazzHR adapter targets the interim Ascent/Acuity page only and
 does not claim company-wide careers completeness. Source Discovery can retain
 and present multiple candidates for review. Cross-source canonical deduplication is not
 implemented.
+
+## Source removal
+
+Manage sources keeps Disconnect/Reconnect as the reversible monitoring control
+and exposes a separate confirmed hard-delete action for user-owned connected
+sources. This deletable set includes discovery-connected Generic sources as well
+as manually selectable ATS sources, while internal adapters such as Fixture stay
+excluded; Generic is not added to the manual Add source dropdown.
+Deletion is rejected while that source has a RUNNING ScrapeRun. Otherwise one
+atomic operation removes only JobPosting rows whose immutable `company_source`
+points at the selected source, then removes the CompanySource. ScrapeRun and
+Source Discovery history is retained with its `company_source` reference set to
+NULL. Jobs owned by every other source remain untouched; equivalent jobs from
+different sources remain independent because cross-source canonical matching is
+not part of the current model.
 
 ## Conceptual onboarding
 
