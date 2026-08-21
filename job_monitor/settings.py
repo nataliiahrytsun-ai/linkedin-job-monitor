@@ -136,7 +136,7 @@ SOURCE_DISCOVERY_SEARCH_RETRIES = _bounded_int_setting(
     "SOURCE_DISCOVERY_SEARCH_RETRIES", default=1, minimum=1, maximum=3
 )
 SOURCE_DISCOVERY_SEARCH_MAX_QUERIES = _bounded_int_setting(
-    "SOURCE_DISCOVERY_SEARCH_MAX_QUERIES", default=7, minimum=2, maximum=10
+    "SOURCE_DISCOVERY_SEARCH_MAX_QUERIES", default=10, minimum=2, maximum=10
 )
 SOURCE_DISCOVERY_SEARCH_MAX_RESULTS = _bounded_int_setting(
     "SOURCE_DISCOVERY_SEARCH_MAX_RESULTS", default=6, minimum=1, maximum=10

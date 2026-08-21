@@ -5,7 +5,7 @@ import os
 from collections.abc import Iterator
 from threading import Event
 from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import pytest
 
@@ -520,6 +520,301 @@ def test_crawler_prevents_link_cycles() -> None:
     assert transport.calls == [first, jobs]
 
 
+@pytest.mark.parametrize(
+    "anchors",
+    [
+        (
+            '<a href="/services/careers-advisory">Careers consulting</a>',
+            '<a href="https://jobs.lever.co/acme">Open roles</a>',
+        ),
+        (
+            '<a href="https://jobs.lever.co/acme">Open roles</a>',
+            '<a href="/services/careers-advisory">Careers consulting</a>',
+        ),
+    ],
+)
+def test_frontier_priority_prevents_marketing_link_starvation(
+    anchors: tuple[str, str],
+) -> None:
+    root = "https://acme.example/"
+    marketing = "https://acme.example/services/careers-advisory"
+    lever = "https://jobs.lever.co/acme"
+    transport = FakeTransport(
+        {
+            root: HttpResponse(
+                200,
+                root,
+                {"content-type": "text/html"},
+                "".join(anchors).encode(),
+            ),
+            marketing: HttpResponse(200, marketing, {"content-type": "text/html"}, b""),
+            lever: HttpResponse(200, lever, {"content-type": "text/html"}, b""),
+        }
+    )
+    crawler = BoundedCrawler(
+        transport=transport,
+        resolver=public_resolver,
+        max_requests=2,
+        frontier_priority=service_module()._crawl_frontier_priority,
+    )
+
+    pages = crawler.crawl((root,))
+
+    assert transport.calls == [root, lever]
+    expected_links = tuple(
+        marketing if "services" in anchor else lever for anchor in anchors
+    )
+    assert pages[0].links == expected_links
+
+
+def test_atos_like_chain_reaches_listing_within_unchanged_request_budget() -> None:
+    official = "https://atoss.example/"
+    marketing = "https://atoss.example/services/careers-advisory"
+    careers = "https://atoss.example/careers"
+    jobs_portal = "https://jobs.atoss.example/"
+    listing = "https://jobs.atoss.example/viewalljobs/"
+    transport = FakeTransport(
+        {
+            official: HttpResponse(
+                200,
+                official,
+                {"content-type": "text/html"},
+                (
+                    b'<a href="/services/careers-advisory">Careers consulting</a>'
+                    b'<a href="/careers">Careers</a>'
+                ),
+            ),
+            marketing: HttpResponse(200, marketing, {"content-type": "text/html"}, b""),
+            careers: HttpResponse(
+                302,
+                careers,
+                {"location": jobs_portal},
+                b"",
+            ),
+            jobs_portal: HttpResponse(
+                200,
+                jobs_portal,
+                {"content-type": "text/html"},
+                b'<a href="/viewalljobs/">View all jobs</a>',
+            ),
+            listing: HttpResponse(200, listing, {"content-type": "text/html"}, b""),
+        }
+    )
+    crawler = BoundedCrawler(
+        transport=transport,
+        resolver=public_resolver,
+        max_requests=4,
+        max_depth=2,
+        frontier_priority=service_module()._crawl_frontier_priority,
+    )
+
+    pages = crawler.crawl((official,))
+
+    assert transport.calls == [official, careers, jobs_portal, listing]
+    assert tuple(page.url for page in pages) == (official, jobs_portal, listing)
+
+
+@pytest.mark.parametrize(
+    "ats_links",
+    [
+        ("https://jobs.lever.co/acme", "https://acme.applytojob.com/apply"),
+        ("https://acme.applytojob.com/apply", "https://jobs.lever.co/acme"),
+    ],
+)
+def test_frontier_priority_preserves_different_ats_independent_of_link_order(
+    ats_links: tuple[str, str],
+) -> None:
+    root = "https://acme.example/"
+    body = "".join(f'<a href="{url}">Jobs</a>' for url in ats_links).encode()
+    transport = FakeTransport(
+        {
+            root: HttpResponse(200, root, {"content-type": "text/html"}, body),
+            **{
+                url: HttpResponse(200, url, {"content-type": "text/html"}, b"")
+                for url in ats_links
+            },
+        }
+    )
+    crawler = BoundedCrawler(
+        transport=transport,
+        resolver=public_resolver,
+        max_requests=3,
+        frontier_priority=service_module()._crawl_frontier_priority,
+    )
+
+    pages = crawler.crawl((root,))
+    detections = {
+        detection.platform for page_item in pages for detection in detect_page(page_item)
+    }
+
+    assert detections == {"jazzhr", "lever"}
+    assert pages[0].links == ats_links
+
+
+@pytest.mark.parametrize(
+    "ordered_links",
+    [
+        (
+            '<a href="https://marketing.invalid/careers">Careers consulting</a>',
+            '<a href="https://jobs.example.com/">View Jobs</a>',
+        ),
+        (
+            '<a href="https://jobs.example.com/">View Jobs</a>',
+            '<a href="https://marketing.invalid/careers">Careers consulting</a>',
+        ),
+    ],
+)
+def test_trusted_navigation_is_deterministic_and_blocks_arbitrary_external_links(
+    ordered_links: tuple[str, str],
+) -> None:
+    service = service_module()
+    official = "https://example.com/"
+    portal = "https://jobs.example.com/"
+    listing = "https://jobs.example.com/search"
+    transport = FakeTransport(
+        {
+            official: HttpResponse(
+                200,
+                official,
+                {"content-type": "text/html"},
+                "".join(ordered_links).encode(),
+            ),
+            portal: HttpResponse(
+                200,
+                portal,
+                {"content-type": "text/html"},
+                b'<form>Search jobs</form><a href="/search">Browse Jobs</a>',
+            ),
+            listing: HttpResponse(200, listing, {"content-type": "text/html"}, b""),
+        }
+    )
+    navigation = service._TrustedJobNavigation(("example.com",))
+    crawler = BoundedCrawler(
+        transport=transport,
+        resolver=public_resolver,
+        max_requests=3,
+        max_depth=2,
+        frontier_priority=service._crawl_frontier_priority,
+        frontier_admission=navigation.admit,
+    )
+
+    crawler.crawl((official,))
+
+    assert transport.calls == [official, portal, listing]
+
+
+def test_navigation_portal_stays_non_connectable_but_generic_listing_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module()
+    record = company("Atos")
+    official = "https://atos.net/"
+    careers = "https://atos.net/careers"
+    portal = "https://jobs.atos.net/"
+    listing = "https://jobs.atos.net/viewalljobs/"
+    first_job = "https://jobs.atos.net/jobs/data-engineer"
+    second_job = "https://jobs.atos.net/jobs/product-manager"
+    transport = FakeTransport(
+        {
+            official: HttpResponse(
+                200,
+                official,
+                {"content-type": "text/html"},
+                b'<title>Atos</title><a href="/careers">Careers</a>',
+            ),
+            careers: HttpResponse(302, careers, {"location": portal}, b""),
+            portal: HttpResponse(
+                200,
+                portal,
+                {"content-type": "text/html"},
+                b'<form>Search jobs</form><a href="/viewalljobs/">VIEW JOBS</a>',
+            ),
+            listing: HttpResponse(
+                200,
+                listing,
+                {"content-type": "text/html"},
+                (
+                    f'<main><a href="{first_job}">Data Engineer</a>'
+                    f'<a href="{second_job}">Product Manager</a></main>'
+                ).encode(),
+            ),
+        }
+    )
+
+    def crawler_factory(**kwargs: Any) -> Any:
+        kwargs["transport"] = transport
+        kwargs["resolver"] = public_resolver
+        return BoundedCrawler(**kwargs)
+
+    monkeypatch.setattr(service, "BoundedCrawler", crawler_factory)
+    monkeypatch.setattr(
+        "discovery.classification.validate_public_url",
+        lambda url: (url, ("93.184.216.34",)),
+    )
+    outcome = service.run_discovery(company_id=record.pk, supplied_domain="atos.net")
+    run = model("discovery.DiscoveryRun").objects.get(pk=outcome.run_id)
+    portal_candidate = run.candidates.filter(kind="careers", canonical_url=portal).first()
+    listing_candidate = run.candidates.get(kind="careers")
+
+    assert transport.calls == [official, careers, portal, listing]
+    assert portal_candidate is None
+    assert listing_candidate.canonical_url.rstrip("/") == listing.rstrip("/")
+    assert listing_candidate.evidence == [
+        "Confirmed careers listing candidate with individual job links"
+    ]
+    assert is_generic_fallback_eligible(listing_candidate) is True
+    assert not record.sources.exists()
+
+
+def test_supported_ats_navigation_keeps_multiple_sources_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = service_module()
+    record = company("Example")
+    official = "https://example.com/"
+    careers = "https://example.com/careers"
+    lever = "https://jobs.lever.co/example"
+    jazzhr = "https://example.applytojob.com/apply"
+    transport = FakeTransport(
+        {
+            official: HttpResponse(
+                200,
+                official,
+                {"content-type": "text/html"},
+                b'<title>Example</title><a href="/careers">Join Us</a>',
+            ),
+            careers: HttpResponse(
+                200,
+                careers,
+                {"content-type": "text/html"},
+                (
+                    f'<a href="{lever}">Explore Jobs</a>'
+                    f'<a href="{jazzhr}">Job Opportunities</a>'
+                ).encode(),
+            ),
+            lever: HttpResponse(200, lever, {"content-type": "text/html"}, b""),
+            jazzhr: HttpResponse(200, jazzhr, {"content-type": "text/html"}, b""),
+        }
+    )
+
+    def crawler_factory(**kwargs: Any) -> Any:
+        kwargs["transport"] = transport
+        kwargs["resolver"] = public_resolver
+        return BoundedCrawler(**kwargs)
+
+    monkeypatch.setattr(service, "BoundedCrawler", crawler_factory)
+    outcome = service.run_discovery(company_id=record.pk, supplied_domain="example.com")
+    run = model("discovery.DiscoveryRun").objects.get(pk=outcome.run_id)
+
+    assert set(run.candidates.filter(kind="source").values_list("platform", flat=True)) == {
+        "jazzhr",
+        "lever",
+    }
+    assert transport.calls[:2] == [official, careers]
+    assert set(transport.calls[2:]) == {jazzhr, lever}
+    assert not record.sources.exists()
+
+
 def test_scrapling_session_stays_active_for_entire_bounded_crawl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -934,7 +1229,11 @@ def test_generic_fallback_eligibility_gate_for_known_classifications(
         eligibility=eligibility,
         confidence=90 if eligibility != "company_jobs_page" else 72,
         evidence=(
-            ("careers page", "jobs", "open roles")
+            (
+                "Confirmed careers listing candidate with individual job links",
+                "jobs",
+                "open roles",
+            )
             if eligibility != "possible_job_source"
             else ("careers", "openings")
         ),
@@ -1024,15 +1323,18 @@ def test_possible_job_source_needs_high_confidence_and_strong_signals() -> None:
     assert is_generic_fallback_eligible(weak) is False
 
 
-def test_company_jobs_pages_stay_eligible_when_public_and_not_rejected() -> None:
+def test_company_jobs_pages_require_confirmed_listing_evidence() -> None:
     candidate = _make_candidate(
         "https://example.com/careers",
         eligibility="company_jobs_page",
         confidence=72,
-        evidence=("careers", "jobs", "job openings"),
+        evidence=("Confirmed careers listing candidate", "individual job links"),
         reason="Public company jobs page",
     )
     assert is_generic_fallback_eligible(candidate) is True
+
+    candidate.evidence = ["Search result mentioned careers, jobs, and job openings"]
+    assert is_generic_fallback_eligible(candidate) is False
 
 
 def test_403_fallback_preserves_existing_acuity_sources() -> None:
@@ -1215,6 +1517,128 @@ def test_ambiguous_official_domains_require_review() -> None:
     assert run.official_website_url is None
     assert not model("companies.CompanySource").objects.exists()
     assert model("discovery.DiscoveryCandidate").objects.filter(kind="official_site").count() == 2
+
+
+@pytest.mark.parametrize(
+    "ordered_domains",
+    [
+        ("acme.com", "acme.org", "acme.de", "acme.at"),
+        ("acme.de", "acme.com", "acme.at", "acme.org"),
+    ],
+)
+def test_official_ranking_selects_same_top_three_independent_of_provider_order(
+    ordered_domains: tuple[str, ...],
+) -> None:
+    service = service_module()
+    record = company("Acme")
+    correct = "https://acme.at/"
+
+    class RankedSearch:
+        def search(self, query: str, *, limit: int = 5) -> tuple[Any, ...]:
+            del limit
+            if query == '"Acme" official website':
+                return tuple(
+                    SearchResult(
+                        "Acme" if domain == "acme.at" else "Acme careers and services",
+                        f"https://{domain}/",
+                        score=0.5,
+                    )
+                    for domain in ordered_domains
+                )
+            return ()
+
+    crawler = FakeCrawler(page(correct, "Acme"))
+    service.run_discovery(
+        company_id=record.pk,
+        search_provider=RankedSearch(),
+        crawler=crawler,
+    )
+
+    assert crawler.seeds == (
+        "https://acme.at/",
+        "https://acme.com/",
+        "https://acme.de/",
+    )
+
+
+def test_official_candidate_rank_uses_provenance_title_then_late_provider_score() -> None:
+    service = service_module()
+    official_query = '"Acme" official website'
+    careers_query = '"Acme" careers jobs vacancies recruiting'
+    candidate_type = service.OfficialSiteCandidate
+    exact = candidate_type(
+        "https://acme.com/",
+        "https://acme.com/",
+        "Acme",
+        85,
+        True,
+        (),
+        "",
+        (careers_query,),
+        0.1,
+    )
+    weaker_official = candidate_type(
+        "https://acme.org/",
+        "https://acme.org/",
+        "Welcome to Acme Group",
+        85,
+        True,
+        (),
+        "",
+        (official_query,),
+        0.9,
+    )
+    same_title_official = candidate_type(
+        "https://acme.net/",
+        "https://acme.net/",
+        "Acme",
+        85,
+        True,
+        (),
+        "",
+        (official_query,),
+        0.2,
+    )
+    higher_score = candidate_type(
+        "https://acme.co/",
+        "https://acme.co/",
+        "Acme",
+        85,
+        True,
+        (),
+        "",
+        (official_query,),
+        0.8,
+    )
+
+    def rank(item: Any) -> tuple[object, ...]:
+        return cast(tuple[object, ...], service.official_candidate_rank("Acme", item))
+    assert rank(exact) < rank(weaker_official)
+    assert rank(same_title_official) < rank(exact)
+    assert rank(higher_score) < rank(same_title_official)
+
+
+def test_official_rank_does_not_change_rejection_or_blocking_semantics() -> None:
+    service = service_module()
+    legal_name = service._classify_official_candidate(
+        company_name="Acme GmbH",
+        url="https://acme.com/",
+        title="Acme GmbH",
+        manual=False,
+        search_score=1.0,
+    )
+    blocked = service._classify_official_candidate(
+        company_name="Acme",
+        url="https://www.linkedin.com/company/acme",
+        title="Acme",
+        manual=False,
+        search_score=1.0,
+    )
+
+    assert legal_name.accepted is False
+    assert legal_name.confidence == 40
+    assert blocked.accepted is False
+    assert blocked.confidence == 0
 
 
 def test_unsupported_careers_page_is_persisted_without_source() -> None:
@@ -1773,6 +2197,21 @@ def test_new_acuity_discovers_jazzhr_and_embedded_darwinbox_source() -> None:
                         jazzhr_url,
                         "Acuity Analytics jobs and careers.",
                     ),
+                    SearchResult(
+                        "Careers at Acuity Analytics",
+                        "https://www.acuityanalytics.com/working-here",
+                        "Learn about careers and jobs at Acuity Analytics.",
+                    ),
+                    SearchResult(
+                        "Contact Acuity Analytics",
+                        "https://www.acuityanalytics.com/contact-us",
+                        "Contact our careers and jobs team.",
+                    ),
+                    SearchResult(
+                        "Investment compliance",
+                        "https://www.acuityanalytics.com/services/investment-compliance",
+                        "Acuity Analytics careers, jobs, and investment compliance services.",
+                    ),
                 )
             if "Darwinbox" in query:
                 return (
@@ -1824,6 +2263,25 @@ def test_new_acuity_discovers_jazzhr_and_embedded_darwinbox_source() -> None:
         "darwinbox",
         "jazzhr",
     }
+    assert not record.sources.exists()
+    noisy_candidates = first_run.candidates.filter(
+        canonical_url__in=(
+            "https://www.acuityanalytics.com/working-here",
+            "https://www.acuityanalytics.com/contact-us",
+            "https://www.acuityanalytics.com/services/investment-compliance",
+        )
+    )
+    assert noisy_candidates.count() == 3
+    assert all(not is_generic_fallback_eligible(candidate) for candidate in noisy_candidates)
+    result = importlib.import_module("discovery.presentation").discovery_result_presentation(
+        first_run,
+        inventory,
+        importlib.import_module("discovery.presentation").discovery_coverage(first_run),
+    )
+    assert result is not None
+    assert not {
+        candidate.canonical_url for candidate in noisy_candidates
+    } & {item.candidate.canonical_url for item in result.additional_items}
 
     confirm_candidate(
         candidate_id=first_candidates["jazzhr"].pk,
@@ -1854,6 +2312,118 @@ def test_new_acuity_discovers_jazzhr_and_embedded_darwinbox_source() -> None:
             "platform", flat=True
         )
     ) == {"darwinbox", "jazzhr"}
+
+
+def test_acuity_darwinbox_and_jazzhr_have_distinct_canonical_identities() -> None:
+    logical_source_identity = canonicalization_module().logical_source_identity
+
+    assert logical_source_identity(
+        "darwinbox",
+        "https://acuitykp.darwinbox.com/ms/candidate/careers",
+    ) != logical_source_identity(
+        "jazzhr",
+        "https://ascent.applytojob.com/apply",
+    )
+
+
+def test_generic_listing_confirmation_requires_deterministic_job_links() -> None:
+    has_links = service_module()._has_deterministic_job_links
+    working_here = "https://www.acuityanalytics.com/working-here"
+
+    assert has_links(
+        working_here,
+        pages=(page(working_here, "<h1>Working here</h1><p>Meet our teams.</p>"),),
+    ) is False
+    assert has_links(
+        working_here,
+        pages=(
+            page(
+                working_here,
+                (
+                    '<h1>Open roles</h1><a href="/jobs/senior-analyst">'
+                    "Senior Analyst</a>"
+                ),
+            ),
+        ),
+    ) is True
+
+
+def test_abylon_prefers_exact_official_domain_and_generic_listing_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_discovery = service_module().run_discovery
+    presentation = importlib.import_module("discovery.presentation")
+    record = company("abylon")
+    official = "https://abylon.io/"
+    wrong_domain = "https://www.abylonsoft.com/"
+    listing = "https://abylon.io/career"
+    detail = "https://abylon.io/career/senior-data-analytics-consultant-london"
+    second_detail = "https://abylon.io/career/data-platform-engineer"
+
+    class AbylonSearch:
+        def search(self, query: str, *, limit: int = 5) -> tuple[Any, ...]:
+            del limit
+            if query == '"abylon" official website':
+                return (
+                    SearchResult(
+                        "abylon security software",
+                        wrong_domain,
+                        "abylonsoft security software suites",
+                    ),
+                    SearchResult("abylon", official, "abylon data consultancy"),
+                )
+            if query == '"abylon" careers jobs vacancies recruiting':
+                return (
+                    SearchResult(
+                        "Senior Data Analytics Consultant — abylon",
+                        detail,
+                        "Join abylon in London",
+                    ),
+                )
+            return ()
+
+    outcome = run_discovery(
+        company_id=record.pk,
+        search_provider=AbylonSearch(),
+        crawler=FakeCrawler(
+            page(official, "<title>abylon</title>", (f"{listing}/",)),
+            page(
+                f"{listing}/",
+                (
+                    f'<a href="{detail}">Senior Data Analytics Consultant</a>'
+                    f'<a href="{second_detail}">Data Platform Engineer</a>'
+                ),
+                (detail, second_detail),
+                depth=1,
+                requested_url=f"{listing}/",
+            ),
+        ),
+    )
+    run = model("discovery.DiscoveryRun").objects.get(pk=outcome.run_id)
+    candidate = run.candidates.get(kind="careers", canonical_url=listing)
+    monkeypatch.setattr(
+        "discovery.classification.validate_public_url",
+        lambda url: (url, ("93.184.216.34",)),
+    )
+    items = presentation.company_candidate_presentations(company_id=record.pk)
+    item = next(item for item in items if item.candidate.pk == candidate.pk)
+
+    assert outcome.status == "unsupported"
+    assert run.official_website_url == official
+    assert run.careers_url == listing
+    assert candidate.evidence == [
+        "Confirmed careers listing candidate with individual job links"
+    ]
+    assert item.state == "generic_available"
+    assert item.can_connect is True
+    assert item.draft_action == ""
+    assert not run.candidates.filter(kind="careers", canonical_url=detail).exists()
+    wrong_domain_candidates = run.candidates.filter(
+        kind="careers", canonical_url__startswith=wrong_domain
+    )
+    assert wrong_domain_candidates.exists()
+    assert set(wrong_domain_candidates.values_list("decision", flat=True)) == {"rejected"}
+    assert not record.sources.exists()
 
 
 def test_darwinbox_partial_url_in_search_evidence_uses_registered_careers_route() -> None:
@@ -2010,6 +2580,48 @@ def test_query_limit_records_partial_adapter_coverage(
     assert run.adapter_checks.filter(status="not_checked").count() == 4
 
 
+def test_adapter_timeout_does_not_prevent_later_jazzhr_discovery() -> None:
+    service = service_module()
+    record = company("Acuity Analytics")
+    run = model("discovery.DiscoveryRun").objects.create(
+        company=record,
+        query=record.name,
+        status="running",
+        official_website_url="https://www.acuityanalytics.com/",
+    )
+    service._seed_source_inventory(run)
+    queries: list[str] = []
+    jazzhr_url = "https://ascent.applytojob.com/apply"
+
+    def search_once(query: str) -> tuple[Any, ...]:
+        queries.append(query)
+        if "DreamJobs" in query:
+            raise search_module.TavilyTimeoutError("Tavily search timed out")
+        if "JazzHR" in query:
+            return (
+                SearchResult(
+                    "Acuity Analytics jobs",
+                    jazzhr_url,
+                    "Careers at Acuity Analytics",
+                ),
+            )
+        return ()
+
+    service._adapter_sweep(
+        run=run,
+        general_results=(),
+        search_once=search_once,
+        used_query_count=lambda: 5 + len(queries),
+    )
+
+    checks = dict(run.adapter_checks.values_list("platform", "status"))
+    jazzhr = run.candidates.get(platform="jazzhr")
+    assert checks["dreamjobs"] == "search_failed"
+    assert checks["jazzhr"] == "found"
+    assert jazzhr.canonical_url == jazzhr_url
+    assert not record.sources.exists()
+
+
 def test_manual_domain_fallback_does_not_call_search() -> None:
     run_discovery = service_module().run_discovery
 
@@ -2085,7 +2697,7 @@ def test_manual_confirmation_connects_eligible_generic_candidate() -> None:
         platform="",
         confidence=72,
         job_source_confidence=85,
-        evidence=["careers", "open roles", "jobs"],
+        evidence=["Confirmed careers listing candidate", "individual job links"],
         supported=False,
         decision="unsupported",
         job_source_eligibility="company_jobs_page",
@@ -2261,7 +2873,7 @@ def test_real_scrapling_background_path_materializes_responses_inside_session(
     assert (run.status, run.error_message) == ("connected", "")
     assert run.careers_url == jobs
     assert (source.source, source.source_jobs_url) == ("dreamjobs", jobs)
-    assert request_calls.count(search_module.TavilySearchProvider.endpoint) == 7
+    assert request_calls.count(search_module.TavilySearchProvider.endpoint) == 9
     assert [url for url in request_calls if url != search_module.TavilySearchProvider.endpoint] == [
         official,
         careers_home,

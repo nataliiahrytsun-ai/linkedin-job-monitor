@@ -301,6 +301,83 @@ def test_careers_slug_jobs_without_numeric_ids_are_preserved() -> None:
     }
 
 
+def test_locale_sitemap_and_listing_navigation_links_are_not_jobs() -> None:
+    html = """
+    <html><body>
+      <div class="language-selector">
+        <a href="/alljobs?locale=en_US">English (United States)</a>
+        <a href="/alljobs?locale=fr_FR">Français (France)</a>
+      </div>
+      <div class="site-actions">
+        <a href="/viewalljobs/">Sitemap</a>
+        <a href="/careers">Visit careers page</a>
+        <a href="/jobs">View all jobs</a>
+        <a href="/search/">Search jobs</a>
+      </div>
+    </body></html>
+    """
+
+    assert extract_generic_candidates(html, base_url="https://www.example.com/alljobs") == ()
+
+
+def test_repeated_real_job_cards_remain_valid_without_numeric_ids() -> None:
+    html = """
+    <main class="job-results">
+      <article class="job-card">
+        <a href="/careers/senior-platform-engineer/">Senior Platform Engineer</a>
+      </article>
+      <article class="job-card">
+        <a href="/careers/cloud-security-specialist/">Cloud Security Specialist</a>
+      </article>
+    </main>
+    """
+
+    candidates = extract_generic_candidates(
+        html,
+        base_url="https://www.example.com/careers/",
+    )
+
+    assert {candidate.url for candidate in candidates} == {
+        "https://www.example.com/careers/senior-platform-engineer/",
+        "https://www.example.com/careers/cloud-security-specialist/",
+    }
+
+
+def test_category_links_are_excluded_while_real_job_rows_are_preserved() -> None:
+    html = """
+    <main>
+      <section id="category-list">
+        <h2>Search by category</h2>
+        <ul>
+          <li><a href="/browse/engineering-jobs/1001/">Engineering Jobs</a></li>
+          <li><a href="/browse/jobs-in-london/1002/">Jobs in London</a></li>
+        </ul>
+      </section>
+      <section class="job-results">
+        <article class="job-row">
+          <a href="/careers/senior-data-engineer/">Senior Data Engineer</a>
+        </article>
+        <article class="job-row">
+          <a href="/careers/cloud-platform-specialist/">Cloud Platform Specialist</a>
+        </article>
+      </section>
+    </main>
+    """
+
+    candidates = extract_generic_candidates(html, base_url="https://www.example.com/jobs/")
+
+    assert {(candidate.url, candidate.anchor_text) for candidate in candidates} == {
+        (
+            "https://www.example.com/careers/senior-data-engineer/",
+            "Senior Data Engineer",
+        ),
+        (
+            "https://www.example.com/careers/cloud-platform-specialist/",
+            "Cloud Platform Specialist",
+        ),
+    }
+
+
 def test_apply_links_are_not_treated_as_jobs() -> None:
     expected = {
         "https://www.example.com/job/123",
@@ -320,10 +397,9 @@ def test_apply_links_are_not_treated_as_jobs() -> None:
     assert metrics["recall"] == 1.0
 
 
-def test_duplicate_links_are_deduplicated_but_tracking_variants_remain_distinct() -> None:
+def test_duplicate_links_are_deduplicated_and_navigation_cta_is_rejected() -> None:
     expected = {
         "https://www.example.com/jobs/321",
-        "https://www.example.com/jobs/321?utm_source=nav",
         "https://www.example.com/jobs/456",
     }
     actual = {

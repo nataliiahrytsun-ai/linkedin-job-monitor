@@ -38,6 +38,35 @@ class CompanyStub:
     source_jobs_url: str | None = None
 
 
+class GenericPageResponse:
+    status = 200
+
+    def __init__(self, url: str, body: str) -> None:
+        self.url = url
+        self.body = body.encode()
+
+
+class GenericPageSession:
+    def __init__(self, pages: dict[str, str]) -> None:
+        self.pages = pages
+        self.calls: list[str] = []
+
+    def __enter__(self) -> GenericPageSession:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: object,
+        exc_value: object,
+        traceback: object,
+    ) -> Literal[False]:
+        return False
+
+    def get(self, url: str) -> GenericPageResponse:
+        self.calls.append(url)
+        return GenericPageResponse(url, self.pages[url])
+
+
 def test_source_batch_is_immutable_and_validates_request_count() -> None:
     batch = SourceBatch(records=({"source": "fixture"},), requests_made=0)
 
@@ -425,7 +454,28 @@ def test_generic_source_adapter_fails_closed_when_no_candidates_are_found() -> N
         adapter.fetch(company=CompanyStub(source="generic", source_jobs_url="https://example.com/careers"))
 
 
-def test_generic_source_adapter_fails_closed_on_pagination_signal() -> None:
+def test_generic_source_adapter_fails_closed_on_navigation_links_only() -> None:
+    first_url = "https://example.com/careers"
+    session = GenericPageSession(
+        {
+            first_url: (
+                "<header><a href='/careers'>Visit careers page</a></header>"
+                "<nav><a href='/alljobs?locale=en_US'>English (United States)</a></nav>"
+                "<footer><a href='/viewalljobs/'>Sitemap</a>"
+                "<a href='/jobs'>View all jobs</a></footer>"
+            )
+        }
+    )
+
+    with pytest.raises(SourceError, match="no public job-like candidates") as caught:
+        GenericSourceAdapter(
+            session_factory=lambda timeout_seconds: session,
+        ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+    assert caught.value.requests_made == 1
+
+
+def test_generic_source_adapter_fails_closed_when_pagination_exceeds_page_cap() -> None:
     class DummyResponse:
         status = 200
         body = (
@@ -451,9 +501,297 @@ def test_generic_source_adapter_fails_closed_on_pagination_signal() -> None:
             assert url == "https://example.com/careers"
             return DummyResponse()
 
-    adapter = GenericSourceAdapter(session_factory=lambda timeout_seconds: DummySession())
-    with pytest.raises(SourceError, match="pagination"):
+    adapter = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: DummySession(),
+        max_pages=1,
+    )
+    with pytest.raises(SourceError, match="page limit"):
         adapter.fetch(company=CompanyStub(source="generic", source_jobs_url="https://example.com/careers"))
+
+
+def test_generic_source_adapter_respects_request_cap() -> None:
+    first_url = "https://example.com/careers"
+    second_url = "https://example.com/careers?page=2"
+    session = GenericPageSession(
+        {
+            first_url: (
+                "<a href='/jobs/first-role'>First Role</a>"
+                f"<a rel='next' href='{second_url}'>Next</a>"
+            ),
+        }
+    )
+
+    with pytest.raises(SourceError, match="request limit") as caught:
+        GenericSourceAdapter(
+            session_factory=lambda timeout_seconds: session,
+            max_pages=2,
+            max_requests=1,
+        ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+    assert caught.value.requests_made == 1
+    assert session.calls == [first_url]
+
+
+@pytest.mark.parametrize(
+    ("next_href", "second_url"),
+    [
+        ("?page=2", "https://example.com/careers?page=2"),
+        ("/careers/page/2/", "https://example.com/careers/page/2/"),
+        ("?offset=50", "https://example.com/careers?offset=50"),
+        ("?startrow=50", "https://example.com/careers?startrow=50"),
+    ],
+)
+def test_generic_pagination_collects_supported_query_and_path_patterns(
+    next_href: str,
+    second_url: str,
+) -> None:
+    first_url = "https://example.com/careers"
+    session = GenericPageSession(
+        {
+            first_url: (
+                "<main><article class='job-card'><a href='/jobs/alpha-role'>"
+                "Alpha Engineer</a></article></main>"
+                f"<nav class='pagination'><a rel='next' href='{next_href}'>Next</a></nav>"
+            ),
+            second_url: (
+                "<main><article class='job-card'><a href='/jobs/beta-role'>"
+                "Beta Engineer</a></article></main>"
+            ),
+        }
+    )
+
+    batch = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: session,
+    ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+    assert session.calls == [first_url, second_url]
+    assert batch.requests_made == 2
+    assert {record["title"] for record in batch.records} == {
+        "Alpha Engineer",
+        "Beta Engineer",
+    }
+
+
+def test_generic_rel_next_pagination_deduplicates_overlapping_jobs() -> None:
+    first_url = "https://example.com/jobs"
+    second_url = "https://example.com/jobs?page=2"
+    duplicate = "<article class='job-card'><a href='/jobs/shared-role'>Shared Role</a></article>"
+    session = GenericPageSession(
+        {
+            first_url: duplicate + f"<a rel='next' href='{second_url}'>Next</a>",
+            second_url: duplicate + (
+                "<article class='job-card'><a href='/jobs/new-role'>New Role</a></article>"
+            ),
+        }
+    )
+
+    batch = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: session,
+    ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+    assert batch.requests_made == 2
+    assert {record["source_job_url"] for record in batch.records} == {
+        "https://example.com/jobs/shared-role",
+        "https://example.com/jobs/new-role",
+    }
+
+
+def test_generic_numeric_listing_family_pagination_fetches_three_pages() -> None:
+    first_url = "https://example.com/viewalljobs/"
+    second_url = "https://example.com/viewalljobs/50/"
+    third_url = "https://example.com/viewalljobs/100/"
+
+    def page(job_href: str, job_title: str, current_url: str) -> str:
+        links = "".join(
+            (
+                f"<a href='{url}' class='current-page' rel='nofollow'>{number}</a>"
+                if url == current_url
+                else f"<a href='{url}' rel='nofollow'>{number}</a>"
+            )
+            for number, url in enumerate((first_url, second_url, third_url), start=1)
+        )
+        return (
+            f"<article class='job-row'><a href='{job_href}'>{job_title}</a></article>"
+            f"<nav class='pagination'>{links}</nav>"
+        )
+
+    session = GenericPageSession(
+        {
+            first_url: page("/job/alpha-role", "Alpha Role", first_url),
+            second_url: page("/job/beta-role", "Beta Role", second_url),
+            third_url: page("/job/gamma-role", "Gamma Role", third_url),
+        }
+    )
+
+    batch = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: session,
+    ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+    assert session.calls == [first_url, second_url, third_url]
+    assert batch.requests_made == 3
+    assert {record["title"] for record in batch.records} == {
+        "Alpha Role",
+        "Beta Role",
+        "Gamma Role",
+    }
+
+
+def test_generic_uses_public_get_job_search_form_then_existing_pagination() -> None:
+    landing_url = "https://example.com/viewalljobs/"
+    search_url = "https://example.com/search/?locationsearch=&q="
+    second_url = "https://example.com/search/?q=&startrow=50"
+    session = GenericPageSession(
+        {
+            landing_url: (
+                "<section id='category-list'>"
+                "<a href='/browse/engineering-jobs/1001/'>Engineering Jobs</a>"
+                "</section>"
+                "<form method='get' action='/search/' role='search' "
+                "class='job-search-form'>"
+                "<input name='q'><input name='locationsearch'>"
+                "</form>"
+            ),
+            search_url: (
+                "<article class='job-row'>"
+                "<a href='/job/alpha-role/9001/'>Alpha Role</a></article>"
+                f"<nav class='pagination'><a href='{second_url}'>2</a></nav>"
+            ),
+            second_url: (
+                "<article class='job-row'>"
+                "<a href='/job/beta-role/9002/'>Beta Role</a></article>"
+                "<nav class='language-selector'>"
+                "<a href='?q=&amp;startrow=50&amp;locale=en_US'>English</a>"
+                "</nav>"
+            ),
+        }
+    )
+
+    batch = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: session,
+    ).fetch(company=CompanyStub(source="generic", source_jobs_url=landing_url))
+
+    assert session.calls == [landing_url, search_url, second_url]
+    assert batch.requests_made == 3
+    assert {record["title"] for record in batch.records} == {"Alpha Role", "Beta Role"}
+
+
+def test_generic_pagination_loop_stops_on_seen_next_url() -> None:
+    first_url = "https://example.com/careers"
+    second_url = "https://example.com/careers?page=2"
+    session = GenericPageSession(
+        {
+            first_url: (
+                "<a href='/jobs/first-role'>First Role</a>"
+                f"<a rel='next' href='{second_url}'>Next</a>"
+            ),
+            second_url: (
+                "<a href='/jobs/second-role'>Second Role</a>"
+                f"<a rel='next' href='{first_url}'>Next</a>"
+            ),
+        }
+    )
+
+    batch = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: session,
+    ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+    assert session.calls == [first_url, second_url]
+    assert len(batch.records) == 2
+
+
+def test_generic_pagination_rejects_external_next_url() -> None:
+    first_url = "https://example.com/careers"
+    session = GenericPageSession(
+        {
+            first_url: (
+                "<a href='/jobs/first-role'>First Role</a>"
+                "<a rel='next' href='https://elsewhere.example/jobs?page=2'>Next</a>"
+            )
+        }
+    )
+
+    with pytest.raises(SourceError, match="external or unrelated") as caught:
+        GenericSourceAdapter(
+            session_factory=lambda timeout_seconds: session,
+        ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+    assert caught.value.requests_made == 1
+    assert session.calls == [first_url]
+
+
+def test_generic_detected_unsupported_pagination_fails_closed() -> None:
+    first_url = "https://example.com/careers"
+    session = GenericPageSession(
+        {
+            first_url: (
+                "<a href='/jobs/first-role'>First Role</a>"
+                "<button aria-label='Next page'>Next</button>"
+            )
+        }
+    )
+
+    with pytest.raises(SourceError, match="unsupported pagination"):
+        GenericSourceAdapter(
+            session_factory=lambda timeout_seconds: session,
+        ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+
+def test_generic_unpaginated_listing_uses_one_request() -> None:
+    first_url = "https://example.com/careers"
+    session = GenericPageSession(
+        {
+            first_url: (
+                "<main><a href='/careers/senior-platform-engineer'>"
+                "Senior Platform Engineer</a></main>"
+            )
+        }
+    )
+
+    batch = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: session,
+    ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+    assert session.calls == [first_url]
+    assert batch.requests_made == 1
+    assert len(batch.records) == 1
+
+
+def test_generic_live_like_paginated_listing_excludes_navigation_noise() -> None:
+    first_url = "https://example.com/search/"
+    second_url = "https://example.com/search/50/"
+    first_jobs = "".join(
+        f"<tr class='job-row'><td><a href='/job/role-{index}'>Role {index}</a></td></tr>"
+        for index in range(50)
+    )
+    second_jobs = "".join(
+        f"<tr class='job-row'><td><a href='/job/role-{index}'>Role {index}</a></td></tr>"
+        for index in range(45, 60)
+    )
+    noise = (
+        "<div class='language'><a href='/alljobs?locale=en_US'>English (United States)</a></div>"
+        "<div class='footer'><a href='/viewalljobs/'>Sitemap</a>"
+        "<a href='/careers'>Visit careers page</a></div>"
+    )
+    session = GenericPageSession(
+        {
+            first_url: first_jobs + noise + (
+                f"<ul class='pagination'><li><a href='{second_url}'>2</a></li></ul>"
+            ),
+            second_url: second_jobs + noise,
+        }
+    )
+
+    batch = GenericSourceAdapter(
+        session_factory=lambda timeout_seconds: session,
+    ).fetch(company=CompanyStub(source="generic", source_jobs_url=first_url))
+
+    assert batch.requests_made == 2
+    assert len(batch.records) == 60
+    assert not {
+        "Sitemap",
+        "English (United States)",
+        "Visit careers page",
+    } & {str(record["title"]) for record in batch.records}
 
 
 def test_generic_source_adapter_fails_closed_when_provider_returns_no_validated_jobs() -> None:

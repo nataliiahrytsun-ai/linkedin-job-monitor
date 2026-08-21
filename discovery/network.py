@@ -5,7 +5,6 @@ from __future__ import annotations
 import ipaddress
 import socket
 import time
-from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -38,10 +37,15 @@ class CrawledPage:
     links: tuple[str, ...]
     depth: int
     redirects: tuple[str, ...] = ()
+    navigation_links: tuple[str, ...] = ()
 
 
 class HttpTransport(Protocol):
     def get(self, url: str, *, timeout_seconds: float) -> HttpResponse: ...
+
+
+type FrontierPriority = Callable[[str, str, str, int], tuple[int, ...]]
+type FrontierAdmission = Callable[[str, str, str, int], bool]
 
 
 class _ScraplingResponse(Protocol):
@@ -177,6 +181,8 @@ class BoundedCrawler:
         timeout_seconds: float = 10.0,
         total_timeout_seconds: float = 45.0,
         resolver: Callable[[str], frozenset[str]] = _public_addresses,
+        frontier_priority: FrontierPriority | None = None,
+        frontier_admission: FrontierAdmission | None = None,
     ) -> None:
         self.transport = transport
         self.max_requests = max_requests
@@ -186,6 +192,8 @@ class BoundedCrawler:
         self.timeout_seconds = timeout_seconds
         self.total_timeout_seconds = total_timeout_seconds
         self.resolver = resolver
+        self.frontier_priority = frontier_priority
+        self.frontier_admission = frontier_admission
         self._requests_made = 0
         self.errors: list[str] = []
         self._started_at = 0.0
@@ -247,7 +255,10 @@ class BoundedCrawler:
         self._requests_made = 0
         self._started_at = time.monotonic()
         self.errors = []
-        queue = deque((seed, 0) for seed in seeds)
+        queue: list[tuple[tuple[int, ...], int, str, int]] = [
+            ((-1,), index, seed, 0) for index, seed in enumerate(seeds)
+        ]
+        next_frontier_index = len(queue)
         seen: set[str] = set()
         pages: list[CrawledPage] = []
         keywords = (
@@ -262,7 +273,7 @@ class BoundedCrawler:
             "prace",
         )
         while queue and len(pages) < self.max_requests:
-            raw_url, depth = queue.popleft()
+            _priority, _frontier_index, raw_url, depth = queue.pop(0)
             try:
                 requested = canonicalize_url(raw_url)
             except UnsafeUrlError:
@@ -279,10 +290,12 @@ class BoundedCrawler:
             parser = _LinkParser()
             parser.feed(body)
             links: list[str] = []
+            navigation_links: list[str] = []
+            frontier: list[tuple[tuple[int, ...], int, str, int]] = []
             for href, text in parser.links:
                 absolute = urljoin(response.url, href)
                 searchable = f"{absolute} {text}".lower()
-                if any(keyword in searchable for keyword in keywords) or any(
+                default_admitted = any(keyword in searchable for keyword in keywords) or any(
                     host in searchable
                     for host in (
                         "lever.co",
@@ -294,11 +307,18 @@ class BoundedCrawler:
                         "smartrecruiters.com",
                         "teamtailor",
                     )
-                ):
+                )
+                if default_admitted or self.frontier_admission is not None:
                     try:
                         canonical = canonicalize_url(absolute)
                     except UnsafeUrlError:
                         continue
+                    if self.frontier_admission is not None and not self.frontier_admission(
+                        canonical, text, response.url, depth
+                    ):
+                        continue
+                    if self.frontier_admission is not None:
+                        navigation_links.append(canonical)
                     if (urlsplit(canonical).hostname or "") in {
                         "dream.jobs",
                         "www.dream.jobs",
@@ -308,7 +328,17 @@ class BoundedCrawler:
                         continue
                     links.append(canonical)
                     if depth < self.max_depth and canonical not in seen:
-                        queue.append((canonical, depth + 1))
+                        priority = (
+                            self.frontier_priority(canonical, text, response.url, depth)
+                            if self.frontier_priority is not None
+                            else ()
+                        )
+                        frontier.append(
+                            (priority, next_frontier_index, canonical, depth + 1)
+                        )
+                        next_frontier_index += 1
+            queue.extend(frontier)
+            queue.sort(key=lambda item: (item[0], item[1]))
             pages.append(
                 CrawledPage(
                     requested,
@@ -317,6 +347,7 @@ class BoundedCrawler:
                     tuple(dict.fromkeys(links)),
                     depth,
                     redirects,
+                    tuple(dict.fromkeys(navigation_links)),
                 )
             )
         return tuple(pages)

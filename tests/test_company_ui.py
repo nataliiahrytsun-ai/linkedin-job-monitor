@@ -2789,6 +2789,137 @@ def test_single_connect_is_idempotent_and_company_scoped() -> None:
     assert candidate.company_source_id == company.sources.get().pk
 
 
+def test_discovery_connect_reactivates_disconnected_dreamjobs_source() -> None:
+    company = model("companies.Company").objects.create(name="Data Sentics")
+    run = discovery_run(company)
+    candidate = discovery_candidate(
+        run,
+        url="https://careers.datasentics.com/jobs",
+        platform="dreamjobs",
+        job_source_eligibility="supported_ats",
+    )
+    browser = client()
+
+    assert browser.post(
+        reverse("discovery:connect", args=(company.pk, candidate.pk))
+    ).status_code == 302
+    source = company.sources.get()
+    source_run = create_scrape_run(
+        company,
+        company_source=source,
+        status="success",
+        started_at=datetime(2026, 8, 20, 9, tzinfo=UTC),
+    )
+    assert browser.post(
+        reverse("companies:source_toggle_active", args=(company.pk, source.pk))
+    ).status_code == 302
+    source.refresh_from_db()
+    candidate.refresh_from_db()
+    assert source.is_active is False
+    assert candidate.decision == "connected"
+
+    manager_url = (
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    )
+    discovered = browser.get(manager_url).content.decode()
+    assert candidate.canonical_url in discovered
+    assert reverse("discovery:connect", args=(company.pk, candidate.pk)) in discovered
+
+    response = browser.post(
+        reverse("discovery:connect", args=(company.pk, candidate.pk)),
+        follow=True,
+    )
+
+    source.refresh_from_db()
+    candidate.refresh_from_db()
+    source_run.refresh_from_db()
+    assert response.status_code == 200
+    assert "could not be connected" not in response.content.decode()
+    assert company.sources.count() == 1
+    assert company.sources.get().pk == source.pk
+    assert source.is_active is True
+    assert candidate.company_source_id == source.pk
+    assert source_run.company_source_id == source.pk
+
+
+def test_discovery_connect_recreates_deleted_source_from_stale_candidate() -> None:
+    company = model("companies.Company").objects.create(name="Data Sentics Delete")
+    run = discovery_run(company)
+    candidate = discovery_candidate(
+        run,
+        url="https://careers.datasentics.com/jobs",
+        platform="dreamjobs",
+        job_source_eligibility="supported_ats",
+    )
+    browser = client()
+
+    assert browser.post(
+        reverse("discovery:connect", args=(company.pk, candidate.pk))
+    ).status_code == 302
+    deleted_source_id = company.sources.get().pk
+    assert browser.post(
+        reverse(
+            "companies:source_delete",
+            args=(company.pk, deleted_source_id),
+        )
+    ).status_code == 302
+    candidate.refresh_from_db()
+    assert candidate.company_source_id is None
+    assert candidate.decision == "connected"
+    manager_url = (
+        reverse("companies:detail", args=(company.pk,))
+        + "?manage_sources=1&source_tab=discovered"
+    )
+    discovered = browser.get(manager_url).content.decode()
+    assert candidate.canonical_url in discovered
+    assert reverse("discovery:connect", args=(company.pk, candidate.pk)) in discovered
+
+    response = browser.post(
+        reverse("discovery:connect", args=(company.pk, candidate.pk)),
+        follow=True,
+    )
+
+    candidate.refresh_from_db()
+    recreated = company.sources.get()
+    assert response.status_code == 200
+    assert "could not be connected" not in response.content.decode()
+    assert recreated.pk != deleted_source_id
+    assert recreated.source == "dreamjobs"
+    assert recreated.source_jobs_url == candidate.canonical_url
+    assert recreated.is_active is True
+    assert candidate.company_source_id == recreated.pk
+
+
+def test_supported_ats_suppresses_exact_generic_presentation_duplicate() -> None:
+    presentation = importlib.import_module("discovery.presentation")
+    company = model("companies.Company").objects.create(name="Data Sentics Inventory")
+    run = discovery_run(company)
+    url = "https://careers.datasentics.com/jobs"
+    supported = discovery_candidate(
+        run,
+        url=url,
+        platform="dreamjobs",
+        job_source_eligibility="supported_ats",
+    )
+    discovery_candidate(
+        run,
+        url=url,
+        kind="careers",
+        platform="generic",
+        supported=True,
+        decision="unsupported",
+        job_source_eligibility="company_jobs_page",
+        job_source_confidence=90,
+        evidence=["Confirmed careers listing candidate"],
+    )
+
+    items = presentation.company_candidate_presentations(company_id=company.pk)
+
+    assert tuple(item.candidate for item in items) == (supported,)
+    assert items[0].display_name == "DreamJobs"
+
+
 def test_bulk_connect_revalidates_each_candidate_and_reports_partial_result() -> None:
     company = model("companies.Company").objects.create(name="Bulk Owner")
     run = discovery_run(company)

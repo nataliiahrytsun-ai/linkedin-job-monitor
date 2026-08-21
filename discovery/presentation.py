@@ -180,6 +180,7 @@ _LISTING_EVIDENCE_MARKERS = (
     "ats api",
     "ats-specific asset",
     "ats-specific metadata",
+    "confirmed careers destination",
     "confirmed careers listing",
     "confirmed job listing",
     "graphql jobs",
@@ -332,12 +333,17 @@ def present_candidate(candidate: DiscoveryCandidate) -> CandidatePresentation:
             validation_ok = True
             validation_status = "Validated"
     linked_source = equivalent_source(candidate)
+    linked_source_can_reactivate = (
+        linked_source is not None
+        and not linked_source.is_active
+        and linked_source.approval_status == CompanySource.ApprovalStatus.APPROVED
+    )
     job_source = _effective_job_source(candidate)
     eligibility = job_source.eligibility
     listing_confirmed = _has_confirmed_listing(candidate)
     if candidate.is_ignored:
         state = "ignored"
-    elif linked_source is not None:
+    elif linked_source is not None and not linked_source_can_reactivate:
         state = "connected"
     elif is_generic_fallback_eligible(candidate):
         state = "generic_available"
@@ -482,7 +488,7 @@ def company_candidate_presentations(
         for candidate in sorted(run_candidates, key=_candidate_rank)
     )
     seen: set[str] = set()
-    published: list[CandidatePresentation] = []
+    current_candidates: list[DiscoveryCandidate] = []
     for candidate in candidates:
         identity = _canonical_identity(candidate)
         if identity in seen:
@@ -493,8 +499,26 @@ def company_candidate_presentations(
             or candidate.decision == DiscoveryCandidate.Decision.REJECTED
         ):
             continue
+        current_candidates.append(candidate)
+
+    registered_platforms = set(registered_source_keys())
+    supported_urls = {
+        _url_key(candidate.canonical_url)
+        for candidate in current_candidates
+        if candidate.supported
+        and candidate.platform.strip().casefold() in registered_platforms
+        and candidate.platform.strip().casefold() != "generic"
+    }
+    published: list[CandidatePresentation] = []
+    for candidate in current_candidates:
+        candidate_platform = candidate.platform.strip().casefold()
+        if (
+            (candidate_platform == "generic" or candidate_platform not in registered_platforms)
+            and _url_key(candidate.canonical_url) in supported_urls
+        ):
+            continue
         presentation = present_candidate(candidate)
-        if presentation.linked_source is not None:
+        if presentation.linked_source is not None and not presentation.can_connect:
             continue
         if presentation.state in {
             "ready_to_connect",
@@ -562,7 +586,7 @@ def discovery_result_presentation(
     visible_candidates = tuple(
         item
         for item in candidates
-        if item.linked_source is None
+        if (item.linked_source is None or item.can_connect)
         and (
             item.listing_confirmed
             or item.can_connect

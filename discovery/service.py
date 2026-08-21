@@ -14,6 +14,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
+from lxml import etree  # type: ignore[import-untyped]
 
 from companies.forms import validate_source_configuration
 from companies.models import Company, CompanySource
@@ -54,6 +55,10 @@ from discovery.search import (
     configured_search_provider,
 )
 from scraping.sources.base import SourceError
+from scraping.sources.generic import (
+    GenericCandidateExtractorError,
+    extract_generic_candidates,
+)
 from scraping.sources.registry import registered_source_keys
 
 logger = logging.getLogger(__name__)
@@ -108,6 +113,8 @@ class OfficialSiteCandidate:
     accepted: bool
     evidence: tuple[str, ...]
     reason: str
+    query_origins: tuple[str, ...] = ()
+    search_score: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,11 +158,12 @@ def _official_score(company_name: str, url: str, title: str = "") -> int:
     normalized_name = "".join(
         character for character in company_name.lower() if character.isalnum()
     )
-    normalized_host = "".join(character for character in host if character.isalnum())
+    first_host_label = host.removeprefix("www.").split(".", 1)[0]
+    normalized_host_label = "".join(
+        character for character in first_host_label if character.isalnum()
+    )
     score = 25
-    if normalized_name and (
-        normalized_name in normalized_host or normalized_host in normalized_name
-    ):
+    if normalized_name and normalized_name == normalized_host_label:
         score += 55
     if company_name.lower() in title.lower():
         score += 15
@@ -183,11 +191,22 @@ def _classify_official_candidate(
     manual: bool,
     description: str = "",
     search_score: float | None = None,
+    query_origins: tuple[str, ...] = (),
 ) -> OfficialSiteCandidate:
     try:
         discovered = canonicalize_url(url)
     except UnsafeUrlError as error:
-        return OfficialSiteCandidate(url, url, title, 0, False, (), str(error))
+        return OfficialSiteCandidate(
+            url,
+            url,
+            title,
+            0,
+            False,
+            (),
+            str(error),
+            query_origins,
+            search_score,
+        )
     parsed = urlsplit(discovered)
     host = parsed.hostname or ""
     blocked = _blocked_official_host(host)
@@ -201,6 +220,8 @@ def _classify_official_candidate(
             False,
             (f"Blocked official-site host: {blocked}",),
             f"{label} is a social network, job search, or aggregator, not an official site.",
+            query_origins,
+            search_score,
         )
     first_label = host.split(".", 1)[0]
     if first_label in {"career", "careers", "job", "jobs"}:
@@ -212,6 +233,8 @@ def _classify_official_candidate(
             False,
             ("Career or jobs subdomain",),
             "A career or jobs host is not the official corporate website.",
+            query_origins,
+            search_score,
         )
     if manual and (parsed.path not in {"", "/"} or parsed.query):
         return OfficialSiteCandidate(
@@ -222,6 +245,8 @@ def _classify_official_candidate(
             False,
             ("Manual value contains a deep path or query",),
             "Manual official domain must identify the company's root website.",
+            query_origins,
+            search_score,
         )
     root = f"{parsed.scheme}://{parsed.netloc}/"
     identity_metadata = f"{title} {description[:1000]}"
@@ -240,11 +265,16 @@ def _classify_official_candidate(
         accepted,
         tuple(evidence),
         "" if accepted else "Company identity is insufficiently supported by title and domain.",
+        query_origins,
+        search_score,
     )
 
 
 def _search_candidates(
-    company_name: str, results: tuple[SearchResult, ...]
+    company_name: str,
+    results: tuple[SearchResult, ...],
+    *,
+    result_queries: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[OfficialSiteCandidate, ...]:
     candidates: dict[str, OfficialSiteCandidate] = {}
     for result in results:
@@ -255,15 +285,231 @@ def _search_candidates(
             manual=False,
             description=result.description,
             search_score=result.score,
+            query_origins=(result_queries or {}).get(result.url, ()),
         )
         existing = candidates.get(candidate.canonical_url)
-        if existing is None or candidate.confidence > existing.confidence:
+        should_replace = existing is None or candidate.confidence > existing.confidence
+        if (
+            existing is not None
+            and candidate.accepted
+            and existing.accepted
+            and candidate.confidence == existing.confidence
+        ):
+            should_replace = official_candidate_rank(
+                company_name, candidate
+            ) < official_candidate_rank(company_name, existing)
+        if should_replace:
             candidates[candidate.canonical_url] = candidate
     return tuple(candidates.values())
 
 
 def _normalized_identity(value: str) -> str:
     return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _identity_tokens(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9]+", value.casefold()))
+
+
+def official_candidate_rank(
+    company_name: str,
+    candidate: OfficialSiteCandidate,
+) -> tuple[object, ...]:
+    """Return a deterministic best-first rank without changing acceptance."""
+    company_tokens = _identity_tokens(company_name)
+    title_tokens = _identity_tokens(candidate.title)
+    exact_title = title_tokens == company_tokens and bool(company_tokens)
+    title_contains_name = bool(company_tokens) and any(
+        title_tokens[index : index + len(company_tokens)] == company_tokens
+        for index in range(max(0, len(title_tokens) - len(company_tokens) + 1))
+    )
+    official_query = _initial_search_queries(company_name)[0]
+    parsed_discovered = urlsplit(candidate.discovered_url)
+    root_result = parsed_discovered.path in {"", "/"} and not parsed_discovered.query
+    score_missing = candidate.search_score is None
+    return (
+        -candidate.confidence,
+        0 if exact_title else (1 if title_contains_name else 2),
+        0 if official_query in candidate.query_origins else 1,
+        0 if root_result else 1,
+        1 if score_missing else 0,
+        -(candidate.search_score or 0.0),
+        candidate.canonical_url,
+        candidate.discovered_url,
+    )
+
+
+def _crawl_frontier_priority(
+    url: str,
+    link_text: str,
+    parent_url: str,
+    parent_depth: int,
+) -> tuple[int, ...]:
+    """Rank admitted crawl links without treating priority as eligibility."""
+    del parent_depth
+    parsed = urlsplit(url)
+    parent = urlsplit(parent_url)
+    host = (parsed.hostname or "").casefold().removeprefix("www.")
+    parent_host = (parent.hostname or "").casefold().removeprefix("www.")
+    segments = tuple(segment.casefold() for segment in parsed.path.split("/") if segment)
+    text = " ".join(link_text.casefold().split())
+
+    url_only_page = CrawledPage(url, url, "", (), 0)
+    if any(detection.supported for detection in detect_page(url_only_page)):
+        return (0,)
+
+    first_label = host.split(".", 1)[0]
+    same_company_subdomain = bool(parent_host) and host.endswith(f".{parent_host}")
+    explicit_portal = any(
+        phrase in text
+        for phrase in (
+            "job portal",
+            "career portal",
+            "search jobs",
+            "view all jobs",
+            "open positions",
+            "open roles",
+            "vacancies",
+        )
+    )
+    if explicit_portal or (
+        same_company_subdomain and first_label in {"career", "careers", "job", "jobs"}
+    ):
+        return (1,)
+
+    strong_routes = {
+        "career",
+        "careers",
+        "job",
+        "jobs",
+        "opening",
+        "openings",
+        "vacancies",
+        "vacancy",
+        "viewalljobs",
+    }
+    if any(segment in strong_routes for segment in segments):
+        return (2,)
+
+    marketing_routes = {
+        "about",
+        "contact",
+        "contact-us",
+        "insights",
+        "news",
+        "services",
+    }
+    if any(segment in marketing_routes for segment in segments):
+        return (5,)
+    if any(marker in text for marker in ("career", "job", "opening", "vacanc", "join us")):
+        return (3,)
+    return (4,)
+
+
+_JOB_NAVIGATION_PHRASES = (
+    "view jobs",
+    "search jobs",
+    "explore jobs",
+    "see jobs",
+    "browse jobs",
+    "find jobs",
+    "job opportunities",
+    "open positions",
+    "open roles",
+    "career opportunities",
+    "view vacancies",
+    "search vacancies",
+    "join us",
+)
+_JOB_NAVIGATION_ROUTES = {
+    "career",
+    "careers",
+    "job",
+    "jobs",
+    "vacancy",
+    "vacancies",
+    "opening",
+    "openings",
+    "position",
+    "positions",
+    "opportunities",
+    "viewalljobs",
+    "search",
+}
+
+
+def _job_navigation_signal(url: str, link_text: str) -> bool:
+    parsed = urlsplit(url)
+    segments = tuple(
+        re.sub(r"[^a-z0-9]+", "", segment.casefold())
+        for segment in parsed.path.split("/")
+        if segment
+    )
+    normalized_text = " ".join(re.findall(r"[a-z0-9]+", link_text.casefold()))
+    return bool(segments and segments[-1] in _JOB_NAVIGATION_ROUTES) or any(
+        phrase in normalized_text for phrase in _JOB_NAVIGATION_PHRASES
+    ) or normalized_text in {"apply", "career", "careers", "jobs", "vacancies"}
+
+
+@dataclass
+class _TrustedJobNavigation:
+    """Admit navigation hops without treating them as source candidates."""
+
+    official_hosts: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        self._trusted_hosts = set(self.official_hosts)
+
+    def _official_family(self, host: str) -> bool:
+        return any(_same_or_subdomain(host, root) for root in self.official_hosts)
+
+    def admit(self, url: str, link_text: str, parent_url: str, parent_depth: int) -> bool:
+        del parent_depth
+        target_host = (urlsplit(url).hostname or "").casefold().removeprefix("www.")
+        parent_host = (
+            (urlsplit(parent_url).hostname or "").casefold().removeprefix("www.")
+        )
+        parent_trusted = parent_host in self._trusted_hosts or self._official_family(parent_host)
+        if not parent_trusted or not target_host or not _job_navigation_signal(url, link_text):
+            return False
+
+        url_detection = detect_page(CrawledPage(url, url, "", (), 0))
+        registered_ats = any(detection.supported for detection in url_detection)
+        same_trusted_host = target_host == parent_host
+        same_official_family = self._official_family(target_host)
+        first_label = target_host.split(".", 1)[0]
+        explicit_external_portal = (
+            self._official_family(parent_host)
+            and first_label in {"career", "careers", "job", "jobs", "recruit", "recruiting"}
+        )
+        admitted = (
+            registered_ats
+            or same_trusted_host
+            or same_official_family
+            or explicit_external_portal
+        )
+        if admitted:
+            self._trusted_hosts.add(target_host)
+        return admitted
+
+
+def _identity_phrase_present(value: str, identity: str) -> bool:
+    words = re.findall(r"[a-z0-9]+", identity.casefold())
+    if not words:
+        return False
+    pattern = r"(?<![a-z0-9])" + r"[^a-z0-9]+".join(map(re.escape, words))
+    pattern += r"(?![a-z0-9])"
+    return re.search(pattern, value.casefold()) is not None
+
+
+def _url_identity_components(url: str) -> set[str]:
+    parsed = urlsplit(url)
+    host_labels = (parsed.hostname or "").casefold().removeprefix("www.").split(".")
+    path_tokens = re.findall(r"[a-z0-9]+", f"{parsed.path} {parsed.query}".casefold())
+    return {
+        *(_normalized_identity(label) for label in host_labels if label),
+        *(_normalized_identity(token) for token in path_tokens if token),
+    }
 
 
 def _same_or_subdomain(host: str, root: str) -> bool:
@@ -290,12 +536,9 @@ def _canonical_public_url(url: str) -> str:
 
 
 def _url_identity_compatible(*, url: str, company_name: str, official_url: str) -> bool:
-    parsed = urlsplit(url)
-    searchable = _normalized_identity(
-        f"{(parsed.hostname or '').removeprefix('www.')} {parsed.path} {parsed.query}"
-    )
+    components = _url_identity_components(url)
     return any(
-        needle and needle in searchable
+        needle and needle in components
         for needle in _company_identity_needles(
             company_name=company_name,
             official_url=official_url,
@@ -304,13 +547,12 @@ def _url_identity_compatible(*, url: str, company_name: str, official_url: str) 
 
 
 def _page_identity_compatible(*, body: str, company_name: str, official_url: str) -> bool:
-    searchable = _normalized_identity(body[:200_000])
-    return any(
-        needle and needle in searchable
-        for needle in _company_identity_needles(
-            company_name=company_name,
-            official_url=official_url,
-        )
+    searchable = body[:200_000]
+    official_host = (urlsplit(official_url).hostname or "").removeprefix("www.")
+    return _identity_phrase_present(searchable, company_name) or any(
+        _identity_phrase_present(searchable, label)
+        for label in official_host.split(".")
+        if len(label) >= 4
     )
 
 
@@ -382,6 +624,7 @@ def _company_source_attribution(
     first_hop_external: bool = False,
     search_identity: bool = False,
     first_party_search: bool = False,
+    adapter_search: bool = False,
     page_identity: bool = False,
 ) -> CompanySourceAttribution:
     candidate_host = (urlsplit(candidate_url).hostname or "").casefold().removeprefix("www.")
@@ -410,7 +653,9 @@ def _company_source_attribution(
         )
         accepted = same_domain or (
             ats_compatible and (provenance or search_identity or page_identity or url_identity)
-        ) or (search_identity and first_party_search)
+        ) or (search_identity and first_party_search) or (
+            adapter_search and search_identity and detection is not None and detection.supported
+        )
         return CompanySourceAttribution(
             accepted,
             (
@@ -542,14 +787,14 @@ def _confirm_official_identity(
     if page is None:
         return False, ()
     company_identity = _normalized_identity(company_name)
-    host_identity = _normalized_identity(candidate_origin.removeprefix("www."))
-    body_identity = _normalized_identity(page.body[:200_000])
+    first_host_label = candidate_origin.removeprefix("www.").split(".", 1)[0]
+    host_identity = _normalized_identity(first_host_label)
     evidence: list[str] = []
     identity_confirmed = False
-    if company_identity and company_identity in host_identity:
+    if company_identity and company_identity == host_identity:
         evidence.append("Company identity matches the official domain")
         identity_confirmed = True
-    if company_identity and company_identity in body_identity:
+    if _identity_phrase_present(page.body[:200_000], company_name):
         evidence.append("Company identity appears in public homepage metadata or text")
         identity_confirmed = True
     if page.links:
@@ -916,13 +1161,13 @@ def _seed_source_inventory(run: DiscoveryRun) -> None:
 
 
 def _result_has_company_identity(company_names: Sequence[str], result: SearchResult) -> bool:
-    searchable = _normalized_identity(
-        f"{result.title} {result.description[:1000]} {urlsplit(result.url).hostname or ''}"
-    )
+    text = f"{result.title} {result.description[:1000]}"
+    url_components = _url_identity_components(result.url)
     return any(
-        identity and identity in searchable
+        _identity_phrase_present(text, company_name)
+        or _normalized_identity(company_name) in url_components
         for company_name in company_names
-        if (identity := _normalized_identity(company_name))
+        if _normalized_identity(company_name)
     )
 
 
@@ -1038,6 +1283,7 @@ def _persist_search_inventory_candidates(
     results: tuple[SearchResult, ...],
     result_queries: dict[str, tuple[str, ...]],
     query_label: str,
+    listing_parent_by_job_url: dict[str, str] | None = None,
 ) -> str | None:
     careers_url: str | None = None
     seen: set[str] = set()
@@ -1048,6 +1294,7 @@ def _persist_search_inventory_candidates(
             canonical = canonicalize_source_candidate_url(result.url)
         except UnsafeUrlError:
             continue
+        canonical = (listing_parent_by_job_url or {}).get(canonical, canonical)
         if canonical in seen:
             continue
         seen.add(canonical)
@@ -1320,6 +1567,7 @@ def _record_results_for_hint(
                 platform=detection.platform,
                 detection=detection,
                 search_identity=search_identity,
+                adapter_search=(origin == DiscoveryCandidate.Origin.ADAPTER_SEARCH),
             )
             if not attribution.accepted:
                 continue
@@ -1382,7 +1630,7 @@ def _adapter_sweep(
             check.status = DiscoveryAdapterCheck.Status.SEARCH_FAILED
             check.reason = str(error)[:1000]
             check.save(update_fields=("status", "reason"))
-            break
+            continue
         found = _record_results_for_hint(
             run=run,
             hint=hint,
@@ -1569,6 +1817,14 @@ def _unknown_careers_urls(
         (urlsplit(detection.canonical_url).hostname or "").casefold() for detection in detections
     }
     official_hosts = _official_hosts(pages=pages, official_url=official_url)
+    listing_parent_by_job_url = _deterministic_listing_parents(pages)
+    navigation_urls: set[str] = set()
+    for page in pages:
+        for link in page.navigation_links:
+            try:
+                navigation_urls.add(canonicalize_source_candidate_url(link))
+            except UnsafeUrlError:
+                continue
 
     unknown: list[str] = []
     seen_identities: set[tuple[str, str]] = set()
@@ -1590,6 +1846,9 @@ def _unknown_careers_urls(
         try:
             url = canonicalize_source_candidate_url(url)
         except UnsafeUrlError:
+            return
+        url = listing_parent_by_job_url.get(url, url)
+        if url in navigation_urls and not _has_deterministic_job_links(url, pages=pages):
             return
         parsed = urlsplit(url)
         host = (parsed.hostname or "").casefold()
@@ -1689,6 +1948,52 @@ def _unknown_careers_urls(
                 )
 
     return tuple(unknown)
+
+
+def _deterministic_listing_parents(pages: Sequence[CrawledPage]) -> dict[str, str]:
+    """Map deterministic job links back to the fetched listing that exposed them."""
+    parents: dict[str, str] = {}
+    for page in pages:
+        if not page.body.strip():
+            continue
+        try:
+            parent = canonicalize_source_candidate_url(page.url)
+            candidates = extract_generic_candidates(page.body, base_url=page.url)
+            navigation_links = {
+                canonicalize_source_candidate_url(link) for link in page.navigation_links
+            }
+        except (
+            etree.ParserError,
+            etree.XMLSyntaxError,
+            GenericCandidateExtractorError,
+            UnsafeUrlError,
+            TypeError,
+            ValueError,
+        ):
+            continue
+        for candidate in candidates:
+            try:
+                job_url = canonicalize_source_candidate_url(candidate.url)
+            except UnsafeUrlError:
+                continue
+            if job_url in navigation_links:
+                continue
+            if job_url != parent:
+                parents.setdefault(job_url, parent)
+    return parents
+
+
+def _has_deterministic_job_links(
+    career_url: str,
+    *,
+    pages: Sequence[CrawledPage],
+) -> bool:
+    """Confirm that a fetched careers page exposes deterministic public job links."""
+    try:
+        career_key = canonicalize_source_candidate_url(career_url)
+    except UnsafeUrlError:
+        return False
+    return career_key in set(_deterministic_listing_parents(pages).values())
 
 
 def _fallback_identity_evidence(
@@ -1839,7 +2144,13 @@ def run_discovery(
             general_results = tuple(general_result_index.values())
             if not general_results:
                 raise TavilyEmptyResultsError("Tavily returned no search results")
-            official_candidates = _search_candidates(company.name, general_results)
+            official_candidates = _search_candidates(
+                company.name,
+                general_results,
+                result_queries={
+                    url: tuple(queries) for url, queries in general_result_queries.items()
+                },
+            )
         rejected = tuple(item for item in official_candidates if not item.accepted)
         for candidate in rejected:
             _persist_official_candidate(
@@ -1847,7 +2158,12 @@ def run_discovery(
                 candidate=candidate,
                 decision=DiscoveryCandidate.Decision.REJECTED,
             )
-        plausible = tuple(item for item in official_candidates if item.accepted)
+        plausible = tuple(
+            sorted(
+                (item for item in official_candidates if item.accepted),
+                key=lambda item: official_candidate_rank(company.name, item),
+            )
+        )
         if not plausible:
             if not supplied_domain.strip():
                 _adapter_sweep(
@@ -1867,7 +2183,7 @@ def run_discovery(
                 else "No official website candidate was found."
             )
             return _finish(run)
-        best = max(plausible, key=lambda item: item.confidence)
+        best = plausible[0]
         best_score = best.confidence
         tied = tuple(item for item in plausible if item.confidence >= best_score - 5)
         run.official_website_url = best.canonical_url if len(tied) == 1 else None
@@ -1881,6 +2197,14 @@ def run_discovery(
                     else DiscoveryCandidate.Decision.SELECTED
                 ),
             )
+        navigation = _TrustedJobNavigation(
+            tuple(
+                (urlsplit(candidate.canonical_url).hostname or "")
+                .casefold()
+                .removeprefix("www.")
+                for candidate in tied[:3]
+            )
+        )
         crawl = crawler or BoundedCrawler(
             transport=ScraplingTransport(),
             max_requests=settings.SOURCE_DISCOVERY_MAX_REQUESTS,
@@ -1889,6 +2213,8 @@ def run_discovery(
             max_body_bytes=settings.SOURCE_DISCOVERY_MAX_BODY_BYTES,
             timeout_seconds=settings.SOURCE_DISCOVERY_TIMEOUT_SECONDS,
             total_timeout_seconds=remaining_seconds(),
+            frontier_priority=_crawl_frontier_priority,
+            frontier_admission=navigation.admit,
         )
         remaining_seconds()
         pages = crawl.crawl(tuple(item.canonical_url for item in tied[:3]))
@@ -1993,7 +2319,7 @@ def run_discovery(
             return _finish(run)
         tied = tuple(confirmed_candidates)
         best_score = max(candidate.confidence for candidate in tied)
-        best = max(tied, key=lambda candidate: candidate.confidence)
+        best = min(tied, key=lambda candidate: official_candidate_rank(company.name, candidate))
         run.official_website_url = best.canonical_url if len(tied) == 1 else None
         crawl_audit: list[str] = []
         detections = _filtered_crawl_detections(
@@ -2026,6 +2352,7 @@ def run_discovery(
                     url: tuple(queries) for url, queries in general_result_queries.items()
                 },
                 query_label="Discovery query",
+                listing_parent_by_job_url=_deterministic_listing_parents(pages),
             )
         else:
             search_inventory_careers_url = None
@@ -2061,6 +2388,7 @@ def run_discovery(
                 official_record.save(update_fields=("evidence",))
         for career_url in unknown_careers:
             career_url = canonicalize_source_candidate_url(career_url)
+            listing_confirmed = _has_deterministic_job_links(career_url, pages=pages)
             DiscoveryCandidate.objects.update_or_create(
                 run=run,
                 kind=DiscoveryCandidate.Kind.CAREERS,
@@ -2070,7 +2398,13 @@ def run_discovery(
                     "discovered_url": career_url,
                     "confidence": 65,
                     "job_source_confidence": 72,
-                    "evidence": ["Confirmed careers listing candidate"],
+                    "evidence": [
+                        (
+                            "Confirmed careers listing candidate with individual job links"
+                            if listing_confirmed
+                            else "Confirmed careers destination without deterministic job links"
+                        )
+                    ],
                     "supported": False,
                     "official_site_eligibility": (
                         DiscoveryCandidate.OfficialSiteEligibility.NOT_OFFICIAL_SITE
@@ -2225,11 +2559,7 @@ def confirm_candidate(*, candidate_id: int, company_id: int) -> DiscoveryCandida
     source_key = _candidate_source_key(candidate)
     if source_key is None:
         raise ValueError("Candidate is not eligible for confirmation")
-    if candidate.decision not in {
-        DiscoveryCandidate.Decision.NEEDS_REVIEW,
-        DiscoveryCandidate.Decision.SELECTED,
-        DiscoveryCandidate.Decision.UNSUPPORTED,
-    }:
+    if candidate.is_ignored or candidate.decision == DiscoveryCandidate.Decision.REJECTED:
         raise ValueError("Candidate is not eligible for confirmation")
     source_url = candidate.canonical_url
     if source_key == "generic":
@@ -2267,6 +2597,12 @@ def confirm_candidate(*, candidate_id: int, company_id: int) -> DiscoveryCandida
         CompanySource.ApprovalStatus.REJECTED,
     }:
         raise ValueError("A blocked or rejected source cannot be confirmed through discovery")
+    reactivated = existing is not None and not source.is_active
+    if reactivated:
+        if source.approval_status != CompanySource.ApprovalStatus.APPROVED:
+            raise ValueError("Only an approved source can be reactivated through discovery")
+        source.is_active = True
+        source.save(update_fields=("is_active", "updated_at"))
     candidate.company_source = source
     candidate.decision = (
         DiscoveryCandidate.Decision.ALREADY_CONNECTED
@@ -2274,20 +2610,28 @@ def confirm_candidate(*, candidate_id: int, company_id: int) -> DiscoveryCandida
         else DiscoveryCandidate.Decision.CONNECTED
     )
     candidate.reason = (
-        "Existing source and its approval/active state were preserved"
-        if existing is not None
-        else "Manually confirmed by a user"
+        "Existing approved source was reactivated"
+        if reactivated
+        else (
+            "Existing source and its approval/active state were preserved"
+            if existing is not None
+            else "Manually confirmed by a user"
+        )
     )
     candidate.save(update_fields=("company_source", "decision", "reason"))
     candidate.run.status = (
-        DiscoveryRun.Status.ALREADY_CONNECTED
-        if existing is not None
-        else DiscoveryRun.Status.CONNECTED
+        DiscoveryRun.Status.CONNECTED
+        if reactivated or existing is None
+        else DiscoveryRun.Status.ALREADY_CONNECTED
     )
     candidate.run.summary = (
-        f"Existing {source_key} source was linked without changing its state."
-        if existing is not None
-        else f"{source_key} was connected after manual confirmation."
+        f"Existing {source_key} source was reactivated."
+        if reactivated
+        else (
+            f"Existing {source_key} source was linked without changing its state."
+            if existing is not None
+            else f"{source_key} was connected after manual confirmation."
+        )
     )
     candidate.run.save(update_fields=("status", "summary"))
     return candidate

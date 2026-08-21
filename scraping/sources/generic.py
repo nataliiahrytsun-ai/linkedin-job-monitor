@@ -6,10 +6,11 @@ import hashlib
 import json
 import os
 import re
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlsplit, urlunsplit
 
 from lxml import html as lxml_html  # type: ignore[import-untyped]
 from lxml.html import HtmlElement  # type: ignore[import-untyped]
@@ -107,7 +108,9 @@ _BLOCKED_TEXT_HINTS = (
 )
 _MAX_NEARBY_TEXT = 240
 _MAX_DETERMINISTIC_TITLE = 200
-_PAGINATION_QUERY_RE = re.compile(r"(?:^|&)(?:page|offset|start|cursor)=", flags=re.IGNORECASE)
+_PAGINATION_QUERY_KEYS = frozenset({"page", "offset", "start", "startrow", "cursor"})
+_LOCALE_QUERY_KEYS = frozenset({"lang", "language", "locale"})
+_JOB_ID_QUERY_KEYS = frozenset({"id", "job", "jobid", "job_id", "positionid", "vacancyid"})
 _UNSUITABLE_TITLE_LABELS = frozenset(
     {
         "apply",
@@ -125,8 +128,55 @@ _UNSUITABLE_TITLE_LABELS = frozenset(
         "open roles",
         "read more",
         "view job",
+        "view jobs",
+        "view all jobs",
+        "all jobs",
+        "search jobs",
+        "browse jobs",
+        "find jobs",
+        "explore jobs",
+        "see jobs",
+        "sitemap",
+        "visit career page",
+        "visit careers page",
         "view position",
         "view role",
+    }
+)
+_NAVIGATION_CLASS_TOKENS = frozenset(
+    {
+        "breadcrumb",
+        "footer",
+        "header",
+        "language",
+        "locale",
+        "menu",
+        "nav",
+        "navigation",
+        "pager",
+        "pagination",
+        "sitemap",
+    }
+)
+_COLLECTION_NAVIGATION_TOKENS = frozenset(
+    {
+        "categories",
+        "category",
+        "facet",
+        "facets",
+        "filter",
+        "filters",
+        "locations",
+    }
+)
+_LISTING_ROUTE_TOKENS = frozenset(
+    {
+        "alljobs",
+        "browse",
+        "filter",
+        "filters",
+        "search",
+        "viewalljobs",
     }
 )
 _CAREER_CATEGORY_LABELS = frozenset(
@@ -221,15 +271,92 @@ def _is_navigation_anchor(anchor: HtmlElement) -> bool:
     while parent is not None:
         if getattr(parent, "tag", "").casefold() in {"aside", "footer", "header", "nav"}:
             return True
+        attributes = " ".join(
+            str(parent.get(name) or "") for name in ("class", "id", "role")
+        ).casefold()
+        attribute_tokens = set(re.findall(r"[a-z0-9]+", attributes))
+        if attribute_tokens & _NAVIGATION_CLASS_TOKENS:
+            return True
         parent = parent.getparent()
     return False
 
 
-def _looks_like_job_link(url: str, anchor_text: str | None, nearby_text: str | None) -> bool:
+def _normalized_label(value: str | None) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", (value or "").casefold()))
+
+
+def _is_navigation_label(value: str | None) -> bool:
+    label = _normalized_label(value)
+    if not label:
+        return False
+    if label in _UNSUITABLE_TITLE_LABELS:
+        return True
+    if label.startswith(("visit career", "visit careers", "view all job", "all job")):
+        return True
+    return label in {"language", "sitemap", "next", "next page", "previous", "previous page"}
+
+
+def _has_structural_job_evidence(anchor: HtmlElement) -> bool:
+    node: HtmlElement | None = anchor
+    while node is not None:
+        attributes = " ".join(str(node.get(name) or "") for name in ("class", "id", "role"))
+        compact = re.sub(r"[^a-z0-9]+", "", attributes.casefold())
+        has_job = any(token in compact for token in ("job", "position", "vacancy", "opening"))
+        has_record = any(token in compact for token in ("card", "item", "result", "row", "title"))
+        if has_job and has_record:
+            return True
+        node = node.getparent()
+    return False
+
+
+def _is_collection_navigation_anchor(anchor: HtmlElement) -> bool:
+    node: HtmlElement | None = anchor
+    while node is not None:
+        attributes = " ".join(str(node.get(name) or "") for name in ("class", "id", "role"))
+        tokens = set(re.findall(r"[a-z0-9]+", attributes.casefold()))
+        compact = "".join(tokens)
+        if tokens & _COLLECTION_NAVIGATION_TOKENS:
+            return True
+        if any(
+            token in compact
+            for token in ("categorylist", "facetlist", "filterlist", "locationlist")
+        ):
+            return True
+        node = node.getparent()
+    return False
+
+
+def _looks_like_job_link(
+    url: str,
+    anchor_text: str | None,
+    nearby_text: str | None,
+    *,
+    anchor: HtmlElement,
+    base_url: str,
+    repeated_route: bool,
+) -> bool:
     if _is_blocked_path(url):
         return False
 
-    path = urlsplit(url).path.casefold()
+    parsed = urlsplit(url)
+    path = parsed.path.casefold()
+    query_keys = {key.casefold() for key, _value in parse_qsl(parsed.query, keep_blank_values=True)}
+    if query_keys & (_LOCALE_QUERY_KEYS | _PAGINATION_QUERY_KEYS):
+        return False
+    normalized_anchor = _normalized_label(anchor_text)
+    if _is_navigation_label(anchor_text) and normalized_anchor not in {"apply", "apply now"}:
+        return False
+    if _is_collection_navigation_anchor(anchor):
+        return False
+
+    base = urlsplit(base_url)
+    same_listing_path = (
+        parsed.hostname == base.hostname
+        and path.rstrip("/") == base.path.casefold().rstrip("/")
+    )
+    if same_listing_path and not query_keys & _JOB_ID_QUERY_KEYS:
+        return False
+
     if path in {"/apply", "/job/apply", "/jobs/apply", "/career/apply", "/careers/apply"}:
         return False
     if path.endswith("/apply") or "/apply/" in path or path == "/apply":
@@ -258,7 +385,25 @@ def _looks_like_job_link(url: str, anchor_text: str | None, nearby_text: str | N
     if path.rstrip("/") in {"/career", "/careers"}:
         return False
 
-    if _contains_any(path, _JOB_PATH_HINTS):
+    if segments and segments[-1] in _LISTING_ROUTE_TOKENS:
+        return False
+
+    structural_evidence = _has_structural_job_evidence(anchor)
+    numeric_evidence = any(segment.isdigit() for segment in segments) or bool(
+        query_keys & _JOB_ID_QUERY_KEYS
+    )
+    detail_route = any(
+        segment in set(_JOB_PATH_HINTS)
+        for segment in segments[:-1]
+    ) and bool(segments and segments[-1] not in job_root_segments | _LISTING_ROUTE_TOKENS)
+    meaningful_title = _is_safe_deterministic_title(anchor_text)
+    meaningful_slug = _title_from_url_slug(url) is not None
+
+    if detail_route and (
+        meaningful_title or meaningful_slug or structural_evidence or numeric_evidence
+    ):
+        return True
+    if meaningful_title and (structural_evidence or repeated_route):
         return True
 
     combined = " ".join(part for part in (anchor_text, nearby_text) if part)
@@ -268,7 +413,11 @@ def _looks_like_job_link(url: str, anchor_text: str | None, nearby_text: str | N
     if _contains_any(combined, _BLOCKED_TEXT_HINTS):
         return False
 
-    return _contains_any(combined, _JOB_TEXT_HINTS)
+    return (
+        _contains_any(combined, _JOB_TEXT_HINTS)
+        and meaningful_title
+        and (structural_evidence or numeric_evidence)
+    )
 
 
 def _context_text(anchor: HtmlElement) -> str | None:
@@ -281,7 +430,12 @@ def _context_text(anchor: HtmlElement) -> str | None:
     return _clean_text(candidate[:_MAX_NEARBY_TEXT])
 
 
-def _build_candidate_from_anchor(anchor: HtmlElement, *, base_url: str) -> GenericCandidate | None:
+def _build_candidate_from_anchor(
+    anchor: HtmlElement,
+    *,
+    base_url: str,
+    repeated_route: bool,
+) -> GenericCandidate | None:
     if _is_navigation_anchor(anchor):
         return None
     href = getattr(anchor, "get", lambda *_args, **_kwargs: None)("href")
@@ -304,7 +458,14 @@ def _build_candidate_from_anchor(anchor: HtmlElement, *, base_url: str) -> Gener
     if anchor_text is not None and anchor_text.casefold() in _CAREER_CATEGORY_LABELS:
         return None
     nearby_text = _context_text(anchor)
-    if not _looks_like_job_link(resolved, anchor_text, nearby_text):
+    if not _looks_like_job_link(
+        resolved,
+        anchor_text,
+        nearby_text,
+        anchor=anchor,
+        base_url=base_url,
+        repeated_route=repeated_route,
+    ):
         return None
 
     candidate_id = candidate_id_for_url(resolved)
@@ -327,9 +488,31 @@ def extract_generic_candidates(
 
     document = lxml_html.fromstring(html)
     candidates_by_url: dict[str, GenericCandidate] = {}
+    anchors = tuple(document.xpath(".//a[@href]"))
+    route_counts: dict[tuple[str, str], int] = {}
+    route_keys: dict[int, tuple[str, str]] = {}
+    for anchor in anchors:
+        href = anchor.get("href")
+        if not isinstance(href, str):
+            continue
+        try:
+            parsed = urlsplit(canonicalize_url(urljoin(base_url, href)))
+        except (TypeError, ValueError, UnsafeUrlError):
+            continue
+        segments = tuple(segment for segment in parsed.path.split("/") if segment)
+        if len(segments) < 2:
+            continue
+        key = ((parsed.hostname or "").casefold(), "/".join(segments[:-1]).casefold())
+        route_keys[id(anchor)] = key
+        route_counts[key] = route_counts.get(key, 0) + 1
 
-    for anchor in document.xpath(".//a[@href]"):
-        candidate = _build_candidate_from_anchor(anchor, base_url=base_url)
+    for anchor in anchors:
+        route_key = route_keys.get(id(anchor))
+        candidate = _build_candidate_from_anchor(
+            anchor,
+            base_url=base_url,
+            repeated_route=route_key is not None and route_counts.get(route_key, 0) >= 2,
+        )
         if candidate is None:
             continue
         candidates_by_url.setdefault(candidate.url, candidate)
@@ -449,6 +632,155 @@ class ProviderResponseError(GenericExtractionError):
     """The provider responded with malformed or untrustworthy structured data."""
 
 
+def _response_html(response: Any) -> str:
+    body = getattr(response, "body", b"")
+    if isinstance(body, bytes | bytearray):
+        return body.decode("utf-8", errors="replace")
+    if isinstance(body, memoryview):
+        return bytes(body).decode("utf-8", errors="replace")
+    return str(body)
+
+
+def _public_job_search_form_target(document: HtmlElement, *, page_url: str) -> str | None:
+    page = urlsplit(page_url)
+    for form in document.xpath(".//form[@action]"):
+        if (form.get("method") or "get").casefold() != "get":
+            continue
+        inputs = tuple(form.xpath(".//input[@name]"))
+        field_names = {
+            str(field.get("name") or "").strip().casefold()
+            for field in inputs
+        }
+        query_fields = field_names & {"keyword", "keywords", "q", "query"}
+        if not query_fields:
+            continue
+        semantics = " ".join(
+            str(form.get(name) or "") for name in ("class", "id", "name", "role")
+        ).casefold()
+        if "search" not in semantics and "job" not in semantics:
+            continue
+        try:
+            action_url = canonicalize_url(urljoin(page_url, str(form.get("action"))))
+        except (TypeError, ValueError, UnsafeUrlError):
+            continue
+        action = urlsplit(action_url)
+        if (action.scheme, action.hostname, action.port) != (
+            page.scheme,
+            page.hostname,
+            page.port,
+        ):
+            continue
+        parameters = list(parse_qsl(action.query, keep_blank_values=True))
+        existing_names = {name.casefold() for name, _value in parameters}
+        allowed_empty_fields = query_fields | (
+            field_names & {"location", "locations", "locationsearch"}
+        )
+        parameters.extend(
+            (name, "") for name in sorted(allowed_empty_fields - existing_names)
+        )
+        return canonicalize_url(
+            urlunsplit(
+                (action.scheme, action.netloc, action.path, urlencode(parameters), "")
+            )
+        )
+    return None
+
+
+def _pagination_context(node: HtmlElement) -> bool:
+    current: HtmlElement | None = node
+    while current is not None:
+        attributes = " ".join(
+            str(current.get(name) or "") for name in ("class", "id", "role")
+        ).casefold()
+        if any(token in attributes for token in ("pager", "pagination", "paginator")):
+            return True
+        current = current.getparent()
+    return False
+
+
+def _pagination_url_pattern(url: str) -> bool:
+    parsed = urlsplit(url)
+    query_keys = {key.casefold() for key, _value in parse_qsl(parsed.query, keep_blank_values=True)}
+    if query_keys & _PAGINATION_QUERY_KEYS:
+        return True
+    path = parsed.path.casefold()
+    return bool(
+        re.search(r"/page/\d+/?$", path)
+        or re.search(r"/\d+/?$", path)
+    )
+
+
+def _strong_pagination_url_pattern(url: str) -> bool:
+    parsed = urlsplit(url)
+    query_keys = {key.casefold() for key, _value in parse_qsl(parsed.query, keep_blank_values=True)}
+    return bool(
+        query_keys & _PAGINATION_QUERY_KEYS
+        or re.search(r"/page/\d+/?$", parsed.path.casefold())
+    )
+
+
+def _pagination_targets(
+    document: HtmlElement,
+    *,
+    listing_url: str,
+) -> tuple[tuple[str, ...], bool]:
+    targets: list[str] = []
+    detected = False
+    for node in document.xpath(".//*[@href or @rel or @aria-label]"):
+        label = _normalized_label(" ".join(node.itertext()))
+        rel = (node.get("rel") or "").casefold().split()
+        aria_label = _normalized_label(node.get("aria-label"))
+        href = node.get("href")
+        explicit_next = (
+            "next" in rel
+            or label in {"next", "next page", "older"}
+            or aria_label in {"next", "next page"}
+        )
+        pagination_context = _pagination_context(node)
+        if explicit_next or pagination_context:
+            detected = True
+        if not isinstance(href, str) or not href.strip():
+            continue
+        try:
+            resolved = canonicalize_url(urljoin(listing_url, href))
+        except (TypeError, ValueError, UnsafeUrlError):
+            continue
+        query_keys = {
+            key.casefold()
+            for key, _value in parse_qsl(urlsplit(resolved).query, keep_blank_values=True)
+        }
+        if query_keys & _LOCALE_QUERY_KEYS and not pagination_context:
+            continue
+        supported_pattern = _strong_pagination_url_pattern(resolved) or (
+            pagination_context and _pagination_url_pattern(resolved)
+        )
+        if supported_pattern:
+            detected = True
+        if explicit_next or (pagination_context and supported_pattern) or supported_pattern:
+            targets.append(resolved)
+    return tuple(dict.fromkeys(targets)), detected
+
+
+def _same_listing_family(*, initial_url: str, current_url: str, target_url: str) -> bool:
+    initial = urlsplit(initial_url)
+    current = urlsplit(current_url)
+    target = urlsplit(target_url)
+    if (target.scheme, target.hostname, target.port) != (
+        initial.scheme,
+        initial.hostname,
+        initial.port,
+    ):
+        return False
+    target_path = target.path.rstrip("/") or "/"
+    initial_path = initial.path.rstrip("/") or "/"
+    current_path = current.path.rstrip("/") or "/"
+    if target_path in {initial_path, current_path}:
+        return True
+    if target_path.startswith(f"{initial_path}/") or target_path.startswith(f"{current_path}/"):
+        return True
+    return bool(re.search(r"/page/\d+/?$", target.path.casefold()))
+
+
 class GenericSourceAdapter:
     """Execute a public generic-careers page through the source-neutral adapter contract."""
 
@@ -458,9 +790,21 @@ class GenericSourceAdapter:
         provider: JobExtractionProvider | None = None,
         session_factory: Any | None = None,
         timeout_seconds: float = 20.0,
+        max_pages: int = 20,
+        max_requests: int = 20,
+        total_timeout_seconds: float = 45.0,
     ) -> None:
+        if type(max_pages) is not int or max_pages < 1:
+            raise ValueError("max_pages must be a positive integer")
+        if type(max_requests) is not int or max_requests < 1:
+            raise ValueError("max_requests must be a positive integer")
+        if total_timeout_seconds <= 0:
+            raise ValueError("total_timeout_seconds must be positive")
         self.provider = provider
         self.timeout_seconds = timeout_seconds
+        self.max_pages = max_pages
+        self.max_requests = max_requests
+        self.total_timeout_seconds = total_timeout_seconds
         self._session_factory = session_factory
 
     def _open_session(self: GenericSourceAdapter) -> Any:
@@ -491,29 +835,114 @@ class GenericSourceAdapter:
         try:
             canonical_source_url = canonicalize_url(source_url)
             validate_public_url(canonical_source_url)
+            started = time.monotonic()
+            current_url = canonical_source_url
+            trusted_listing_url = canonical_source_url
+            requested_urls: set[str] = set()
+            content_hashes: set[str] = set()
+            candidates_by_url: dict[str, GenericCandidate] = {}
             with self._open_session() as session:
-                response = session.get(canonical_source_url)
-                requests_made += 1
-            if getattr(response, "status", 200) >= 400:
-                raise SourceError(
-                    f"Generic fallback fetch failed with HTTP {getattr(response, 'status', 200)}",
-                    requests_made=requests_made,
-                )
-
-            body = getattr(response, "body", b"")
-            if isinstance(body, bytes | bytearray):
-                html = body.decode("utf-8", errors="replace")
-            elif isinstance(body, memoryview):
-                html = bytes(body).decode("utf-8", errors="replace")
-            else:
-                html = str(body)
-            document = lxml_html.fromstring(html)
-            if _has_unhandled_pagination(document, listing_url=canonical_source_url):
-                raise SourceError(
-                    "Generic fallback listing exposes pagination that was not fully traversed",
-                    requests_made=requests_made,
-                )
-            candidates = extract_generic_candidates(html, base_url=canonical_source_url)
+                for page_index in range(self.max_pages):
+                    if time.monotonic() - started >= self.total_timeout_seconds:
+                        raise SourceError(
+                            "Generic fallback pagination exceeded its total time limit",
+                            requests_made=requests_made,
+                        )
+                    if requests_made >= self.max_requests:
+                        raise SourceError(
+                            "Generic fallback pagination exceeded its request limit",
+                            requests_made=requests_made,
+                        )
+                    validate_public_url(current_url)
+                    requested_urls.add(current_url)
+                    response = session.get(current_url)
+                    requests_made += 1
+                    if getattr(response, "status", 200) >= 400:
+                        raise SourceError(
+                            "Generic fallback fetch failed with HTTP "
+                            f"{getattr(response, 'status', 200)}",
+                            requests_made=requests_made,
+                        )
+                    final_url = canonicalize_url(str(getattr(response, "url", current_url)))
+                    validate_public_url(final_url)
+                    if not _same_listing_family(
+                        initial_url=trusted_listing_url,
+                        current_url=current_url,
+                        target_url=final_url,
+                    ):
+                        raise SourceError(
+                            "Generic fallback pagination left the trusted listing family",
+                            requests_made=requests_made,
+                        )
+                    html = _response_html(response)
+                    page_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
+                    if page_hash in content_hashes:
+                        raise SourceError(
+                            "Generic fallback pagination repeated page content",
+                            requests_made=requests_made,
+                        )
+                    content_hashes.add(page_hash)
+                    document = lxml_html.fromstring(html)
+                    page_candidates = extract_generic_candidates(html, base_url=final_url)
+                    new_candidates = 0
+                    for candidate in page_candidates:
+                        if candidate.url not in candidates_by_url:
+                            candidates_by_url[candidate.url] = candidate
+                            new_candidates += 1
+                    if not page_candidates and not candidates_by_url:
+                        search_target = _public_job_search_form_target(
+                            document,
+                            page_url=final_url,
+                        )
+                        if search_target is not None and search_target not in requested_urls:
+                            validate_public_url(search_target)
+                            trusted_listing_url = search_target
+                            current_url = search_target
+                            continue
+                    if page_index > 0 and (not page_candidates or new_candidates == 0):
+                        raise SourceError(
+                            "Generic fallback pagination continuation produced no new jobs",
+                            requests_made=requests_made,
+                        )
+                    pagination_targets, pagination_detected = _pagination_targets(
+                        document,
+                        listing_url=final_url,
+                    )
+                    if not pagination_detected:
+                        break
+                    next_url: str | None = None
+                    for target in pagination_targets:
+                        if not _same_listing_family(
+                            initial_url=trusted_listing_url,
+                            current_url=final_url,
+                            target_url=target,
+                        ):
+                            raise SourceError(
+                                "Generic fallback rejected external or unrelated pagination URL",
+                                requests_made=requests_made,
+                            )
+                        if target not in requested_urls and target != current_url:
+                            next_url = target
+                            break
+                    if next_url is None:
+                        if pagination_targets:
+                            break
+                        raise SourceError(
+                            "Generic fallback detected unsupported pagination",
+                            requests_made=requests_made,
+                        )
+                    if page_index + 1 >= self.max_pages:
+                        raise SourceError(
+                            "Generic fallback pagination exceeded its page limit",
+                            requests_made=requests_made,
+                        )
+                    current_url = next_url
+                else:  # pragma: no cover - guarded by the explicit page-limit branch
+                    raise SourceError(
+                        "Generic fallback pagination exceeded its page limit",
+                        requests_made=requests_made,
+                    )
+            candidates = tuple(candidates_by_url.values())
             if not candidates:
                 raise SourceError(
                     "Generic fallback found no public job-like candidates",
@@ -555,23 +984,8 @@ class GenericSourceAdapter:
 
 
 def _has_unhandled_pagination(document: HtmlElement, *, listing_url: str) -> bool:
-    for node in document.xpath(".//a[@href]"):
-        href = urljoin(listing_url, node.get("href") or "")
-        parsed = urlsplit(href)
-        label = (_clean_text(" ".join(node.itertext())) or "").casefold()
-        rel = (node.get("rel") or "").casefold().split()
-        aria_label = (node.get("aria-label") or "").casefold()
-        path = parsed.path.casefold()
-        query = parsed.query.casefold()
-        if (
-            "next" in rel
-            or label in {"next", "next page", "older"}
-            or aria_label in {"next", "next page"}
-            or _PAGINATION_QUERY_RE.search(query)
-            or re.search(r"/page/\d+/?$", path)
-        ):
-            return True
-    return False
+    _targets, detected = _pagination_targets(document, listing_url=listing_url)
+    return detected
 
 
 _PROVIDER_ALLOWED_CANDIDATE_FIELDS = (

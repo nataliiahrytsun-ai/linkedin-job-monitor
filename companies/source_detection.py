@@ -181,6 +181,11 @@ def detect_company_source_url(
         generic_jobs = extract_generic_candidates(page.body, base_url=page.url)
     except (etree.ParserError, etree.XMLSyntaxError, TypeError, ValueError):
         generic_jobs = ()
+    if generic_jobs:
+        candidate.evidence = [
+            *candidate.evidence,
+            "Confirmed careers listing candidate with individual job links",
+        ]
     if is_generic_fallback_eligible(candidate) and generic_jobs:
         return DetectedCompanySource("generic", canonicalize_url(candidate.canonical_url))
 

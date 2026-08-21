@@ -201,6 +201,21 @@ def _strong_job_source_evidence(candidate: DiscoveryCandidate) -> bool:
     return any(marker in searchable for marker in job_markers)
 
 
+def _has_confirmed_listing_evidence(candidate: DiscoveryCandidate) -> bool:
+    evidence = " ".join(str(item).casefold() for item in (candidate.evidence or ()))
+    return any(
+        marker in evidence
+        for marker in (
+            "confirmed careers listing",
+            "confirmed job listing",
+            "individual job links",
+            "individual vacancy links",
+            "multiple job links",
+            "multiple vacancy links",
+        )
+    )
+
+
 def is_generic_fallback_eligible(candidate: DiscoveryCandidate) -> bool:
     """Allow generic fallback only for clearly public, non-ATS job sources."""
     if candidate.is_ignored:
@@ -229,7 +244,7 @@ def is_generic_fallback_eligible(candidate: DiscoveryCandidate) -> bool:
     if status == str(DiscoveryCandidate.JobSourceEligibility.UNCERTAIN):
         return False
     if status == str(DiscoveryCandidate.JobSourceEligibility.COMPANY_JOBS_PAGE):
-        return True
+        return _has_confirmed_listing_evidence(candidate)
     if status == str(DiscoveryCandidate.JobSourceEligibility.UNSUPPORTED_ATS):
         return _strong_job_source_evidence(candidate)
     if status == str(DiscoveryCandidate.JobSourceEligibility.POSSIBLE_JOB_SOURCE):
