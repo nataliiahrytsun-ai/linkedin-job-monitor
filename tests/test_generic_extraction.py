@@ -12,11 +12,76 @@ from scraping.sources.generic import (
     OpenAIJobExtractionProvider,
     ProviderConfigurationError,
     ProviderResponseError,
+    _generic_detail_metadata,
     candidate_id_for_url,
     extract_generic_candidates,
     extract_jobs_from_html,
     validate_extracted_jobs,
 )
+
+
+def test_generic_jsonld_detail_metadata_is_deterministic() -> None:
+    metadata = _generic_detail_metadata(
+        """
+        <html><body><script type="application/ld+json">{
+          "@type":"JobPosting", "description":"Build data products.",
+          "employmentType":"FULL_TIME", "datePosted":"2026-08-21",
+          "occupationalCategory":"Engineering", "industry":"Software",
+          "jobLocationType":"TELECOMMUTE",
+          "jobLocation":{"address":{"addressLocality":"Vienna","addressCountry":"Austria"}},
+          "baseSalary":{"currency":"EUR","value":"70000-90000"}
+        }</script></body></html>
+        """
+    )
+
+    assert metadata == {
+        "title": None,
+        "location": "Vienna, Austria", "city": "Vienna", "country": "Austria",
+        "workplace_type": "remote", "employment_type": "FULL_TIME",
+        "compensation_text": "70000-90000 EUR", "seniority_level": None,
+        "published_at": "2026-08-21", "description": "Build data products.",
+        "job_function": "Engineering", "industry": "Software",
+    }
+
+
+def test_generic_html_detail_metadata_extracts_public_hr_fields() -> None:
+    metadata = _generic_detail_metadata(
+        """
+        <html>
+          <body>
+            <div>
+              <h1 itemprop="headline">
+                (Senior) Data Platform Engineer (m/w/d)
+              </h1>
+
+              <div class="job-meta">
+                <span class="employment-type">Vollzeit</span>
+                <span class="experience-level">Berufserfahrung</span>
+                <span class="salary">ab € 3.954,-</span>
+              </div>
+
+              <div class="locations">
+                <span>Linz | </span><span>Wien</span>
+              </div>
+
+              <div itemprop="articleBody">
+                <h2>Deine Rolle</h2>
+                <p>Daten integrieren und transformieren.</p>
+                <p>Weitere öffentliche Stellenbeschreibung.</p>
+              </div>
+            </div>
+          </body>
+        </html>
+        """
+    )
+
+    assert metadata["title"] == "(Senior) Data Platform Engineer (m/w/d)"
+    assert metadata["location"] == "Linz | Wien"
+    assert metadata["employment_type"] == "Vollzeit"
+    assert metadata["seniority_level"] == "Berufserfahrung"
+    assert metadata["compensation_text"] == "ab € 3.954,-"
+    assert metadata["description"] is not None
+    assert "Daten integrieren" in metadata["description"]
 
 FIXTURES = Path(__file__).parent / "fixtures" / "generic"
 
@@ -375,6 +440,40 @@ def test_category_links_are_excluded_while_real_job_rows_are_preserved() -> None
             "https://www.example.com/careers/cloud-platform-specialist/",
             "Cloud Platform Specialist",
         ),
+    }
+
+
+def test_theme_root_and_job_taxonomy_classes_do_not_hide_real_career_rows() -> None:
+    """A listing card's taxonomy and page-wide theme classes are not navigation."""
+    positions = (
+        ("junior-business-analyst-london-abylon", "Junior Business Analyst (London)"),
+        ("data-platform-engineer-azure-databricks-devops", "Data Platform Engineer"),
+        ("senior-data-engineer", "Senior Data Engineer"),
+        ("ai-solutions-architect-enterprise-ai", "AI Solutions Architect"),
+        ("data-architect-job-budapest", "Data Architect"),
+        ("senior-project-manager", "Senior Project Manager"),
+        ("senior-business-analyst", "Senior Business Analyst"),
+        ("senior-data-analytics-consultant-london", "Senior Data Analytics Consultant"),
+        ("senior-data-analytics-consultant-front-end-focus", "Senior Data Analytics Consultant"),
+    )
+    cards = "".join(
+        "<article class='elementor-post category-career' role='listitem'>"
+        "<div class='elementor-post__text'><h2 class='elementor-post__title'>"
+        f"<a href='/career/{slug}/'>{title}</a>"
+        "</h2></div></article>"
+        for slug, title in positions
+    )
+
+    candidates = extract_generic_candidates(
+        f"<html><body class='ast-header-break-point ast-footer'>"
+        f"<div class='elementor-posts-container' role='list'>{cards}</div>"
+        "</body></html>",
+        base_url="https://www.example.com/career/",
+    )
+
+    assert len(candidates) == len(positions)
+    assert {candidate.url for candidate in candidates} == {
+        f"https://www.example.com/career/{slug}/" for slug, _title in positions
     }
 
 

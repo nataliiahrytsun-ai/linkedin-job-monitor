@@ -261,6 +261,11 @@ def _posting_to_record(posting: object, *, requests_made: int) -> SourceRecord:
             field="categories.commitment",
             requests_made=requests_made,
         ),
+        "compensation_text": _optional_string(
+            typed_posting.get("salaryDescription"),
+            field="salaryDescription",
+            requests_made=requests_made,
+        ),
         "published_at": _published_at(
             typed_posting.get("createdAt"),
             requests_made=requests_made,

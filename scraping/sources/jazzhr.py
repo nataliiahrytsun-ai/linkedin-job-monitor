@@ -655,6 +655,7 @@ def _html_detail_record(
             element_id="resumator-job-employment",
             requests_made=requests_made,
         ),
+        "compensation_text": None,
         "published_at": None,
         "description": _html_description_text(
             description,
@@ -665,7 +666,11 @@ def _html_detail_record(
             element_id="resumator-job-department",
             requests_made=requests_made,
         ),
-        "seniority_level": None,
+        "seniority_level": _html_attribute(
+            attributes,
+            element_id="resumator-job-experience",
+            requests_made=requests_made,
+        ),
         "industry": None,
     }
 
@@ -737,6 +742,7 @@ def _detail_record(
             posting.get("employmentType"),
             requests_made=requests_made,
         ),
+        "compensation_text": None,
         "published_at": _optional_schema_text(
             posting,
             "datePosted",

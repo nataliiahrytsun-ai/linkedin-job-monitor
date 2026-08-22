@@ -42,6 +42,10 @@
         <dd>{% if job.employment_type %}{{ job.employment_type|capfirst }}{% else %}—{% endif %}</dd>
       </div>
       <div class="job-overview-item">
+        <dt>Compensation</dt>
+        <dd>{{ job.compensation_text|default:"—" }}</dd>
+      </div>
+      <div class="job-overview-item">
         <dt>Seniority</dt>
         <dd>{% if job.seniority_level %}{{ job.seniority_level|capfirst }}{% else %}—{% endif %}</dd>
       </div>

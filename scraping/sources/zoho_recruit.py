@@ -320,6 +320,9 @@ def _job_record(
         "employment_type": _clean_text(
             job.get("Job_Type"), field="Job_Type", requests_made=requests_made
         ),
+        "compensation_text": _clean_text(
+            job.get("Salary"), field="Salary", requests_made=requests_made
+        ),
         "published_at": _clean_text(
             job.get("Date_Opened"), field="Date_Opened", requests_made=requests_made
         ),

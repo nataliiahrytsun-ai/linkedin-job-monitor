@@ -20,6 +20,7 @@ _CONTENT_FIELDS = (
     "location",
     "workplace_type",
     "employment_type",
+    "compensation_text",
     "seniority_level",
     "job_function",
     "industry",
@@ -59,6 +60,7 @@ class JobPostingRecord(Protocol):
     location: str | None
     workplace_type: str | None
     employment_type: str | None
+    compensation_text: str | None
     seniority_level: str | None
     job_function: str | None
     industry: str | None

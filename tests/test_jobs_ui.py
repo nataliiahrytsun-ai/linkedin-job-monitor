@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib
 import os
@@ -101,8 +101,6 @@ def test_jobs_page_returns_200_and_shows_multiple_companies() -> None:
     assert "Beta Supplier" in html
     assert "Data Analyst" in html
     assert "Platform Engineer" in html
-    assert "Published" in html
-    assert "First seen" in html
     assert 'aria-current="page">Jobs</a>' in html
 
 
@@ -280,8 +278,6 @@ def test_invalid_values_are_safe_and_selected_values_are_preserved() -> None:
     assert "Some invalid filter values were ignored." in invalid.content.decode()
     assert 'value="Safe"' in selected_html
     assert '<option value="Austria" selected>Austria</option>' in selected_html
-    assert 'value="Vienna"' in selected_html
-    assert '<option value="onsite" selected>Onsite</option>' in selected_html
 
 
 def test_per_column_filters_share_one_form_and_clear_targets_clean_url() -> None:
@@ -297,37 +293,31 @@ def test_per_column_filters_share_one_form_and_clear_targets_clean_url() -> None
     assert ">Filters<" not in html
     assert "job-filter-disclosure" not in html
     assert "job-filter-panel" not in html
-    assert html.count('<details class="column-filter') == 7
+    assert html.count('<details class="column-filter') == 4
+
     for label in (
         "Filter position",
         "Filter company",
-        "Filter location",
         "Filter country",
-        "Filter published date",
-        "Filter first seen date",
         "Filter status",
     ):
         assert f'aria-label="{label}"' in html
 
     form_start = html.index('<form class="jobs-table-filter-form"')
     filter_form = html[form_start : html.index("</form>", form_start)]
+
     for field_name in (
         "q",
+        "review_state",
         "company",
         "company_type",
         "country",
-        "location",
-        "workplace_type",
-        "published_from",
-        "published_to",
-        "first_seen_from",
-        "first_seen_to",
         "status",
-        "review_state",
     ):
         assert filter_form.count(f'name="{field_name}"') == 1
-    assert filter_form.count(">Apply</button>") == 2
-    assert filter_form.count('class="column-filter-actions"') == 2
+
+    assert filter_form.count(">Apply</button>") == 1
+    assert filter_form.count('class="column-filter-actions"') == 1
     assert '<script src="/static/js/job_filters.js" defer></script>' in html
     assert html.count("column-filter-active") == 2
 
@@ -503,7 +493,8 @@ def test_job_detail_displays_stored_fields_and_related_links() -> None:
     assert 'class="job-overview-grid"' in html
     overview_start = html.index('<dl class="job-overview-grid">')
     overview = html[overview_start : html.index("</dl>", overview_start)]
-    assert overview.count("<dt>") == 6
+    assert overview.count("<dt>") == 7
+    assert "<dt>Compensation</dt>" in overview
     for label in (
         "Location",
         "Workplace",
@@ -557,15 +548,13 @@ def test_job_dates_render_in_vienna_without_changing_stored_timestamps() -> None
         last_seen_at=last_seen_at,
     )
 
-    list_html = client().get(reverse("jobs:list")).content.decode()
     detail_html = client().get(
         reverse("jobs:detail", kwargs={"pk": posting.pk})
     ).content.decode()
 
-    assert "2026-02-01" in list_html
-    assert "2026-08-01" in list_html
     assert "1 Feb 2026" in detail_html
     assert detail_html.count("1 Aug 2026") == 2
+
     posting.refresh_from_db()
     assert posting.published_at == published_at
     assert posting.first_seen_at == first_seen_at
@@ -789,67 +778,46 @@ def test_job_detail_fetches_job_and_marks_exact_content_reviewed_in_two_queries(
     assert len(queries) == 2
 
 
-def test_global_jobs_table_has_stable_desktop_columns_and_location_tooltip() -> None:
+def test_global_jobs_table_has_stable_desktop_columns() -> None:
     employer = company(name="Stable Columns", sequence=1)
-    posting = job(
+    job(
         employer,
         sequence=1,
-        location="Vienna, Lower Austria, Austria",
+        country="Austria",
+        employment_type="Full-time",
+        seniority_level="Senior",
+        compensation_text="€70,000",
     )
+
     html = client().get(reverse("jobs:list")).content.decode()
-    stylesheet = (
-        Path(__file__).resolve().parents[1] / "static" / "css" / "app.css"
-    ).read_text(encoding="utf-8")
 
     assert '<colgroup class="global-jobs-columns">' in html
+
     for column in (
         "position",
         "company",
-        "location",
         "country",
-        "published",
-        "first-seen",
+        "employment",
+        "seniority",
+        "compensation",
         "status",
     ):
         assert f'class="global-job-col-{column}"' in html
-    assert (
-        f'class="global-job-location" title="{posting.location}">{posting.location}</td>'
-        in html
-    )
-    assert """.jobs-table,
-  .global-jobs-table {
-    table-layout: fixed;
-  }""" in stylesheet
-    assert """.global-job-col-position {
-    width: 28%;
-  }""" in stylesheet
-    assert """.global-job-col-company {
-    width: 16%;
-  }""" in stylesheet
-    assert """.global-job-col-location {
-    width: 18%;
-  }""" in stylesheet
-    assert """.global-job-col-country,
-  .global-job-col-published,
-  .global-job-col-first-seen {
-    width: 10%;
-  }""" in stylesheet
-    assert """.global-job-col-status {
-    width: 8%;
-  }""" in stylesheet
-    assert """.global-job-title {
-    white-space: normal;
-  }""" in stylesheet
-    assert """.job-location-cell,
-  .global-job-location {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }""" in stylesheet
-    assert """.global-jobs-table .column-header > span {
-    min-width: 0;
-    white-space: nowrap;
-  }""" in stylesheet
+
+    for heading in (
+        "Position",
+        "Company",
+        "Country",
+        "Status",
+    ):
+        assert f"<span>{heading}</span>" in html
+
+    for heading in (
+        "Employment",
+        "Seniority",
+        "Compensation",
+    ):
+        assert f'<th scope="col">{heading}</th>' in html
 
 
 def test_review_badge_does_not_make_job_title_a_shrinkable_flex_item() -> None:

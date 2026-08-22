@@ -323,6 +323,25 @@ def _description(value: object, *, requests_made: int) -> str | None:
     return "\n".join(lines) or None
 
 
+def _compensation(value: object, *, requests_made: int) -> str | None:
+    if value is None:
+        return None
+    salary = _object(value, field="salary", requests_made=requests_made)
+    minimum = salary.get("min")
+    maximum = salary.get("max")
+    currency = _optional_text(
+        salary.get("currency"), field="salary.currency", requests_made=requests_made
+    )
+    amounts = []
+    if minimum is not None:
+        amounts.append(str(minimum))
+    if maximum is not None and maximum != minimum:
+        amounts.append(str(maximum))
+    if not amounts:
+        return None
+    return "-".join(amounts) + (f" {currency}" if currency else "")
+
+
 def _record(
     detail: dict[str, object], *, source: DreamJobsSourceLocation, requests_made: int
 ) -> SourceRecord:
@@ -355,6 +374,9 @@ def _record(
             work_environment or ""
         ),
         "employment_type": ", ".join(employment) or None,
+        "compensation_text": _compensation(
+            detail.get("salary"), requests_made=requests_made
+        ),
         "published_at": None,
         "description": _description(detail.get("rawDescription"), requests_made=requests_made),
         "job_function": None,

@@ -21,6 +21,7 @@ class NormalizedJobPosting:
     location: str | None
     workplace_type: str | None
     employment_type: str | None
+    compensation_text: str | None
     seniority_level: str | None
     job_function: str | None
     industry: str | None
@@ -99,6 +100,7 @@ def normalize_job_posting(
     location: str | None = None,
     workplace_type: str | None = None,
     employment_type: str | None = None,
+    compensation_text: str | None = None,
     seniority_level: str | None = None,
     job_function: str | None = None,
     industry: str | None = None,
@@ -134,6 +136,7 @@ def normalize_job_posting(
         location=normalize_optional_text(location),
         workplace_type=normalized_workplace_type,
         employment_type=normalize_optional_text(employment_type),
+        compensation_text=normalize_optional_text(compensation_text),
         seniority_level=normalize_optional_text(seniority_level),
         job_function=normalize_optional_text(job_function),
         industry=normalize_optional_text(industry),

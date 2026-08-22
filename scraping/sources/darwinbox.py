@@ -224,6 +224,11 @@ def _posting_to_record(
         "employment_type": _first_text(
             posting, ("emp_type_name", "emp_sub_type_name", "emp_type"), requests_made=requests_made
         ),
+        "compensation_text": _first_text(
+            posting,
+            ("salary", "salary_range", "compensation"),
+            requests_made=requests_made,
+        ),
         "published_at": _published_at(posting, requests_made=requests_made),
         "description": _description(posting, requests_made=requests_made),
         "job_function": _first_text(

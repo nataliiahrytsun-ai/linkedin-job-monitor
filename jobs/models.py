@@ -58,6 +58,7 @@ class JobPosting(models.Model):
         db_index=True,
     )
     employment_type = models.CharField(max_length=128, null=True, blank=True, default=None)
+    compensation_text = models.TextField(null=True, blank=True, default=None)
     seniority_level = models.CharField(max_length=128, null=True, blank=True, default=None)
     job_function = models.CharField(max_length=255, null=True, blank=True, default=None)
     industry = models.CharField(max_length=255, null=True, blank=True, default=None)

@@ -1,4 +1,4 @@
-"""Low-level public job extraction contracts for generic source fallback."""
+﻿"""Low-level public job extraction contracts for generic source fallback."""
 
 from __future__ import annotations
 
@@ -269,8 +269,14 @@ def _is_navigation_anchor(anchor: HtmlElement) -> bool:
     """Reject links owned by page navigation rather than vacancy listings."""
     parent = anchor.getparent()
     while parent is not None:
-        if getattr(parent, "tag", "").casefold() in {"aside", "footer", "header", "nav"}:
+        tag = getattr(parent, "tag", "").casefold()
+        if tag in {"aside", "footer", "header", "nav"}:
             return True
+        # Theme-wide classes on the document root (for example a footer breakpoint
+        # on ``body``) do not make every content link navigation.
+        if tag in {"body", "html"}:
+            parent = parent.getparent()
+            continue
         attributes = " ".join(
             str(parent.get(name) or "") for name in ("class", "id", "role")
         ).casefold()
@@ -312,10 +318,27 @@ def _has_structural_job_evidence(anchor: HtmlElement) -> bool:
 def _is_collection_navigation_anchor(anchor: HtmlElement) -> bool:
     node: HtmlElement | None = anchor
     while node is not None:
+        tag = getattr(node, "tag", "").casefold()
+        # Theme-wide classes on the document root must not turn all vacancy
+        # links into collection-navigation links.
+        if tag in {"body", "html"}:
+            node = node.getparent()
+            continue
         attributes = " ".join(str(node.get(name) or "") for name in ("class", "id", "role"))
         tokens = set(re.findall(r"[a-z0-9]+", attributes.casefold()))
-        compact = "".join(tokens)
-        if tokens & _COLLECTION_NAVIGATION_TOKENS:
+        compact = re.sub(r"[^a-z0-9]+", "", attributes.casefold())
+        collection_tokens = tokens & _COLLECTION_NAVIGATION_TOKENS
+        # ``role=list`` is also commonly used for ordinary vacancy result
+        # collections, so a lone list marker is not navigation by itself.
+        if collection_tokens - {"category", "list"}:
+            return True
+        # A taxonomy marker on an individual result (for example
+        # ``category-career``) describes that result; it is not a category
+        # navigation container. Require stronger navigation structure when
+        # category/list markers are present.
+        if "category" in collection_tokens and tokens & {"list", "menu", "nav", "navigation"}:
+            return True
+        if "list" in collection_tokens and tokens & {"menu", "nav", "navigation"}:
             return True
         if any(
             token in compact
@@ -430,6 +453,23 @@ def _context_text(anchor: HtmlElement) -> str | None:
     return _clean_text(candidate[:_MAX_NEARBY_TEXT])
 
 
+def _anchor_title(anchor: HtmlElement) -> str | None:
+    title_nodes = anchor.xpath(
+        './/*[contains(translate(concat(@class, " ", @id), '
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "title")]'
+    )
+    values = tuple(
+        value
+        for node in title_nodes
+        if (value := _clean_text(" ".join(node.itertext()))) is not None
+    )
+    if len(values) == 1:
+        return values[0]
+    return _clean_text(
+        " ".join(part.strip() for part in anchor.itertext() if part and part.strip())
+    )
+
+
 def _build_candidate_from_anchor(
     anchor: HtmlElement,
     *,
@@ -452,9 +492,7 @@ def _build_candidate_from_anchor(
     except (TypeError, ValueError, UnsafeUrlError):
         return None
 
-    anchor_text = _clean_text(
-        " ".join(part.strip() for part in anchor.itertext() if part and part.strip())
-    )
+    anchor_text = _anchor_title(anchor)
     if anchor_text is not None and anchor_text.casefold() in _CAREER_CATEGORY_LABELS:
         return None
     nearby_text = _context_text(anchor)
@@ -641,6 +679,174 @@ def _response_html(response: Any) -> str:
     return str(body)
 
 
+def _generic_detail_metadata(html: str) -> dict[str, str | None]:
+    """Read unambiguous public job metadata from semantic HTML and JobPosting JSON-LD."""
+    empty: dict[str, str | None] = {
+        "title": None, "location": None, "city": None, "country": None, "workplace_type": None,
+        "employment_type": None, "compensation_text": None, "seniority_level": None,
+        "published_at": None, "description": None, "job_function": None, "industry": None,
+    }
+    document = lxml_html.fromstring(html)
+
+    # Semantic HTML fallback. JSON-LD below remains authoritative when present.
+    headline_nodes = document.xpath(
+        '//*[@itemprop="headline"][self::h1 or self::h2] | //h1'
+    )
+    headline_values = tuple(
+        value
+        for node in headline_nodes
+        if (value := _clean_text(" ".join(node.itertext()))) is not None
+    )
+    if headline_values:
+        empty["title"] = headline_values[0]
+
+    description_nodes = document.xpath(
+        '//*[@itemprop="articleBody"] | //*[@itemprop="description"]'
+    )
+    if len(description_nodes) == 1:
+        empty["description"] = _clean_text(
+            "\n".join(
+                part.strip()
+                for part in description_nodes[0].itertext()
+                if part and part.strip()
+            )
+        )
+
+    employment_nodes = document.xpath(
+        '//*[contains(translate(concat(@class, " ", @id), '
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ_", "abcdefghijklmnopqrstuvwxyz-"), '
+        '"employment-type")]'
+    )
+    if len(employment_nodes) == 1:
+        empty["employment_type"] = _clean_text(
+            " ".join(employment_nodes[0].itertext())
+        )
+
+    experience_nodes = document.xpath(
+        '//*[contains(translate(concat(@class, " ", @id), '
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ_", "abcdefghijklmnopqrstuvwxyz-"), '
+        '"experience-level") '
+        'or contains(translate(concat(@class, " ", @id), '
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ_", "abcdefghijklmnopqrstuvwxyz-"), '
+        '"seniority")]'
+    )
+    if len(experience_nodes) == 1:
+        empty["seniority_level"] = _clean_text(
+            " ".join(experience_nodes[0].itertext())
+        )
+
+    salary_nodes = document.xpath(
+        '//*[contains(translate(concat(@class, " ", @id), '
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ_", "abcdefghijklmnopqrstuvwxyz-"), '
+        '"salary") '
+        'or contains(translate(concat(@class, " ", @id), '
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ_", "abcdefghijklmnopqrstuvwxyz-"), '
+        '"compensation")]'
+    )
+    if len(salary_nodes) == 1:
+        empty["compensation_text"] = _clean_text(
+            " ".join(salary_nodes[0].itertext())
+        )
+
+    location_nodes = document.xpath(
+        '//*[contains(translate(concat(@class, " ", @id), '
+        '"ABCDEFGHIJKLMNOPQRSTUVWXYZ_", "abcdefghijklmnopqrstuvwxyz-"), '
+        '"locations")]'
+    )
+    if len(location_nodes) == 1:
+        location = _clean_text(" ".join(location_nodes[0].itertext()))
+        if location:
+            location = re.sub(r"\s*\|\s*", " | ", location)
+            empty["location"] = location
+
+    text_content = _clean_text(" ".join(document.itertext())) or ""
+
+    if empty["location"] is None:
+        match = re.search(
+            r"\bLocation:\s*([^\n\r]+?)(?=\s+(?:About|Publication Date:|Ref\. No:)|$)",
+            text_content,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            location = _clean_text(match.group(1))
+            if location:
+                # Some career pages inline stylesheet text immediately after
+                # the visible location. Keep only the human-readable value.
+                location = re.split(
+                    r"\s+(?:#[A-Za-z_][A-Za-z0-9_.-]*|\.[A-Za-z_][A-Za-z0-9_.-]*\s*\{)",
+                    location,
+                    maxsplit=1,
+                )[0].strip()
+                empty["location"] = location or None
+
+    if empty["published_at"] is None:
+        match = re.search(
+            r"\bPublication Date:\s*([A-Za-z]{3}\s+\d{1,2},\s+\d{4})",
+            text_content,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            from datetime import UTC, datetime
+
+            published_text = _clean_text(match.group(1))
+            if published_text:
+                try:
+                    empty["published_at"] = datetime.strptime(
+                        published_text, "%b %d, %Y"
+                    ).replace(tzinfo=UTC)
+                except ValueError:
+                    pass
+
+    postings: list[dict[str, Any]] = []
+    for node in document.xpath('//script[@type="application/ld+json"]'):
+        try:
+            value = json.loads(node.text or "")
+        except json.JSONDecodeError:
+            continue
+        values = value.get("@graph", value) if isinstance(value, dict) else value
+        if isinstance(values, dict):
+            values = [values]
+        if isinstance(values, list):
+            postings.extend(
+                x for x in values if isinstance(x, dict) and x.get("@type") == "JobPosting"
+            )
+    if len(postings) != 1:
+        return empty
+    posting = postings[0]
+    def text(key: str) -> str | None:
+        value = posting.get(key)
+        return _clean_text(value) if isinstance(value, str) else None
+    empty["title"] = text("title") or empty["title"]
+    location = posting.get("jobLocation")
+    address = location.get("address") if isinstance(location, dict) else None
+    if isinstance(address, dict):
+        locality = address.get("addressLocality")
+        country = address.get("addressCountry")
+        text_value = _clean_text(locality) if isinstance(locality, str) else None
+        empty["city"] = text_value
+        empty["country"] = _clean_text(country) if isinstance(country, str) else None
+        empty["location"] = (
+            ", ".join(x for x in (text_value, empty["country"]) if x)
+            or empty["location"]
+        )
+    location_type = text("jobLocationType")
+    if location_type and location_type.casefold() == "telecommute":
+        empty["workplace_type"] = "remote"
+    empty["employment_type"] = text("employmentType") or empty["employment_type"]
+    empty["published_at"] = text("datePosted") or empty["published_at"]
+    empty["description"] = text("description") or empty["description"]
+    empty["job_function"] = text("occupationalCategory") or empty["job_function"]
+    empty["industry"] = text("industry") or empty["industry"]
+    salary = posting.get("baseSalary")
+    if isinstance(salary, dict):
+        amount = salary.get("value")
+        currency = salary.get("currency")
+        if isinstance(amount, str | int | float):
+            suffix = f" {currency}" if isinstance(currency, str) else ""
+            empty["compensation_text"] = f"{amount}{suffix}"
+    return empty
+
+
 def _public_job_search_form_target(document: HtmlElement, *, page_url: str) -> str | None:
     page = urlsplit(page_url)
     for form in document.xpath(".//form[@action]"):
@@ -792,20 +998,31 @@ class GenericSourceAdapter:
         timeout_seconds: float = 20.0,
         max_pages: int = 20,
         max_requests: int = 20,
+        max_detail_requests: int = 50,
         total_timeout_seconds: float = 45.0,
     ) -> None:
         if type(max_pages) is not int or max_pages < 1:
             raise ValueError("max_pages must be a positive integer")
         if type(max_requests) is not int or max_requests < 1:
             raise ValueError("max_requests must be a positive integer")
+        if type(max_detail_requests) is not int or max_detail_requests < 0:
+            raise ValueError("max_detail_requests must be a non-negative integer")
         if total_timeout_seconds <= 0:
             raise ValueError("total_timeout_seconds must be positive")
         self.provider = provider
         self.timeout_seconds = timeout_seconds
         self.max_pages = max_pages
         self.max_requests = max_requests
+        self.max_detail_requests = max_detail_requests
         self.total_timeout_seconds = total_timeout_seconds
         self._session_factory = session_factory
+        self._detail_skip_urls: frozenset[str] = frozenset()
+
+    def set_detail_skip_urls(self, urls: set[str]) -> None:
+        """Skip detail pages already sufficiently enriched by earlier runs."""
+        self._detail_skip_urls = frozenset(
+            url for url in urls if isinstance(url, str) and url.strip()
+        )
 
     def _open_session(self: GenericSourceAdapter) -> Any:
         if self._session_factory is not None:
@@ -961,18 +1178,43 @@ class GenericSourceAdapter:
                 )
 
             candidate_map = {candidate.candidate_id: candidate for candidate in candidates}
-            records = tuple(
-                cast(
-                    dict[str, object],
-                    {
-                        "source": "generic",
-                        "source_job_id": job.candidate_id,
-                        "title": job.title,
-                        "source_job_url": candidate_map[job.candidate_id].url,
-                    },
-                )
-                for job in validated_jobs
-            )
+            metadata_by_id: dict[str, dict[str, str | None]] = {}
+            # Injected sessions are deterministic listing fixtures; detail fetching is
+            # exercised only by the production transport or explicit integration tests.
+            if self._session_factory is None:
+                detail_requests_made = 0
+                with self._open_session() as detail_session:
+                    for job in validated_jobs:
+                        if detail_requests_made >= self.max_detail_requests:
+                            break
+                        detail_url = candidate_map[job.candidate_id].url
+                        if detail_url in self._detail_skip_urls:
+                            continue
+                        if urlsplit(detail_url).hostname != urlsplit(canonical_source_url).hostname:
+                            continue
+                        try:
+                            validate_public_url(detail_url)
+                            detail_response = detail_session.get(detail_url)
+                            requests_made += 1
+                            detail_requests_made += 1
+                            if getattr(detail_response, "status", 200) < 400:
+                                final_detail_url = canonicalize_url(
+                                    str(getattr(detail_response, "url", detail_url))
+                                )
+                                if (
+                                    urlsplit(final_detail_url).hostname
+                                    == urlsplit(canonical_source_url).hostname
+                                ):
+                                    metadata_by_id[job.candidate_id] = _generic_detail_metadata(
+                                        _response_html(detail_response)
+                                    )
+                        except (KeyError, UnsafeUrlError, ValueError, TypeError):
+                            continue
+            records = tuple(cast(dict[str, object], {
+                "source": "generic", "source_job_id": job.candidate_id, "title": job.title,
+                "source_job_url": candidate_map[job.candidate_id].url,
+                **metadata_by_id.get(job.candidate_id, {}),
+            }) for job in validated_jobs)
             return SourceBatch(records=records, requests_made=requests_made)
         except SourceError:
             raise

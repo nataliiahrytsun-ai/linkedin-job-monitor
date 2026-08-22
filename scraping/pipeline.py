@@ -1,4 +1,4 @@
-"""Source-neutral orchestration for vacancy source batches."""
+﻿"""Source-neutral orchestration for vacancy source batches."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 from time import sleep
 from typing import Literal, Protocol, cast
 
+from django.apps import apps  # type: ignore[import-untyped]
 from django.db import (  # type: ignore[import-untyped]
     OperationalError,
     close_old_connections,
@@ -53,6 +54,7 @@ _NORMALIZATION_FIELDS = frozenset(
         "location",
         "workplace_type",
         "employment_type",
+        "compensation_text",
         "seniority_level",
         "job_function",
         "industry",
@@ -185,15 +187,17 @@ def _published_at(record: SourceRecord, *, index: int) -> datetime | None:
     value = record.get("published_at")
     if value is None:
         return None
+    if isinstance(value, datetime):
+        return value
     if not isinstance(value, str):
         raise ValueError(
-            f"source record {index} field published_at must be an ISO datetime or null"
+            f"source record {index} field published_at must be a datetime, ISO datetime, or null"
         )
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
         raise ValueError(
-            f"source record {index} field published_at must be an ISO datetime or null"
+            f"source record {index} field published_at must be a datetime, ISO datetime, or null"
         ) from error
 
 
@@ -219,6 +223,7 @@ def _normalize_source_record(
         location=_optional_string(record, "location", index=index),
         workplace_type=_optional_string(record, "workplace_type", index=index),
         employment_type=_optional_string(record, "employment_type", index=index),
+        compensation_text=_optional_string(record, "compensation_text", index=index),
         seniority_level=_optional_string(record, "seniority_level", index=index),
         job_function=_optional_string(record, "job_function", index=index),
         industry=_optional_string(record, "industry", index=index),
@@ -370,9 +375,66 @@ def run_source_pipeline(
 
     requests_made = 0
     try:
+        existing_detail_metadata: dict[str, dict[str, object]] = {}
+        set_detail_skip_urls = getattr(adapter, "set_detail_skip_urls", None)
+        if callable(set_detail_skip_urls) and company_source.pk is not None:
+            job_posting_model = apps.get_model("jobs", "JobPosting")
+            existing_detail_rows = job_posting_model.objects.filter(
+                company_source_id=company_source.pk
+            ).values(
+                "source_job_url",
+                "description",
+                "location",
+                "published_at",
+                "employment_type",
+                "seniority_level",
+                "compensation_text",
+            )
+
+            enriched_urls = {
+                row["source_job_url"]
+                for row in existing_detail_rows
+                if row["source_job_url"]
+                and row["description"]
+                and any(
+                    (
+                        row["location"],
+                        row["published_at"],
+                        row["employment_type"],
+                        row["seniority_level"],
+                        row["compensation_text"],
+                    )
+                )
+            }
+            existing_detail_metadata = {
+                row["source_job_url"]: {
+                    key: row[key]
+                    for key in (
+                        "description",
+                        "location",
+                        "published_at",
+                        "employment_type",
+                        "seniority_level",
+                        "compensation_text",
+                    )
+                    if row[key] not in (None, "")
+                }
+                for row in existing_detail_rows
+                if row["source_job_url"] in enriched_urls
+            }
+            set_detail_skip_urls(enriched_urls)
+
         batch = adapter.fetch(company=company_source)
         requests_made = batch.requests_made
-        records = batch.records
+        records = tuple(
+            {
+                **record,
+                **existing_detail_metadata.get(
+                    record.get("source_job_url"), {}
+                ),
+            }
+            for record in batch.records
+        )
         # Fetching is deliberately complete before this short, SQLite-serialized
         # persistence/reconciliation phase.
         with database_write_guard(), transaction.atomic():

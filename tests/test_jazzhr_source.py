@@ -145,7 +145,8 @@ def test_complete_snapshot_maps_listing_and_detail_fields() -> None:
         "country": "Austria",
         "city": None,
         "workplace_type": None,
-        "employment_type": "Full Time",
+            "employment_type": "Full Time",
+            "compensation_text": None,
         "published_at": "2026-08-01",
         "description": "Build & improve data.\nWork across teams.",
         "job_function": "Data & AI",
@@ -320,7 +321,7 @@ def test_organization_only_jsonld_uses_strict_html_job_fallback() -> None:
         "Strong programme leadership.\n"
         "Clear stakeholder communication."
     )
-    assert "Experienced" not in record.values()
+    assert record["seniority_level"] == "Experienced"
     assert "First Name" not in str(record["description"])
     assert "Resume" not in str(record["description"])
     assert "captcha" not in str(record["description"]).casefold()

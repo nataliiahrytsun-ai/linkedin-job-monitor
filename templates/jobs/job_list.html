@@ -29,10 +29,10 @@
             <colgroup class="global-jobs-columns">
               <col class="global-job-col-position">
               <col class="global-job-col-company">
-              <col class="global-job-col-location">
               <col class="global-job-col-country">
-              <col class="global-job-col-published">
-              <col class="global-job-col-first-seen">
+              <col class="global-job-col-employment">
+              <col class="global-job-col-seniority">
+              <col class="global-job-col-compensation">
               <col class="global-job-col-status">
             </colgroup>
             <thead>
@@ -71,23 +71,6 @@
                 </th>
                 <th scope="col">
                   <div class="column-header">
-                    <span>Location</span>
-                    <details class="column-filter{% if filter_form.location.value or filter_form.workplace_type.value %} column-filter-active{% endif %}">
-                      <summary aria-label="Filter location">▾</summary>
-                      <div class="column-filter-popover">
-                        <label for="{{ filter_form.location.id_for_label }}">{{ filter_form.location.label }}</label>
-                        {{ filter_form.location }}
-                        <label for="{{ filter_form.workplace_type.id_for_label }}">{{ filter_form.workplace_type.label }}</label>
-                        {{ filter_form.workplace_type }}
-                        <div class="column-filter-actions">
-                          <button class="button button-primary column-filter-apply" type="submit">Apply</button>
-                        </div>
-                      </div>
-                    </details>
-                  </div>
-                </th>
-                <th scope="col">
-                  <div class="column-header">
                     <span>Country</span>
                     <details class="column-filter{% if filter_form.country.value %} column-filter-active{% endif %}">
                       <summary aria-label="Filter country">▾</summary>
@@ -98,38 +81,9 @@
                     </details>
                   </div>
                 </th>
-                <th scope="col">
-                  <div class="column-header">
-                    <span>Published</span>
-                    <details class="column-filter{% if filter_form.published_from.value or filter_form.published_to.value %} column-filter-active{% endif %}">
-                      <summary aria-label="Filter published date">▾</summary>
-                      <div class="column-filter-popover">
-                        <label for="{{ filter_form.published_from.id_for_label }}">{{ filter_form.published_from.label }}</label>
-                        {{ filter_form.published_from }}
-                        {% if filter_form.published_from.errors %}<div class="field-errors">{{ filter_form.published_from.errors }}</div>{% endif %}
-                        <label for="{{ filter_form.published_to.id_for_label }}">{{ filter_form.published_to.label }}</label>
-                        {{ filter_form.published_to }}
-                        {% if filter_form.published_to.errors %}<div class="field-errors">{{ filter_form.published_to.errors }}</div>{% endif %}
-                      </div>
-                    </details>
-                  </div>
-                </th>
-                <th scope="col">
-                  <div class="column-header">
-                    <span>First seen</span>
-                    <details class="column-filter{% if filter_form.first_seen_from.value or filter_form.first_seen_to.value %} column-filter-active{% endif %}">
-                      <summary aria-label="Filter first seen date">▾</summary>
-                      <div class="column-filter-popover">
-                        <label for="{{ filter_form.first_seen_from.id_for_label }}">{{ filter_form.first_seen_from.label }}</label>
-                        {{ filter_form.first_seen_from }}
-                        {% if filter_form.first_seen_from.errors %}<div class="field-errors">{{ filter_form.first_seen_from.errors }}</div>{% endif %}
-                        <label for="{{ filter_form.first_seen_to.id_for_label }}">{{ filter_form.first_seen_to.label }}</label>
-                        {{ filter_form.first_seen_to }}
-                        {% if filter_form.first_seen_to.errors %}<div class="field-errors">{{ filter_form.first_seen_to.errors }}</div>{% endif %}
-                      </div>
-                    </details>
-                  </div>
-                </th>
+                <th scope="col">Employment</th>
+                <th scope="col">Seniority</th>
+                <th scope="col">Compensation</th>
                 <th scope="col">
                   <div class="column-header">
                     <span>Status</span>
@@ -158,12 +112,10 @@
                     </div>
                   </th>
                   <td class="global-job-company">{{ job.company.name }}</td>
-                  <td class="global-job-location" title="{{ job.location|default:'—' }}">{{ job.location|default:"—" }}</td>
                   <td class="global-job-country">{{ job.country|default:"—" }}</td>
-                  <td class="global-job-published">
-                    {% if job.published_at %}{{ job.published_at|date:"Y-m-d" }}{% else %}—{% endif %}
-                  </td>
-                  <td class="global-job-first-seen">{{ job.first_seen_at|date:"Y-m-d" }}</td>
+                  <td class="global-job-employment">{{ job.employment_type|default:"—" }}</td>
+                  <td class="global-job-seniority">{{ job.seniority_level|default:"—" }}</td>
+                  <td class="global-job-compensation">{{ job.compensation_text|default:"—" }}</td>
                   <td class="global-job-status">
                     <span class="status-badge{% if job.status == 'active' %} status-active{% endif %}">{{ job.status|upper }}</span>
                   </td>
