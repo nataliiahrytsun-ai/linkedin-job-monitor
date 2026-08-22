@@ -1958,20 +1958,27 @@ body:has(.source-dialog[open]) {
   }
 
   .company-job-col-position {
-    width: 31%;
+    width: 32%;
   }
 
-  .company-job-col-location {
-    width: 23%;
+  .company-job-col-country {
+    width: 13%;
   }
 
-  .company-job-col-country,
-  .company-job-col-published {
-    width: 16%;
+  .company-job-col-employment {
+    width: 14%;
+  }
+
+  .company-job-col-seniority {
+    width: 13%;
+  }
+
+  .company-job-col-compensation {
+    width: 18%;
   }
 
   .company-job-col-status {
-    width: 14%;
+    width: 10%;
   }
 
   .global-jobs-table {
@@ -2730,8 +2737,8 @@ body:has(.source-dialog[open]) {
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
       "position status"
-      "location location"
-      "country published";
+      "country employment"
+      "seniority compensation";
     align-items: start;
     gap: 0.25rem 0.75rem;
     padding: 0.85rem 1rem;
@@ -2756,27 +2763,26 @@ body:has(.source-dialog[open]) {
     justify-self: end;
   }
 
-  .job-location-cell {
-    grid-area: location;
-  }
-
   .job-country-cell {
     grid-area: country;
   }
 
-  .job-published-cell {
-    grid-area: published;
-    white-space: nowrap;
+  .job-employment-cell {
+    grid-area: employment;
   }
 
-  .job-published-cell::before {
-    margin-right: 0.5rem;
-    content: "·";
+  .job-seniority-cell {
+    grid-area: seniority;
   }
 
-  .job-location-cell,
+  .job-compensation-cell {
+    grid-area: compensation;
+  }
+
   .job-country-cell,
-  .job-published-cell {
+  .job-employment-cell,
+  .job-seniority-cell,
+  .job-compensation-cell {
     color: var(--muted);
     font-size: 0.9rem;
   }

@@ -243,9 +243,10 @@
           <table class="data-table jobs-table">
             <colgroup class="company-jobs-columns">
               <col class="company-job-col-position">
-              <col class="company-job-col-location">
               <col class="company-job-col-country">
-              <col class="company-job-col-published">
+              <col class="company-job-col-employment">
+              <col class="company-job-col-seniority">
+              <col class="company-job-col-compensation">
               <col class="company-job-col-status">
             </colgroup>
             <thead>
@@ -268,24 +269,7 @@
                     </details>
                   </div>
                 </th>
-                <th scope="col">
-                  <div class="column-header">
-                    <span>Location</span>
-                    <details class="column-filter{% if filter_form.location.value or filter_form.workplace_type.value %} column-filter-active{% endif %}">
-                      <summary aria-label="Filter location">▾</summary>
-                      <div class="column-filter-popover">
-                        <label for="{{ filter_form.location.id_for_label }}">{{ filter_form.location.label }}</label>
-                        {{ filter_form.location }}
-                        <label for="{{ filter_form.workplace_type.id_for_label }}">{{ filter_form.workplace_type.label }}</label>
-                        {{ filter_form.workplace_type }}
-                        <div class="column-filter-actions">
-                          <button class="button button-primary column-filter-apply" type="submit">Apply</button>
-                        </div>
-                      </div>
-                    </details>
-                  </div>
-                </th>
-                <th scope="col">
+<th scope="col">
                   <div class="column-header">
                     <span>Country</span>
                     <details class="column-filter{% if filter_form.country.value %} column-filter-active{% endif %}">
@@ -297,22 +281,9 @@
                     </details>
                   </div>
                 </th>
-                <th scope="col">
-                  <div class="column-header">
-                    <span>Published</span>
-                    <details class="column-filter{% if filter_form.published_from.value or filter_form.published_to.value %} column-filter-active{% endif %}">
-                      <summary aria-label="Filter published date">▾</summary>
-                      <div class="column-filter-popover">
-                        <label for="{{ filter_form.published_from.id_for_label }}">{{ filter_form.published_from.label }}</label>
-                        {{ filter_form.published_from }}
-                        {% if filter_form.published_from.errors %}<div class="field-errors">{{ filter_form.published_from.errors }}</div>{% endif %}
-                        <label for="{{ filter_form.published_to.id_for_label }}">{{ filter_form.published_to.label }}</label>
-                        {{ filter_form.published_to }}
-                        {% if filter_form.published_to.errors %}<div class="field-errors">{{ filter_form.published_to.errors }}</div>{% endif %}
-                      </div>
-                    </details>
-                  </div>
-                </th>
+                <th scope="col">Employment</th>
+                <th scope="col">Seniority</th>
+                <th scope="col">Compensation</th>
                 <th scope="col">
                   <div class="column-header">
                     <span>Status</span>
@@ -340,15 +311,10 @@
                       {% endif %}
                     </div>
                   </th>
-                  <td class="job-location-cell" title="{{ job.location|default:'—' }}">{{ job.location|default:"—" }}</td>
-                  <td class="job-country-cell">{{ job.country|default:"—" }}</td>
-                  <td class="job-published-cell">
-                    {% if job.published_at %}
-                      {{ job.published_at|date:"Y-m-d" }}
-                    {% else %}
-                      —
-                    {% endif %}
-                  </td>
+                  <td class="job-country-cell">{{ job.country|default:"&mdash;" }}</td>
+                  <td class="job-employment-cell">{{ job.employment_type|default:"&mdash;" }}</td>
+                  <td class="job-seniority-cell">{{ job.seniority_level|default:"&mdash;" }}</td>
+                  <td class="job-compensation-cell">{{ job.compensation_text|default:"&mdash;" }}</td>
                   <td class="job-status-cell">
                     <span class="status-badge{% if job.status == 'active' %} status-active{% endif %}">{{ job.status|upper }}</span>
                   </td>

@@ -346,8 +346,8 @@ def test_jobs_table_responsive_layout_contract() -> None:
     assert ".jobs-table thead tr" in mobile_css
     assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in mobile_css
     assert '"position status"' in mobile_css
-    assert '"location location"' in mobile_css
-    assert '"country published"' in mobile_css
+    assert '"country employment"' in mobile_css
+    assert '"seniority compensation"' in mobile_css
 
 
 def test_company_detail_renders_information_navigation_and_empty_states() -> None:
@@ -485,9 +485,7 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
     assert response.context["jobs"].count() == 3
     assert html.index(newer.title) < html.index(older.title)
     assert "Current Analyst" in html
-    assert "Vienna" in html
     assert "Austria" in html
-    assert "2026-08-01" in html
     assert "ACTIVE" in html
     assert "NOT_FOUND" in html
     assert "CLOSED" in html
@@ -502,10 +500,16 @@ def test_company_detail_scopes_jobs_counts_only_active_and_renders_fields() -> N
     jobs_table_end = html.index("</table>", jobs_table_start)
     jobs_html = html[jobs_table_start:jobs_table_end]
     assert '<colgroup class="company-jobs-columns">' in jobs_html
-    for column in ("position", "location", "country", "published", "status"):
+    for column in (
+        "position",
+        "country",
+        "employment",
+        "seniority",
+        "compensation",
+        "status",
+    ):
         assert f'class="company-job-col-{column}"' in jobs_html
-    assert 'class="job-location-cell" title="Vienna">Vienna</td>' in jobs_html
-    assert jobs_html.count('<th scope="col">') == 5
+    assert jobs_html.count('<th scope="col">') == 6
     assert "Original job link" not in jobs_html
     assert ">Open</a>" not in jobs_html
     for posting in (newer, older, closed):
@@ -525,17 +529,22 @@ def test_company_jobs_table_has_stable_desktop_column_proportions() -> None:
     ).read_text(encoding="utf-8")
 
     assert """.company-job-col-position {
-    width: 31%;
+    width: 32%;
   }""" in stylesheet
-    assert """.company-job-col-location {
-    width: 23%;
+    assert """.company-job-col-country {
+    width: 13%;
   }""" in stylesheet
-    assert """.company-job-col-country,
-  .company-job-col-published {
-    width: 16%;
+    assert """.company-job-col-employment {
+    width: 14%;
+  }""" in stylesheet
+    assert """.company-job-col-seniority {
+    width: 13%;
+  }""" in stylesheet
+    assert """.company-job-col-compensation {
+    width: 18%;
   }""" in stylesheet
     assert """.company-job-col-status {
-    width: 14%;
+    width: 10%;
   }""" in stylesheet
 
 
@@ -662,22 +671,16 @@ def test_company_detail_filter_ui_reuses_column_popovers_and_clean_company_url()
     )
     assert clear_filters in html
     assert html.index(clear_filters) < form_start
-    assert filter_form.count('<details class="column-filter') == 5
+    assert filter_form.count('<details class="column-filter') == 3
     for label in (
         "Filter position",
-        "Filter location",
         "Filter country",
-        "Filter published date",
         "Filter status",
     ):
         assert f'aria-label="{label}"' in filter_form
     for field_name in (
         "q",
-        "location",
-        "workplace_type",
         "country",
-        "published_from",
-        "published_to",
         "status",
         "review_state",
     ):
@@ -685,6 +688,10 @@ def test_company_detail_filter_ui_reuses_column_popovers_and_clean_company_url()
     for excluded_name in (
         "company",
         "company_type",
+        "location",
+        "workplace_type",
+        "published_from",
+        "published_to",
         "first_seen_from",
         "first_seen_to",
     ):
@@ -746,7 +753,6 @@ def test_company_detail_get_is_read_only_and_starts_no_execution() -> None:
     assert response.status_code == 200
     assert "SUCCESS" in response.content.decode()
     assert "2026-08-06 14:00" in response.content.decode()
-    assert "2026-02-01" in response.content.decode()
     assert model("companies.Company").objects.values().get(pk=company.pk) == company_before
     assert model("jobs.JobPosting").objects.values().get(pk=job.pk) == job_before
     assert model("scrape_runs.ScrapeRun").objects.count() == 0

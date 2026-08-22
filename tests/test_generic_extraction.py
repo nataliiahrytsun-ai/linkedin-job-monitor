@@ -746,3 +746,135 @@ def test_no_live_api_call_is_attempted_in_normal_test_suite(
     monkeypatch.delenv("GENERIC_AI_OPENAI_API_KEY", raising=False)
     with pytest.raises(ProviderConfigurationError, match="GENERIC_AI_OPENAI_API_KEY"):
         OpenAIJobExtractionProvider()
+
+def test_generic_detail_metadata_extracts_elementor_job_content_without_navigation_noise() -> None:
+    html = """
+    <html>
+      <body>
+        <header>
+          <nav>
+            <div class="elementor-widget elementor-widget-text-editor">
+              <div class="elementor-widget-container">
+                Header navigation text
+              </div>
+            </div>
+          </nav>
+        </header>
+
+        <main data-elementor-type="wp-post">
+          <div class="elementor-widget elementor-widget-heading">
+            <div class="elementor-widget-container">
+              <h1>Data Architect</h1>
+            </div>
+          </div>
+
+          <div class="elementor-widget elementor-widget-text-editor">
+            <div class="elementor-widget-container">
+              <p>
+                We are looking for a Data Architect to design scalable
+                data platforms and modern data warehouse architectures.
+              </p>
+            </div>
+          </div>
+
+          <div class="elementor-widget elementor-widget-heading">
+            <div class="elementor-widget-container">
+              <h3>Key Responsibilities</h3>
+            </div>
+          </div>
+
+          <div class="elementor-widget elementor-widget-text-editor">
+            <div class="elementor-widget-container">
+              <ul>
+                <li>Design enterprise data platforms.</li>
+                <li>Define data warehouse standards.</li>
+                <li>Support engineering teams through architecture guidance.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="elementor-widget elementor-widget-heading">
+            <div class="elementor-widget-container">
+              <h3>Requirements</h3>
+            </div>
+          </div>
+
+          <div class="elementor-widget elementor-widget-text-editor">
+            <div class="elementor-widget-container">
+              <ul>
+                <li>Five years of data architecture experience.</li>
+                <li>Strong SQL and cloud data platform knowledge.</li>
+              </ul>
+            </div>
+          </div>
+        </main>
+
+        <footer>
+          <div class="elementor-widget elementor-widget-text-editor">
+            <div class="elementor-widget-container">
+              Budapest Office: Example street 1
+            </div>
+          </div>
+        </footer>
+      </body>
+    </html>
+    """
+
+    metadata = _generic_detail_metadata(html)
+
+    assert metadata["description"] is not None
+    assert "We are looking for a Data Architect" in metadata["description"]
+    assert "Key Responsibilities" in metadata["description"]
+    assert "Design enterprise data platforms." in metadata["description"]
+    assert "Requirements" in metadata["description"]
+    assert "Header navigation text" not in metadata["description"]
+    assert "Budapest Office" not in metadata["description"]
+
+def test_generic_detail_metadata_extracts_explicit_labeled_hr_metadata() -> None:
+    html = """
+    <html>
+      <body>
+        <main>
+          <dl>
+            <dt>Location</dt>
+            <dd>Vienna, Austria</dd>
+
+            <dt>Country</dt>
+            <dd>Austria</dd>
+          </dl>
+
+          <table>
+            <tr>
+              <th>Employment type</th>
+              <td>Full-time</td>
+            </tr>
+            <tr>
+              <th>Seniority level</th>
+              <td>Senior</td>
+            </tr>
+          </table>
+
+          <p><strong>Salary:</strong> EUR 70,000 - 80,000</p>
+          <p><strong>Work model:</strong> Hybrid</p>
+
+          <p>
+            Requirements: 5+ years of experience working with modern
+            data platforms.
+          </p>
+        </main>
+
+        <footer>
+          <p><strong>Location:</strong> London Office</p>
+        </footer>
+      </body>
+    </html>
+    """
+
+    metadata = _generic_detail_metadata(html)
+
+    assert metadata["location"] == "Vienna, Austria"
+    assert metadata["country"] == "Austria"
+    assert metadata["employment_type"] == "Full-time"
+    assert metadata["seniority_level"] == "Senior"
+    assert metadata["compensation_text"] == "EUR 70,000 - 80,000"
+    assert metadata["workplace_type"] == "Hybrid"

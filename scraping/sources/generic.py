@@ -712,6 +712,56 @@ def _generic_detail_metadata(html: str) -> dict[str, str | None]:
             )
         )
 
+    # Generic WordPress / Elementor fallback. Many public career pages expose
+    # the vacancy body as ordinary Elementor heading, text-editor, and icon-list
+    # widgets instead of schema.org articleBody/description markup.
+    if empty["description"] is None:
+        elementor_roots = document.xpath(
+            '//*[(@data-elementor-type="wp-post" '
+            'or @data-elementor-type="single-post" '
+            'or @data-elementor-type="wp-page" '
+            'or contains(concat(" ", normalize-space(@class), " "), '
+            '" elementor-location-single ")) '
+            'and not(ancestor::header or ancestor::footer or ancestor::nav)] '
+            '| //main[not(ancestor::header or ancestor::footer or ancestor::nav)] '
+            '| //article[not(ancestor::header or ancestor::footer or ancestor::nav)]'
+        )
+
+        elementor_candidates: list[str] = []
+        for root in elementor_roots:
+            widgets = root.xpath(
+                './/*[('
+                'contains(concat(" ", normalize-space(@class), " "), '
+                '" elementor-widget-text-editor ") '
+                'or contains(concat(" ", normalize-space(@class), " "), '
+                '" elementor-widget-heading ") '
+                'or contains(concat(" ", normalize-space(@class), " "), '
+                '" elementor-widget-icon-list ")'
+                ') and not(ancestor::header or ancestor::footer or ancestor::nav)]'
+            )
+
+            parts: list[str] = []
+            seen_parts: set[str] = set()
+            for widget in widgets:
+                value = _clean_text(
+                    "\n".join(
+                        part.strip()
+                        for part in widget.itertext()
+                        if part and part.strip()
+                    )
+                )
+                if not value or value in seen_parts:
+                    continue
+                seen_parts.add(value)
+                parts.append(value)
+
+            candidate = _clean_text("\n".join(parts))
+            if candidate and len(candidate) >= 200:
+                elementor_candidates.append(candidate)
+
+        if elementor_candidates:
+            empty["description"] = max(elementor_candidates, key=len)
+
     employment_nodes = document.xpath(
         '//*[contains(translate(concat(@class, " ", @id), '
         '"ABCDEFGHIJKLMNOPQRSTUVWXYZ_", "abcdefghijklmnopqrstuvwxyz-"), '
@@ -758,6 +808,122 @@ def _generic_detail_metadata(html: str) -> dict[str, str | None]:
         if location:
             location = re.sub(r"\s*\|\s*", " | ", location)
             empty["location"] = location
+
+    # Explicit labeled metadata fallback. This handles common semantic
+    # patterns used by public career pages without inferring metadata from
+    # arbitrary vacancy prose.
+    label_targets = {
+        "location": "location",
+        "job location": "location",
+        "work location": "location",
+        "country": "country",
+        "employment": "employment_type",
+        "employment type": "employment_type",
+        "job type": "employment_type",
+        "contract type": "employment_type",
+        "seniority": "seniority_level",
+        "seniority level": "seniority_level",
+        "experience level": "seniority_level",
+        "career level": "seniority_level",
+        "salary": "compensation_text",
+        "compensation": "compensation_text",
+        "pay": "compensation_text",
+        "remuneration": "compensation_text",
+        "workplace type": "workplace_type",
+        "work model": "workplace_type",
+        "working model": "workplace_type",
+    }
+
+    def assign_labeled_value(label: str | None, value: str | None) -> None:
+        clean_label = _clean_text(label) if label else None
+        clean_value = _clean_text(value) if value else None
+        if not clean_label or not clean_value:
+            return
+
+        normalized_label = re.sub(
+            r"\s+",
+            " ",
+            clean_label.casefold().strip().rstrip(":"),
+        )
+        target = label_targets.get(normalized_label)
+        if target is None or empty[target] is not None:
+            return
+
+        # Metadata values should be compact. This also prevents accidentally
+        # treating a whole description block as the value of a short label.
+        if len(clean_value) > 250:
+            return
+
+        empty[target] = clean_value
+
+    # Definition lists: <dt>Location</dt><dd>Vienna</dd>
+    for term in document.xpath(
+        '//dt[not(ancestor::header or ancestor::footer or ancestor::nav)]'
+    ):
+        values = term.xpath('following-sibling::dd[1]')
+        if values:
+            assign_labeled_value(
+                " ".join(term.itertext()),
+                " ".join(values[0].itertext()),
+            )
+
+    # Tables: <th>Employment type</th><td>Full-time</td>
+    for row in document.xpath(
+        '//tr[not(ancestor::header or ancestor::footer or ancestor::nav)]'
+    ):
+        headers = row.xpath('./th[1]')
+        values = row.xpath('./td[1]')
+        if headers and values:
+            assign_labeled_value(
+                " ".join(headers[0].itertext()),
+                " ".join(values[0].itertext()),
+            )
+
+    # Inline labeled values:
+    # <p><strong>Salary:</strong> ?70,000</p>
+    for label_node in document.xpath(
+        '//strong[not(ancestor::header or ancestor::footer or ancestor::nav)]'
+        ' | //b[not(ancestor::header or ancestor::footer or ancestor::nav)]'
+    ):
+        parent = label_node.getparent()
+        if parent is None:
+            continue
+
+        label = _clean_text(" ".join(label_node.itertext()))
+        parent_text = _clean_text(" ".join(parent.itertext()))
+        if not label or not parent_text:
+            continue
+
+        value = re.sub(
+            rf"^\s*{re.escape(label)}\s*:?[\s\-??]*",
+            "",
+            parent_text,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        assign_labeled_value(label, value)
+
+    # Plain paragraph/list forms such as "Location: Vienna".
+    explicit_label_pattern = re.compile(
+        r"^\s*("
+        r"job location|work location|location|country|"
+        r"employment type|employment|job type|contract type|"
+        r"seniority level|seniority|experience level|career level|"
+        r"salary|compensation|pay|remuneration|"
+        r"workplace type|work model|working model"
+        r")\s*:\s*(.+?)\s*$",
+        flags=re.IGNORECASE,
+    )
+    for node in document.xpath(
+        '//p[not(ancestor::header or ancestor::footer or ancestor::nav)]'
+        ' | //li[not(ancestor::header or ancestor::footer or ancestor::nav)]'
+    ):
+        value = _clean_text(" ".join(node.itertext()))
+        if not value or len(value) > 300:
+            continue
+        match = explicit_label_pattern.match(value)
+        if match:
+            assign_labeled_value(match.group(1), match.group(2))
 
     text_content = _clean_text(" ".join(document.itertext())) or ""
 
