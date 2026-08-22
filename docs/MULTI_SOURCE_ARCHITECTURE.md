@@ -1,5 +1,56 @@
 # Multi-source architecture
 
+<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
+
+## Current implementation status ? 2026-08-22
+
+The current executable source stack includes **Lever, Darwinbox, JazzHR,
+DreamJobs, Zoho Recruit, and Generic**. `fixture` remains internal/test-only.
+LinkedIn is not a production source.
+
+`CompanySource` is the execution and ownership boundary. **Update jobs** runs
+all approved and active executable sources for the selected Company through the
+shared normalization, persistence, reconciliation, and `ScrapeRun` pipeline.
+
+### Generic public-careers fallback
+
+Generic is a reusable fallback for eligible public careers pages; it is not a
+company-specific adapter and is not intended to require one adapter per
+company. It currently supports deterministic listing extraction, semantic
+HTML / `JobPosting` JSON-LD detail metadata, common WordPress/Elementor vacancy
+content, and explicitly labelled HR metadata.
+
+Generic deliberately does **not** guess ambiguous HR fields from prose. A
+missing value is stored as null and displayed as `?`.
+
+The shared persisted HR fields now include `employment_type`,
+`seniority_level`, and `compensation_text` in addition to the existing
+location/country, publication date, description, and related fields.
+
+### Progressive Generic detail enrichment
+
+Generic detail requests are separately bounded to **50 detail pages per source
+run**.
+
+The listing can therefore contain more jobs than are detail-enriched in one
+run. For a large Generic source, later successful **Update jobs** runs skip
+already enriched URLs, preserve their stored detail metadata, and continue
+with the remaining jobs.
+
+Consequences:
+
+- more than 50 vacancies: detail enrichment can require several successful
+  runs;
+- 50 or fewer vacancies: all discovered detail pages should normally be
+  attempted in one run;
+- a blank field after enrichment does not necessarily indicate failure; the
+  public source may not publish that field in a trustworthy extractable form;
+- repeated runs do not invent metadata that the source does not expose.
+
+This progressive enrichment limit is independent from listing pagination and
+listing request accounting.
+
+
 ## Purpose and current status
 
 One monitored organisation can publish jobs through several independent careers feeds:
@@ -18,10 +69,12 @@ Company
 The schema, source ownership, source-scoped persistence/reconciliation, Company
 multi-source orchestration, and source-management UI are implemented. Lever,
 Darwinbox, JazzHR, DreamJobs, and Zoho Recruit are production-approved/user-selectable
-adapters.
+adapters. Generic is an executable discovery/auto-detected fallback for eligible
+public careers pages and is intentionally not part of the manual platform dropdown.
 Darwinbox executes through its verified normal headful-browser transport;
-JazzHR uses ordinary server-rendered HTTP. Production Source Discovery is a
-separate orchestration layer; additional ATS adapters are not implemented.
+JazzHR uses ordinary server-rendered HTTP. Production Source Discovery is a separate orchestration layer. Generic provides a
+conservative fallback for eligible public careers pages that do not map to a
+registered dedicated ATS adapter.
 
 ## CompanySource is not an adapter
 
@@ -321,9 +374,9 @@ and bounded retries are enforced. Any missing detail or incomplete snapshot
 fails the source run before persistence/reconciliation. A verified total of
 zero is a successful complete snapshot. `source_job_id`, title, canonical job
 URL, location/city/country, workplace type, employment type, and cleaned
-description map into existing normalized fields. The source exposes salary,
-currency, and company name, but the current shared model has no matching salary
-or employer field, so those values are not persisted and no schema expansion
+description map into existing normalized fields. The source exposes salary, currency, and company name. Salary/compensation can now
+map into the shared `compensation_text` field when the adapter exposes it. Employer
+remains Company/CompanySource context rather than a duplicated JobPosting field, so no employer schema expansion
 was introduced.
 
 The 2026-08-13 audit verified this contract for Data Sentics at

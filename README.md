@@ -1,38 +1,81 @@
 # LinkedIn Job Monitor
 
+<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
+
+## Current implementation status ? 2026-08-22
+
+The current executable source stack includes **Lever, Darwinbox, JazzHR,
+DreamJobs, Zoho Recruit, and Generic**. `fixture` remains internal/test-only.
+LinkedIn is not a production source.
+
+`CompanySource` is the execution and ownership boundary. **Update jobs** runs
+all approved and active executable sources for the selected Company through the
+shared normalization, persistence, reconciliation, and `ScrapeRun` pipeline.
+
+### Generic public-careers fallback
+
+Generic is a reusable fallback for eligible public careers pages; it is not a
+company-specific adapter and is not intended to require one adapter per
+company. It currently supports deterministic listing extraction, semantic
+HTML / `JobPosting` JSON-LD detail metadata, common WordPress/Elementor vacancy
+content, and explicitly labelled HR metadata.
+
+Generic deliberately does **not** guess ambiguous HR fields from prose. A
+missing value is stored as null and displayed as `?`.
+
+The shared persisted HR fields now include `employment_type`,
+`seniority_level`, and `compensation_text` in addition to the existing
+location/country, publication date, description, and related fields.
+
+### Progressive Generic detail enrichment
+
+Generic detail requests are separately bounded to **50 detail pages per source
+run**.
+
+The listing can therefore contain more jobs than are detail-enriched in one
+run. For a large Generic source, later successful **Update jobs** runs skip
+already enriched URLs, preserve their stored detail metadata, and continue
+with the remaining jobs.
+
+Consequences:
+
+- more than 50 vacancies: detail enrichment can require several successful
+  runs;
+- 50 or fewer vacancies: all discovered detail pages should normally be
+  attempted in one run;
+- a blank field after enrichment does not necessarily indicate failure; the
+  public source may not publish that field in a trustworthy extractable form;
+- repeated runs do not invent metadata that the source does not expose.
+
+This progressive enrichment limit is independent from listing pagination and
+listing request accounting.
+
+
 Internal Django application for monitoring company vacancies through
 source-specific adapters while keeping normalization, persistence,
 reconciliation, run history, and the UI source-neutral.
 
 ## Current source status
 
-- **Current production-approved source:** Lever. Users paste a public jobs URL such
-  as `https://jobs.lever.co/<site>` into Add source; the platform is detected
-  automatically.
-- **Current approved source:** Darwinbox. Its adapter uses a temporary normal
-  headful system-Chrome session through Scrapling `DynamicFetcher`, opens the
-  public candidate-v2 careers UI, and captures the listing/detail JSON emitted
-  by that UI. It never imports a profile or cookies and does not use stealth,
-  proxies, custom fingerprinting, or direct listing API replay. Darwinbox is a
-  normal Add Source choice and is executable through Update jobs/Update all.
-- **Current approved source:** JazzHR. Its plain-HTTP adapter accepts public
-  `https://<tenant>.applytojob.com/apply` listings, loads each public detail
-  page, and fails closed unless it can return the complete configured snapshot.
-- **Current approved source:** DreamJobs. Its plain-HTTP adapter accepts public
-  HTTPS `/jobs` career pages, including verified custom domains such as
-  `https://careers.datasentics.com/jobs`. It verifies the platform from the
-  Next.js snapshot and DreamJobs assets, then uses the same public GraphQL
-  listing/detail contract as the career page with bounded pagination and
-  request limits. The verified compatibility scope is Data Sentics' current
-  DreamJobs variant, not every historical or future DreamJobs deployment.
-- **Internal test source:** Fixture. It remains registered for deterministic
-  offline pipeline tests, but is not offered for new user-managed companies.
-- **LinkedIn production status:** Not implemented; feasibility/access follow-up
-  and approval are blocked pending a separate decision. The LinkedIn spike and
-  limited pagination diagnostic are
-  historical technical evidence, not a production adapter or authorization for
-  production collection.
+The current executable source stack is:
 
+- **Lever** ? production adapter for public `jobs.lever.co` sources.
+- **Darwinbox** ? production adapter using the verified normal headful
+  system-Chrome flow through Scrapling `DynamicFetcher`.
+- **JazzHR** ? production plain-HTTP adapter for public
+  `<tenant>.applytojob.com/apply` sources.
+- **DreamJobs** ? production plain-HTTP adapter for validated public `/jobs`
+  career pages, including verified custom domains.
+- **Zoho Recruit** ? production plain-HTTP adapter for validated public Zoho
+  Recruit career sites using the embedded published jobs snapshot.
+- **Generic** ? executable fallback for eligible public careers pages that do
+  not require a dedicated ATS adapter. It is connected through discovery /
+  auto-detection and is intentionally not exposed as a manual platform choice.
+- **Fixture** ? internal deterministic test source only.
+
+LinkedIn is **not** a production source. Historical LinkedIn diagnostics and
+pagination experiments remain technical evidence only and do not authorize
+production collection.
 ## Setup
 
 Use Python 3.12 or a compatible newer version and install the runtime

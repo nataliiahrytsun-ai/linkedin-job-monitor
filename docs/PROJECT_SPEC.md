@@ -1,5 +1,56 @@
 # Task: LinkedIn Job Monitoring für Kunden und Supplier
 
+<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
+
+## Current implementation status ? 2026-08-22
+
+The current executable source stack includes **Lever, Darwinbox, JazzHR,
+DreamJobs, Zoho Recruit, and Generic**. `fixture` remains internal/test-only.
+LinkedIn is not a production source.
+
+`CompanySource` is the execution and ownership boundary. **Update jobs** runs
+all approved and active executable sources for the selected Company through the
+shared normalization, persistence, reconciliation, and `ScrapeRun` pipeline.
+
+### Generic public-careers fallback
+
+Generic is a reusable fallback for eligible public careers pages; it is not a
+company-specific adapter and is not intended to require one adapter per
+company. It currently supports deterministic listing extraction, semantic
+HTML / `JobPosting` JSON-LD detail metadata, common WordPress/Elementor vacancy
+content, and explicitly labelled HR metadata.
+
+Generic deliberately does **not** guess ambiguous HR fields from prose. A
+missing value is stored as null and displayed as `?`.
+
+The shared persisted HR fields now include `employment_type`,
+`seniority_level`, and `compensation_text` in addition to the existing
+location/country, publication date, description, and related fields.
+
+### Progressive Generic detail enrichment
+
+Generic detail requests are separately bounded to **50 detail pages per source
+run**.
+
+The listing can therefore contain more jobs than are detail-enriched in one
+run. For a large Generic source, later successful **Update jobs** runs skip
+already enriched URLs, preserve their stored detail metadata, and continue
+with the remaining jobs.
+
+Consequences:
+
+- more than 50 vacancies: detail enrichment can require several successful
+  runs;
+- 50 or fewer vacancies: all discovered detail pages should normally be
+  attempted in one run;
+- a blank field after enrichment does not necessarily indicate failure; the
+  public source may not publish that field in a trustworthy extractable form;
+- repeated runs do not invent metadata that the source does not expose.
+
+This progressive enrichment limit is independent from listing pagination and
+listing request accounting.
+
+
 ## Ziel
 
 Implementiere eine kompakte interne Anwendung, mit der öffentlich sichtbare LinkedIn-Stellenausschreibungen unserer Kunden und Supplier automatisiert abgerufen, strukturiert gespeichert und über eine einfache Benutzeroberfläche angezeigt werden können.
@@ -192,6 +243,7 @@ Empfohlene Kernfelder:
 - `workplace_type`
 - `employment_type`
 - `seniority_level`
+- `compensation_text`
 - `job_function`
 - `industry`
 - `published_at`

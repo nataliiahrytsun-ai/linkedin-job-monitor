@@ -1,5 +1,32 @@
 # Production Source Discovery
 
+<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
+
+## Current implementation status ? 2026-08-22
+
+Source Discovery remains separate from vacancy scraping and reconciliation.
+
+The executable source stack currently includes **Lever, Darwinbox, JazzHR,
+DreamJobs, Zoho Recruit, and Generic**. Generic is deliberately not exposed as
+a manual platform choice in the normal Add Source catalog. Instead, an eligible
+public careers page can be confirmed/connected as
+`CompanySource(source="generic")` after the existing fail-closed Generic
+eligibility and extraction checks succeed.
+
+Discovery does not run on every **Update jobs** action. Once an approved active
+`CompanySource` exists, normal updates execute the stored adapter directly.
+
+For Generic sources, vacancy detail enrichment is bounded separately to
+**50 detail pages per source run**. Large sources can therefore become
+progressively enriched across repeated Update jobs runs. This is execution
+behaviour of Generic, not Source Discovery behaviour.
+
+A source with 50 or fewer Generic vacancies should normally have all discovered
+detail pages attempted in one run. Missing HR fields after that may simply mean
+the public source does not publish those values in a trustworthy extractable
+form.
+
+
 Source Discovery is an independent orchestration layer. It locates a probable
 official company site, follows a bounded set of careers links, detects an ATS,
 and records an auditable result. It does not scrape vacancies, run
