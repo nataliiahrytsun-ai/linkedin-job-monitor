@@ -1,32 +1,4 @@
 # Production Source Discovery
-
-<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
-
-## Current implementation status ? 2026-08-22
-
-Source Discovery remains separate from vacancy scraping and reconciliation.
-
-The executable source stack currently includes **Lever, Darwinbox, JazzHR,
-DreamJobs, Zoho Recruit, and Generic**. Generic is deliberately not exposed as
-a manual platform choice in the normal Add Source catalog. Instead, an eligible
-public careers page can be confirmed/connected as
-`CompanySource(source="generic")` after the existing fail-closed Generic
-eligibility and extraction checks succeed.
-
-Discovery does not run on every **Update jobs** action. Once an approved active
-`CompanySource` exists, normal updates execute the stored adapter directly.
-
-For Generic sources, vacancy detail enrichment is bounded separately to
-**50 detail pages per source run**. Large sources can therefore become
-progressively enriched across repeated Update jobs runs. This is execution
-behaviour of Generic, not Source Discovery behaviour.
-
-A source with 50 or fewer Generic vacancies should normally have all discovered
-detail pages attempted in one run. Missing HR fields after that may simply mean
-the public source does not publish those values in a trustworthy extractable
-form.
-
-
 Source Discovery is an independent orchestration layer. It locates a probable
 official company site, follows a bounded set of careers links, detects an ATS,
 and records an auditable result. It does not scrape vacancies, run
@@ -121,13 +93,21 @@ canonical listing/root URL, confidence, and URL-signature evidence. They are
 published in the Discovered inventory by their classified candidate state, not
 by a fragile per-platform evidence-string whitelist, so persisted Personio,
 Workday, Greenhouse, SmartRecruiters, Workable, Ashby, and Teamtailor
-candidates remain visible as **Adapter not implemented** and still cannot
-create a `CompanySource`. A credible public careers URL with no catalog match is
-retained once per host as **Unknown / Custom**, rather than being hidden as no
-source found. Detail, application, privacy, login, and social URLs are not
-separate inventory sources. Discovery retains every distinct credible platform
-candidate in a run; automatic connection remains restricted to one validated
-registered adapter under the existing threshold rules.
+candidates remain visible as **Adapter not implemented** and cannot create a
+`CompanySource` through Generic merely because their dedicated adapter is
+missing.
+
+A credible public careers URL with no catalog match is retained once per host as
+**Unknown / Custom**, rather than being hidden as no source found. Such a page
+may use the separate Generic connection path only after the existing Generic
+eligibility and deterministic extraction validation succeeds. Generic therefore
+handles eligible custom/public careers pages; it is not a fallback for a known
+unsupported ATS.
+
+Detail, application, privacy, login, and social URLs are not separate inventory
+sources. Discovery retains every distinct credible platform candidate in a run.
+Automatic ATS connection remains restricted to one validated registered adapter
+under the existing threshold rules.
 
 Crawler ATS detections are attributed conservatively. A known ATS URL is kept
 only when it is observed on the confirmed official site or on a first-hop
@@ -182,9 +162,15 @@ active, matching the existing manual-source workflow. A repeat run returns
 or rejected sources are never silently re-approved. Multiple official domains,
 multiple supported sources, or a supported signal below 90 produce separate
 `needs_review` candidates and no automatic source. Discovery never stops after
-its first ATS match. Manual confirmation revalidates the URL before connection. Unsupported
-or unknown careers pages are retained as candidates with an explicit new-adapter
-action; no fictitious source is created.
+its first ATS match.
+
+Manual confirmation always revalidates the saved candidate URL before
+connection. A known catalogued ATS without an executable registered adapter
+remains **Adapter not implemented** and cannot be connected as Generic. An
+**Unknown / Custom** public careers candidate may instead be connected with
+`source="generic"` only when the Generic eligibility gate and deterministic
+vacancy extraction succeed. Failure of those checks leaves the candidate
+unconnected and reviewable; no fictitious source is created.
 
 ## Crawl safety and limits
 
@@ -204,8 +190,9 @@ byte boundary; deployment-level egress and response limits remain recommended.
 
 Source Discovery is an onboarding/recovery workflow, not the vacancy update
 transport. Once an approved active CompanySource exists, **Update jobs** and
-**Update all** dispatch that row directly through its registered ATS adapter;
-they do not import DiscoveryService or initialize Tavily. Candidates and the
+**Update all** dispatch that row directly through its registered source adapter,
+including Generic where applicable; they do not import DiscoveryService or
+initialize Tavily. Candidates and the
 connected CompanySource remain stored between updates. Rediscovery occurs only
 for a company without a source, through the explicit **Discover again** action,
 or through a separate operator-confirmed recovery procedure after a persistent
@@ -298,10 +285,12 @@ the related `CompanySource`; the expected public chain is
 `already_connected` only after the explicit **Discover again** action). Repeat
 for `Siemens` using only its name. Normal search requests must use Tavily Bearer
 authorization; a source may be
-connected only if a registered ATS passes adapter validation, otherwise the
-honest terminal state is `needs_review`, `unsupported`, or `not_found` with the
-discovered evidence. Then run **Update jobs** repeatedly and verify that only
-the stored ATS adapter runs and no new DiscoveryRun or Tavily request appears.
+connected automatically only if a registered ATS passes adapter validation.
+An eligible **Unknown / Custom** careers page may instead be connected through
+the separately validated Generic path. Otherwise the honest terminal state is
+`needs_review`, `unsupported`, or `not_found` with the discovered evidence.
+Then run **Update jobs** repeatedly and verify that only the stored source
+adapter runs and no new DiscoveryRun or Tavily request appears.
 Use a temporary SQLite database for diagnostics, never the working `db.sqlite3`.
 For an intentionally keyless diagnostic only, unset the key and explicitly set
 `SOURCE_DISCOVERY_TAVILY_KEYLESS_DIAGNOSTIC=true`.

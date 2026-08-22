@@ -3,7 +3,8 @@
 > This report records the original 2026-07-28 robots-only milestone outcome.
 > For current extraction and pagination evidence, see the canonical
 > [LinkedIn pagination diagnostic closeout](diagnostics/linkedin-pagination-2026-08-05.md):
-> live extraction is **Verified** and full live pagination is **Not verified**.
+> live extraction is **Verified** and full live pagination is **Verified for the
+limited diagnostic**.
 
 ## Decision
 
@@ -153,10 +154,13 @@ IDs on the third page. The runner accumulates IDs, deduplicates cards, counts
 pages and source calls, and stops on no new IDs, repeated URLs, identical
 content, `max_pages`, or `max_requests`.
 
-This verifies only the local pagination algorithm. Real LinkedIn pagination,
-endpoints, parameters, lazy loading, and selectors remain **Not verified**. No
-network requests were made during this step, the LinkedIn target was not
-requested, and the existing robots preflight was not changed. The Milestone 1
+This step verified only the local pagination algorithm. At that point, real
+LinkedIn pagination, endpoints, parameters, lazy loading, and selectors remained
+**Not verified**. No network requests were made during this step, the LinkedIn
+target was not requested, and the existing robots preflight was not changed.
+The later limited live diagnostic linked at the top of this report subsequently
+verified the continuation endpoint and full live pagination within its explicit
+four-request/four-page bound. The Milestone 1
 status remains unchanged.
 
 The first focused run was **Fail** (5 passed, 2 failed): it revealed missing
@@ -202,8 +206,8 @@ fixtures with minimal approved fragments.
 
 **Milestone 1 is complete under the documented early termination rule.** This
 is the historical milestone conclusion. Later diagnostics verified live job ID
-extraction but not full live pagination; current status is maintained in the
-canonical closeout linked above.
+extraction and full live pagination for the explicitly limited diagnostic;
+current status is maintained in the canonical closeout linked above.
 
 ## Final verification
 

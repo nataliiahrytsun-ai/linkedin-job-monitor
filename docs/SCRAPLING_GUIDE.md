@@ -1,56 +1,4 @@
 # Scrapling Guide for the LinkedIn Job Monitor
-
-<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
-
-## Current implementation status ? 2026-08-22
-
-The current executable source stack includes **Lever, Darwinbox, JazzHR,
-DreamJobs, Zoho Recruit, and Generic**. `fixture` remains internal/test-only.
-LinkedIn is not a production source.
-
-`CompanySource` is the execution and ownership boundary. **Update jobs** runs
-all approved and active executable sources for the selected Company through the
-shared normalization, persistence, reconciliation, and `ScrapeRun` pipeline.
-
-### Generic public-careers fallback
-
-Generic is a reusable fallback for eligible public careers pages; it is not a
-company-specific adapter and is not intended to require one adapter per
-company. It currently supports deterministic listing extraction, semantic
-HTML / `JobPosting` JSON-LD detail metadata, common WordPress/Elementor vacancy
-content, and explicitly labelled HR metadata.
-
-Generic deliberately does **not** guess ambiguous HR fields from prose. A
-missing value is stored as null and displayed as `?`.
-
-The shared persisted HR fields now include `employment_type`,
-`seniority_level`, and `compensation_text` in addition to the existing
-location/country, publication date, description, and related fields.
-
-### Progressive Generic detail enrichment
-
-Generic detail requests are separately bounded to **50 detail pages per source
-run**.
-
-The listing can therefore contain more jobs than are detail-enriched in one
-run. For a large Generic source, later successful **Update jobs** runs skip
-already enriched URLs, preserve their stored detail metadata, and continue
-with the remaining jobs.
-
-Consequences:
-
-- more than 50 vacancies: detail enrichment can require several successful
-  runs;
-- 50 or fewer vacancies: all discovered detail pages should normally be
-  attempted in one run;
-- a blank field after enrichment does not necessarily indicate failure; the
-  public source may not publish that field in a trustworthy extractable form;
-- repeated runs do not invent metadata that the source does not expose.
-
-This progressive enrichment limit is independent from listing pagination and
-listing request accounting.
-
-
 ## Status and evidence labels
 
 This guide describes Scrapling 0.4.8, the version installed and inspected on
@@ -74,16 +22,21 @@ an offline `Selector`. The project selected it because one library can support a
 small HTTP probe now and a bounded Spider crawl later, if compliant access is
 obtained.
 
-**Current production decision (2026-08-11):** the source-neutral application
-uses `LeverSourceAdapter` as its first production adapter. It uses Scrapling
-0.4.8 `FetcherSession` for bounded plain-HTTP requests to Lever's public
-postings API. The registered fixture adapter is internal/test-only and makes no
-network requests. The Darwinbox adapter uses `DynamicFetcher` with a temporary
-normal headful system-Chrome session because its public SPA did not bootstrap
-in the verified headless flow. It disables Scrapling's Google referrer and uses
-no stealth, profile/cookies, proxy, custom headers/user agent, or fingerprint
-override. There is no production LinkedIn adapter; the LinkedIn
-sections below document the completed historical spike and its safety boundary.
+**Current production decision (2026-08-22):** the application is
+source-neutral and uses one shared pipeline with several bounded source
+transports:
+
+- Lever, JazzHR, DreamJobs, Zoho Recruit, and Generic use ordinary public HTTP
+  transports for their verified contracts;
+- Darwinbox uses Scrapling `DynamicFetcher` with a temporary normal headful
+  system-Chrome session because its verified public SPA transport requires
+  browser execution;
+- `fixture` remains internal/test-only and makes no network requests.
+
+The production transports do not use stealth, private credentials, CAPTCHA
+solving, proxies, or private/admin access paths. There is no production
+LinkedIn adapter; the LinkedIn sections below document the completed historical
+spike and its safety boundary.
 
 **Verified:** the original milestone used `FetcherSession` for a single public
 `robots.txt` request and `Selector` for offline fixture parsing. No target job
@@ -236,7 +189,7 @@ differences, and session reuse across multiple target requests.
 
 ## 5. Lever production adapter
 
-`LeverSourceAdapter` is the current production use of Scrapling. It receives a
+`LeverSourceAdapter` is one production use of Scrapling. It receives a
 CompanySource configuration, validates a URL of the form
 `https://jobs.lever.co/<site>`, derives the site slug, and requests Lever's
 public postings API with `mode=json`, a bounded `limit`, and an offset `skip`.
@@ -326,8 +279,64 @@ stable example ID `25520`, `/jobs?activeOpportunityId=25520` detail navigation,
 and a public detail response with a 5,130-character description. Sanitized
 offline fixtures contain only parsing-relevant fields. This verifies the
 current Data Sentics DreamJobs implementation; it does not claim universal
-DreamJobs compatibility. Salary is present in the source but is intentionally
-not added to the current shared model.
+DreamJobs compatibility. The shared model now supports `compensation_text`;
+an adapter should populate it only when its verified source mapping exposes a
+trustworthy compensation value.
+
+## 5c. Zoho Recruit production adapter
+
+`ZohoRecruitSourceAdapter` uses one ordinary public HTTPS request to a validated
+Zoho Recruit career site. The verified public contract is server-rendered HTML
+containing Zoho Recruit technical signatures and an embedded published-jobs
+snapshot used by the career page itself.
+
+The adapter validates platform identity and the embedded data contract before
+returning a complete `SourceBatch`. Stable Zoho record IDs provide source-local
+identity. It does not use OAuth, the authenticated Zoho Recruit REST API,
+candidate login, browser automation, private cookies, CAPTCHA handling, stealth,
+proxies, or private endpoints.
+
+The verified career-site contract has an explicit bounded completeness rule.
+Potentially capped, inconsistent, malformed, or structurally unverified
+snapshots fail closed rather than allowing reconciliation from an uncertain
+listing.
+
+More detailed evidence is recorded in
+[`docs/ZOHO_RECRUIT_SPIKE.md`](ZOHO_RECRUIT_SPIKE.md).
+
+## 5d. Generic production fallback
+
+`GenericSourceAdapter` is the reusable HTTP fallback for eligible public careers
+pages that do not require a dedicated supported ATS adapter. It is not a
+company-specific parser and should not lead to one adapter being created for
+each Company.
+
+Generic uses deterministic public listing extraction first, then bounded detail
+requests for optional enrichment. Reusable detail extraction includes:
+
+- semantic HTML and `JobPosting` JSON-LD;
+- explicit vacancy-description containers;
+- common WordPress/Elementor vacancy content;
+- explicitly labelled HR metadata in definition lists, tables, labelled
+  elements, and `Label: Value` structures.
+
+Generic deliberately does not infer ambiguous metadata from free prose,
+navigation, footer addresses, or experience wording. Missing optional fields can
+therefore legitimately remain null.
+
+Detail requests are bounded to **50 detail pages per source run**. Listing
+requests do not consume that 50-page detail budget, while `requests_made` still
+counts both listing and detail data operations. Large sources can be
+progressively enriched across later successful runs while persisted detail
+metadata is preserved where eligible. For a source with 50 or fewer discovered vacancies, all discovered
+detail pages should normally be attempted in one run.
+
+The 50-page bound limits HTTP work; it does not guarantee that every optional
+field will eventually become non-null. The source may not publish a field or
+may not expose it in a safely recognizable structure.
+
+The exact execution and persistence semantics are documented in
+[`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
 
 ## 6. LinkedIn-specific extraction design (historical spike)
 
@@ -482,14 +491,17 @@ additional live run or production use.
 
 ## 9. Extension path
 
-- **New Lever company:** configure a CompanySource with `source="lever"` and a
-  validated public URL in the form `https://jobs.lever.co/<site>`. The shared
-  pipeline uses the one registered production adapter; a separate adapter per
-  Company is not required.
-- **Another approved platform:** implement the shared adapter contract with its
-  own URL validation, fetching policy, fixtures, and field mapping; register it
-  explicitly as user-selectable only when it is a production source. Keep
-  normalization and persistence independent.
+- **Existing supported ATS:** configure the CompanySource through the
+  source-management flow using the validated public Jobs URL. Reuse the
+  registered platform adapter; a separate adapter per Company is not required.
+- **Public careers page without a supported ATS match:** evaluate the existing
+  Generic eligibility and deterministic extraction path before implementing a
+  new adapter. Eligible pages should reuse `generic`.
+- **New platform-specific contract:** implement a shared adapter only when the
+  public source requires transport or parsing behavior that Generic cannot
+  safely support. Give it bounded URL validation, fetching policy, fixtures,
+  completeness rules, and field mapping, then reuse it across companies on that
+  platform.
 - **LinkedIn:** treat the current artifacts as historical spike evidence, not
   an adapter template that authorizes production use. Resolve feasibility and
   access first; only then can a separately reviewed adapter be considered.

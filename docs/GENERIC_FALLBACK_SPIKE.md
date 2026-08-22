@@ -89,3 +89,38 @@ Implemented in `discovery.classification.is_generic_fallback_eligible`.
 Generic fallback is a conservative supplemental path for eligible public career
 sources. It does not replace platform-specific adapters, and real-world coverage
 must still be validated on the actual company portfolio.
+
+## Post-spike implementation outcome
+
+The spike established the conservative Generic execution boundary. Subsequent
+production work extended that path without changing its core fail-closed
+principle.
+
+The current implementation additionally includes:
+
+- Generic detail-page enrichment after deterministic listing extraction;
+- semantic HTML and `JobPosting` JSON-LD metadata extraction;
+- reusable WordPress/Elementor vacancy-description fallback;
+- explicitly labelled HR metadata extraction for fields such as location,
+  country, employment type, seniority, workplace type, and compensation;
+- no inference of ambiguous HR values from free prose, footer addresses, or
+  experience wording;
+- shared persistence of `compensation_text`;
+- a bound of **50 Generic detail pages per source run**, allowing large sources
+  to be enriched progressively across successful later runs while persisted
+  metadata is preserved where eligible;
+- Zoho Recruit as a separate dedicated production adapter rather than a Generic
+  special case.
+
+The spike-time eligibility list above is retained as historical evidence.
+Current production onboarding makes an important distinction: a known
+catalogued ATS without an executable adapter remains **Adapter not implemented**
+and is not routed through Generic merely because its dedicated adapter is
+missing. Eligible **Unknown / Custom** public careers pages may use the Generic
+path only after the current fail-closed eligibility and deterministic extraction
+checks succeed.
+
+The authoritative current boundaries are documented in
+[`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md) and
+[`docs/SOURCE_DISCOVERY.md`](SOURCE_DISCOVERY.md). Verification evidence is in
+[`docs/BACKEND_VERIFICATION.md`](BACKEND_VERIFICATION.md).

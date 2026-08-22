@@ -1,56 +1,4 @@
 # LinkedIn Job Monitor
-
-<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
-
-## Current implementation status ? 2026-08-22
-
-The current executable source stack includes **Lever, Darwinbox, JazzHR,
-DreamJobs, Zoho Recruit, and Generic**. `fixture` remains internal/test-only.
-LinkedIn is not a production source.
-
-`CompanySource` is the execution and ownership boundary. **Update jobs** runs
-all approved and active executable sources for the selected Company through the
-shared normalization, persistence, reconciliation, and `ScrapeRun` pipeline.
-
-### Generic public-careers fallback
-
-Generic is a reusable fallback for eligible public careers pages; it is not a
-company-specific adapter and is not intended to require one adapter per
-company. It currently supports deterministic listing extraction, semantic
-HTML / `JobPosting` JSON-LD detail metadata, common WordPress/Elementor vacancy
-content, and explicitly labelled HR metadata.
-
-Generic deliberately does **not** guess ambiguous HR fields from prose. A
-missing value is stored as null and displayed as `?`.
-
-The shared persisted HR fields now include `employment_type`,
-`seniority_level`, and `compensation_text` in addition to the existing
-location/country, publication date, description, and related fields.
-
-### Progressive Generic detail enrichment
-
-Generic detail requests are separately bounded to **50 detail pages per source
-run**.
-
-The listing can therefore contain more jobs than are detail-enriched in one
-run. For a large Generic source, later successful **Update jobs** runs skip
-already enriched URLs, preserve their stored detail metadata, and continue
-with the remaining jobs.
-
-Consequences:
-
-- more than 50 vacancies: detail enrichment can require several successful
-  runs;
-- 50 or fewer vacancies: all discovered detail pages should normally be
-  attempted in one run;
-- a blank field after enrichment does not necessarily indicate failure; the
-  public source may not publish that field in a trustworthy extractable form;
-- repeated runs do not invent metadata that the source does not expose.
-
-This progressive enrichment limit is independent from listing pagination and
-listing request accounting.
-
-
 Internal Django application for monitoring company vacancies through
 source-specific adapters while keeping normalization, persistence,
 reconciliation, run history, and the UI source-neutral.
@@ -59,19 +7,26 @@ reconciliation, run history, and the UI source-neutral.
 
 The current executable source stack is:
 
-- **Lever** ? production adapter for public `jobs.lever.co` sources.
-- **Darwinbox** ? production adapter using the verified normal headful
+- **Lever** - production adapter for public `jobs.lever.co` sources.
+- **Darwinbox** - production adapter using the verified normal headful
   system-Chrome flow through Scrapling `DynamicFetcher`.
-- **JazzHR** ? production plain-HTTP adapter for public
+- **JazzHR** - production plain-HTTP adapter for public
   `<tenant>.applytojob.com/apply` sources.
-- **DreamJobs** ? production plain-HTTP adapter for validated public `/jobs`
+- **DreamJobs** - production plain-HTTP adapter for validated public `/jobs`
   career pages, including verified custom domains.
-- **Zoho Recruit** ? production plain-HTTP adapter for validated public Zoho
+- **Zoho Recruit** - production plain-HTTP adapter for validated public Zoho
   Recruit career sites using the embedded published jobs snapshot.
-- **Generic** ? executable fallback for eligible public careers pages that do
-  not require a dedicated ATS adapter. It is connected through discovery /
+- **Generic** - executable fallback for eligible public careers pages that do
+  not require a dedicated ATS adapter. It is connected through discovery or
   auto-detection and is intentionally not exposed as a manual platform choice.
-- **Fixture** ? internal deterministic test source only.
+- **Fixture** - internal deterministic test source only.
+
+Generic uses conservative reusable extraction rules rather than company-specific
+logic. Detail enrichment is bounded to 50 detail pages per source run, so large
+Generic sources may be enriched progressively across repeated successful
+updates. See the
+[multi-source architecture](docs/MULTI_SOURCE_ARCHITECTURE.md) for the exact
+behavior and limits.
 
 LinkedIn is **not** a production source. Historical LinkedIn diagnostics and
 pagination experiments remain technical evidence only and do not authorize

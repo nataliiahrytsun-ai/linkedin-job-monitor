@@ -1,62 +1,4 @@
 # Project goal
-
-<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
-
-
-> **Verification note (2026-08-22):** Older test totals recorded later in this
-> document are milestone-specific historical baselines, not the current suite
-> size. The current full regression suite reached **1022+ passing tests** during
-> the 2026-08-22 closeout work; use the latest local full-suite run as the
-> authoritative pre-commit result.
-## Current implementation status ? 2026-08-22
-
-The current executable source stack includes **Lever, Darwinbox, JazzHR,
-DreamJobs, Zoho Recruit, and Generic**. `fixture` remains internal/test-only.
-LinkedIn is not a production source.
-
-`CompanySource` is the execution and ownership boundary. **Update jobs** runs
-all approved and active executable sources for the selected Company through the
-shared normalization, persistence, reconciliation, and `ScrapeRun` pipeline.
-
-### Generic public-careers fallback
-
-Generic is a reusable fallback for eligible public careers pages; it is not a
-company-specific adapter and is not intended to require one adapter per
-company. It currently supports deterministic listing extraction, semantic
-HTML / `JobPosting` JSON-LD detail metadata, common WordPress/Elementor vacancy
-content, and explicitly labelled HR metadata.
-
-Generic deliberately does **not** guess ambiguous HR fields from prose. A
-missing value is stored as null and displayed as `?`.
-
-The shared persisted HR fields now include `employment_type`,
-`seniority_level`, and `compensation_text` in addition to the existing
-location/country, publication date, description, and related fields.
-
-### Progressive Generic detail enrichment
-
-Generic detail requests are separately bounded to **50 detail pages per source
-run**.
-
-The listing can therefore contain more jobs than are detail-enriched in one
-run. For a large Generic source, later successful **Update jobs** runs skip
-already enriched URLs, preserve their stored detail metadata, and continue
-with the remaining jobs.
-
-Consequences:
-
-- more than 50 vacancies: detail enrichment can require several successful
-  runs;
-- 50 or fewer vacancies: all discovered detail pages should normally be
-  attempted in one run;
-- a blank field after enrichment does not necessarily indicate failure; the
-  public source may not publish that field in a trustworthy extractable form;
-- repeated runs do not invent metadata that the source does not expose.
-
-This progressive enrichment limit is independent from listing pagination and
-listing request accounting.
-
-
 Create an internal Django application that gets company vacancies from a
 permitted source, saves and updates them without creating duplicates, tracks
 vacancies that disappear, and shows the results to users.
@@ -227,3 +169,60 @@ production source: there is no production LinkedIn adapter, registry key, or
 Company dropdown option. Feasibility, access, and authorization must be decided
 before any production LinkedIn integration. Historical spike code and reports
 must not be described as production support.
+
+# Milestone 4 - Source discovery, Generic fallback and project closeout
+
+**Status:** Completed
+
+## Result
+
+The source-neutral architecture was extended beyond the earlier Lever,
+Darwinbox, JazzHR, and DreamJobs stages.
+
+- **Zoho Recruit** is implemented as a production adapter for the verified
+  public career-site embedded-HTML contract. It uses ordinary public HTTP and
+  fails closed when completeness or platform identity cannot be established.
+- **Generic** is implemented as an executable fallback for eligible public
+  careers pages that do not require a dedicated ATS adapter. It is deliberately
+  reusable rather than company-specific.
+- Generic detail extraction supports reusable public structures including
+  semantic HTML, `JobPosting` JSON-LD, common WordPress/Elementor vacancy
+  content, and explicitly labelled HR metadata.
+- Generic does not infer ambiguous HR values from free text. Missing values
+  remain null when the source does not expose them in a trustworthy extractable
+  form.
+- The shared job model and UI support `employment_type`, `seniority_level`, and
+  `compensation_text` together with the existing location, country, publication
+  date, description, and status data.
+- Generic detail enrichment is bounded to **50 detail pages per source run**.
+  Larger sources can therefore be enriched progressively across repeated
+  successful **Update jobs** runs while already persisted detail metadata is
+  preserved. Sources with 50 or fewer discovered vacancies should normally
+  have all detail pages attempted in one run.
+- Source Discovery is implemented as a separate bounded onboarding/recovery
+  workflow. It can identify supported ATS sources and retain reviewable
+  unsupported or custom candidates without running vacancy reconciliation.
+- Eligible public custom careers pages can be connected to the Generic source
+  path through the existing fail-closed discovery/auto-detection rules.
+- User-owned connected sources support Disconnect/Reconnect and confirmed hard
+  deletion with source-owned job cleanup while ScrapeRun and discovery history
+  are retained.
+- The Company jobs table now presents the operational HR columns:
+  Position, Country, Employment, Seniority, Compensation, and Status.
+- The global Jobs table presents Position, Company, Country, Employment,
+  Seniority, Compensation, and Status.
+- Job detail continues to expose the richer stored vacancy data including the
+  description and other available metadata.
+
+The final regression run on 2026-08-22 completed with:
+
+- **1023 passed**;
+- **184 warnings**, all from the existing third-party `lxml` deprecation
+  warning set;
+- `git diff --check`: clean.
+
+LinkedIn remains historical diagnostic scope only and is not a production
+source. The current architecture is documented in
+[`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md), with
+verification evidence in
+[`docs/BACKEND_VERIFICATION.md`](BACKEND_VERIFICATION.md).

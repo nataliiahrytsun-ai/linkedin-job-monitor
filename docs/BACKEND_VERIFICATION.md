@@ -1,62 +1,4 @@
 # Backend and quality verification
-
-<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
-
-
-> **Verification note (2026-08-22):** Older test totals recorded later in this
-> document are milestone-specific historical baselines, not the current suite
-> size. The current full regression suite reached **1022+ passing tests** during
-> the 2026-08-22 closeout work; use the latest local full-suite run as the
-> authoritative pre-commit result.
-## Current implementation status ? 2026-08-22
-
-The current executable source stack includes **Lever, Darwinbox, JazzHR,
-DreamJobs, Zoho Recruit, and Generic**. `fixture` remains internal/test-only.
-LinkedIn is not a production source.
-
-`CompanySource` is the execution and ownership boundary. **Update jobs** runs
-all approved and active executable sources for the selected Company through the
-shared normalization, persistence, reconciliation, and `ScrapeRun` pipeline.
-
-### Generic public-careers fallback
-
-Generic is a reusable fallback for eligible public careers pages; it is not a
-company-specific adapter and is not intended to require one adapter per
-company. It currently supports deterministic listing extraction, semantic
-HTML / `JobPosting` JSON-LD detail metadata, common WordPress/Elementor vacancy
-content, and explicitly labelled HR metadata.
-
-Generic deliberately does **not** guess ambiguous HR fields from prose. A
-missing value is stored as null and displayed as `?`.
-
-The shared persisted HR fields now include `employment_type`,
-`seniority_level`, and `compensation_text` in addition to the existing
-location/country, publication date, description, and related fields.
-
-### Progressive Generic detail enrichment
-
-Generic detail requests are separately bounded to **50 detail pages per source
-run**.
-
-The listing can therefore contain more jobs than are detail-enriched in one
-run. For a large Generic source, later successful **Update jobs** runs skip
-already enriched URLs, preserve their stored detail metadata, and continue
-with the remaining jobs.
-
-Consequences:
-
-- more than 50 vacancies: detail enrichment can require several successful
-  runs;
-- 50 or fewer vacancies: all discovered detail pages should normally be
-  attempted in one run;
-- a blank field after enrichment does not necessarily indicate failure; the
-  public source may not publish that field in a trustworthy extractable form;
-- repeated runs do not invent metadata that the source does not expose.
-
-This progressive enrichment limit is independent from listing pagination and
-listing request accounting.
-
-
 ## Verified production flow
 
 The current source-owned path is:
@@ -75,21 +17,27 @@ RUNNING runs for two sources of one Company, same-source duplicate rejection,
 deterministic Company orchestration, failure isolation, source-scoped identity
 and reconciliation, aggregate Company state, and the fast-source polling race.
 
-The shared pipeline supports two deliberately different source roles:
+The shared pipeline supports multiple source roles through the same
+source-owned execution contract:
 
-- `lever`: current production and user-selectable adapter. An executable
-  CompanySource stores `source="lever"` and a public URL such as
-  `https://jobs.lever.co/olo`.
+- `lever`: registered, user-selectable, executable production adapter for
+  public Lever career sources.
+- `darwinbox`: registered, user-selectable, executable adapter implementing the
+  observed public Darwinbox contract through a normal headful system-Chrome
+  session.
+- `jazzhr`: registered, user-selectable, executable plain-HTTP adapter for
+  validated public `<tenant>.applytojob.com/apply` sources.
+- `dreamjobs`: registered, user-selectable, executable plain-HTTP adapter for
+  structurally verified public DreamJobs `/jobs` pages.
+- `zoho_recruit`: registered, user-selectable, executable plain-HTTP adapter for
+  validated public Zoho Recruit career sites using the embedded published jobs
+  snapshot.
+- `generic`: registered executable fallback for eligible public careers pages
+  that do not require a dedicated ATS adapter. It is connected through the
+  bounded discovery/auto-detection path rather than exposed as a manual
+  platform choice.
 - `fixture`: registered internal/test adapter. It reads local synthetic data,
   reports `requests_made=0`, and is excluded from user-managed source creation.
-- `darwinbox`: registered, user-selectable, executable adapter implementing the
-  observed public Acuity Darwinbox contract through a normal headful system-
-  Chrome session.
-- `jazzhr`: registered, user-selectable, executable plain-HTTP adapter for
-  validated public `<tenant>.applytojob.com/apply` snapshots.
-- `dreamjobs`: registered, user-selectable, executable plain-HTTP adapter for
-  structurally verified public `/jobs` pages, including the audited Data
-  Sentics custom domain.
 
 LinkedIn has no production adapter or registry key and remains blocked pending
 a separate feasibility/access/approval decision.
@@ -105,9 +53,10 @@ not claim that every Darwinbox installation is supported.
 `submit_source(company_source)` owns one explicit source execution. Active
 tasks are keyed by `company_source_id`. `submit_company(company)` evaluates all
 CompanySource rows in deterministic order and independently reports submitted,
-already-running, skipped, and failed source IDs. Both approved active Lever and
-Darwinbox sources are eligible for Update jobs and Update all. It does not use legacy
-Company fields to select one source.
+already-running, skipped, and failed source IDs. Every approved, active,
+executable CompanySource is independently eligible for **Update jobs** and
+**Update all**. Company orchestration does not use legacy Company fields to
+select one source.
 
 The regression suite proves:
 
@@ -261,3 +210,44 @@ JazzHR closeout verified the configured interim Ascent/Acuity source directly:
 details), using JSON-LD for 6 details and strict HTML fallback for 17. Manual
 source creation and **Update jobs** succeeded; a repeat run reported Found 23,
 Created 0, Updated 0, and Requests 24 without duplicate postings.
+
+## 2026-08-22 closeout verification
+
+The final closeout verifies the current multi-source application rather than
+replacing the historical adapter-specific baselines recorded above.
+
+Current executable production paths include Lever, Darwinbox, JazzHR,
+DreamJobs, Zoho Recruit, and Generic. Fixture remains internal/test-only, and
+LinkedIn remains outside production scope.
+
+The closeout coverage includes:
+
+- source-owned execution, persistence, reconciliation, and ScrapeRun lifecycle;
+- multi-source Company orchestration and failure isolation;
+- source-management and Source Discovery workflows;
+- Zoho Recruit adapter integration;
+- Generic listing and detail extraction;
+- Generic semantic/`JobPosting` JSON-LD metadata extraction;
+- Generic WordPress/Elementor description fallback;
+- explicit labelled HR metadata extraction without ambiguous prose inference;
+- shared persistence of `employment_type`, `seniority_level`, and
+  `compensation_text`;
+- current Company and global vacancy-table HR columns;
+- bounded Generic detail enrichment with a maximum of 50 detail pages per
+  source run and preservation of previously persisted metadata.
+
+Automated tests remain offline and use temporary/fake source data rather than
+live job-board requests. Bounded manual public-page checks were used only as
+technical evidence for real-world Generic structures; they are not part of the
+automated regression suite and do not introduce company-specific parser rules.
+
+Final regression result on 2026-08-22:
+
+- **1023 passed**;
+- **184 warnings**, from the existing third-party `lxml` deprecation warning
+  set;
+- `git diff --check`: clean.
+
+These final totals supersede earlier totals only as the current full-suite
+baseline. Earlier numbers in this document remain valid historical
+adapter/milestone verification records.

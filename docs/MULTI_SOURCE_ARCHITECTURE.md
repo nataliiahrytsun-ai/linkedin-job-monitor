@@ -1,56 +1,4 @@
 # Multi-source architecture
-
-<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
-
-## Current implementation status ? 2026-08-22
-
-The current executable source stack includes **Lever, Darwinbox, JazzHR,
-DreamJobs, Zoho Recruit, and Generic**. `fixture` remains internal/test-only.
-LinkedIn is not a production source.
-
-`CompanySource` is the execution and ownership boundary. **Update jobs** runs
-all approved and active executable sources for the selected Company through the
-shared normalization, persistence, reconciliation, and `ScrapeRun` pipeline.
-
-### Generic public-careers fallback
-
-Generic is a reusable fallback for eligible public careers pages; it is not a
-company-specific adapter and is not intended to require one adapter per
-company. It currently supports deterministic listing extraction, semantic
-HTML / `JobPosting` JSON-LD detail metadata, common WordPress/Elementor vacancy
-content, and explicitly labelled HR metadata.
-
-Generic deliberately does **not** guess ambiguous HR fields from prose. A
-missing value is stored as null and displayed as `?`.
-
-The shared persisted HR fields now include `employment_type`,
-`seniority_level`, and `compensation_text` in addition to the existing
-location/country, publication date, description, and related fields.
-
-### Progressive Generic detail enrichment
-
-Generic detail requests are separately bounded to **50 detail pages per source
-run**.
-
-The listing can therefore contain more jobs than are detail-enriched in one
-run. For a large Generic source, later successful **Update jobs** runs skip
-already enriched URLs, preserve their stored detail metadata, and continue
-with the remaining jobs.
-
-Consequences:
-
-- more than 50 vacancies: detail enrichment can require several successful
-  runs;
-- 50 or fewer vacancies: all discovered detail pages should normally be
-  attempted in one run;
-- a blank field after enrichment does not necessarily indicate failure; the
-  public source may not publish that field in a trustworthy extractable form;
-- repeated runs do not invent metadata that the source does not expose.
-
-This progressive enrichment limit is independent from listing pagination and
-listing request accounting.
-
-
 ## Purpose and current status
 
 One monitored organisation can publish jobs through several independent careers feeds:
@@ -264,7 +212,61 @@ source. It does not fall back to legacy Company source fields.
   Deactivate workflows;
 - public DreamJobs custom-domain adapter using the verified Next.js/GraphQL
   contract and the existing source-owned pipeline;
+- public Zoho Recruit adapter for the verified embedded career-site contract;
+- Generic executable fallback for eligible public careers pages, including
+  bounded progressive detail enrichment and conservative HR metadata extraction;
+- production Source Discovery and Generic connection/auto-detection workflow;
 - existing single-source Olo/Lever compatibility.
+
+## Generic adapter boundary
+
+`GenericSourceAdapter` is the executable fallback for eligible public careers
+pages that do not map to a dedicated supported ATS adapter. It is deliberately
+platform-neutral and reusable: a separate adapter is not created for each
+Company.
+
+Generic first performs deterministic listing extraction and validates that the
+configured public page yields usable vacancy candidates. Detail pages are then
+used for optional enrichment.
+
+Detail extraction prefers explicit, reusable structures:
+
+- `JobPosting` JSON-LD and semantic HTML;
+- explicit description/content containers;
+- common WordPress/Elementor content widgets when no semantic description is
+  available;
+- explicitly labelled HR metadata in structures such as definition lists,
+  tables, labelled inline elements, and `Label: Value` text.
+
+Current optional detail fields include description, location, country,
+publication date, workplace type, employment type, seniority, and
+`compensation_text`.
+
+Generic is conservative. It does not infer HR metadata from ambiguous prose,
+navigation, footer addresses, or experience wording. If a trustworthy value
+cannot be identified, the field remains null.
+
+### Bounded progressive detail enrichment
+
+Generic detail fetching is bounded to **50 detail pages per source run**. This
+limit is separate from listing requests and listing completeness.
+
+For a source with more than 50 vacancies, the listing may be discovered in one
+run while only a bounded subset receives detail enrichment. Later successful
+**Update jobs** runs preserve previously stored detail metadata and can continue
+enriching detail URLs that have not yet satisfied the enrichment criteria.
+
+For a source with 50 or fewer discovered vacancies, all discovered detail pages
+should normally be attempted within one source run.
+
+Progressive enrichment does not guarantee that every optional field will
+eventually become non-null. A missing field after a detail page has been
+processed is not automatically an error: the public source may not publish that
+value, or may not expose it in a structure Generic can identify safely.
+
+Progressive enrichment changes metadata completeness only. Job identity,
+source ownership, persistence, reconciliation, and ScrapeRun ownership remain
+source-scoped and continue through the shared pipeline.
 
 ## Darwinbox adapter boundary
 
@@ -432,11 +434,22 @@ not part of the current model.
 
 ## Conceptual onboarding
 
-For a future Company, identify the official jobs source and its ATS. If a
-production/user-selectable adapter already exists, use the source-management UI
-to create its CompanySource with the platform key and URL. If the platform is
-new, implement, register, and approve one shared SourceAdapter before exposing
-it to users, then reuse it for other companies on that ATS.
+For a future Company, identify the official public jobs source and determine
+whether it belongs to a supported ATS.
+
+If a production/user-selectable adapter already exists, use the
+source-management UI to create the corresponding CompanySource.
+
+If the page is a public careers source without a supported ATS match, the
+existing Generic eligibility and deterministic extraction checks should be
+considered before implementing anything company-specific. An eligible source
+can use the shared `generic` path.
+
+Implement a new shared SourceAdapter only when the source requires a
+platform-specific transport or contract that Generic cannot safely support.
+That adapter should be registered and validated at platform level and then
+reused for other companies on the same ATS; a separate adapter per Company is
+not the intended architecture.
 
 ## Source Discovery status
 
@@ -453,5 +466,6 @@ without a separately approved and implemented adapter/access path. See
 Slices 1-4 and the bounded Darwinbox headful-browser transport are complete.
 Darwinbox is enabled for normal source creation and Company execution, subject
 to its explicit interactive system-Chrome deployment requirement.
-JazzHR and the independent Source Discovery layer are implemented; other ATS
-integrations remain separate future work.
+JazzHR, DreamJobs, Zoho Recruit, Generic, and the independent Source Discovery
+layer are implemented. Additional dedicated ATS integrations remain separate
+future work.

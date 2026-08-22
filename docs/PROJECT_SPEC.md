@@ -1,56 +1,4 @@
 # Task: LinkedIn Job Monitoring für Kunden und Supplier
-
-<!-- CURRENT-IMPLEMENTATION-2026-08-22 -->
-
-## Current implementation status ? 2026-08-22
-
-The current executable source stack includes **Lever, Darwinbox, JazzHR,
-DreamJobs, Zoho Recruit, and Generic**. `fixture` remains internal/test-only.
-LinkedIn is not a production source.
-
-`CompanySource` is the execution and ownership boundary. **Update jobs** runs
-all approved and active executable sources for the selected Company through the
-shared normalization, persistence, reconciliation, and `ScrapeRun` pipeline.
-
-### Generic public-careers fallback
-
-Generic is a reusable fallback for eligible public careers pages; it is not a
-company-specific adapter and is not intended to require one adapter per
-company. It currently supports deterministic listing extraction, semantic
-HTML / `JobPosting` JSON-LD detail metadata, common WordPress/Elementor vacancy
-content, and explicitly labelled HR metadata.
-
-Generic deliberately does **not** guess ambiguous HR fields from prose. A
-missing value is stored as null and displayed as `?`.
-
-The shared persisted HR fields now include `employment_type`,
-`seniority_level`, and `compensation_text` in addition to the existing
-location/country, publication date, description, and related fields.
-
-### Progressive Generic detail enrichment
-
-Generic detail requests are separately bounded to **50 detail pages per source
-run**.
-
-The listing can therefore contain more jobs than are detail-enriched in one
-run. For a large Generic source, later successful **Update jobs** runs skip
-already enriched URLs, preserve their stored detail metadata, and continue
-with the remaining jobs.
-
-Consequences:
-
-- more than 50 vacancies: detail enrichment can require several successful
-  runs;
-- 50 or fewer vacancies: all discovered detail pages should normally be
-  attempted in one run;
-- a blank field after enrichment does not necessarily indicate failure; the
-  public source may not publish that field in a trustworthy extractable form;
-- repeated runs do not invent metadata that the source does not expose.
-
-This progressive enrichment limit is independent from listing pagination and
-listing request accounting.
-
-
 ## Ziel
 
 Implementiere eine kompakte interne Anwendung, mit der öffentlich sichtbare LinkedIn-Stellenausschreibungen unserer Kunden und Supplier automatisiert abgerufen, strukturiert gespeichert und über eine einfache Benutzeroberfläche angezeigt werden können.
@@ -69,68 +17,60 @@ https://www.linkedin.com/jobs/acuity-analytics-jobs-worldwide?f_C=16691%2C302429
 
 Die Implementierung darf jedoch nicht fest auf Acuity Analytics zugeschnitten sein. Weitere Kunden und Supplier müssen über ihre jeweilige LinkedIn-Job-URL ergänzt werden können.
 
-## Aktueller Implementierungsstand (2026-08-11)
+## Aktueller Implementierungsstand (2026-08-22)
 
 Diese Spezifikation bewahrt das ursprüngliche LinkedIn-Ziel und die damaligen
-Akzeptanzkriterien. Der aktuell abgeschlossene Produktionsumfang ist jedoch
-source-neutral und verwendet **Lever** als ersten freigegebenen externen
-Source:
+Akzeptanzkriterien. Der tatsächlich implementierte Produktionsumfang ist
+inzwischen source-neutral und nicht auf LinkedIn beschränkt.
 
-- `lever` ist als Production Adapter registriert und beim Hinzufügen einer
-  CompanySource auswählbar;
-- `fixture` bleibt als interner Offline-/Test-Adapter registriert, ist aber
-  keine auswählbare Production Source;
-- `darwinbox` ist implementiert, auswählbar und ausführbar. Der Transport öffnet
-  die öffentliche candidate-v2 UI in einem temporären normalen Headful-System-
-  Chrome über Scrapling `DynamicFetcher`, erfasst die von der SPA erzeugten
-  Listing-/Detail-Responses und paginiert über sichtbares Load More. Es werden
-  weder Login/private Cookies noch Stealth, Proxies, Fingerprint-Anpassungen
-  oder direkte API-Replays verwendet;
-- Normalisierung, Persistenz, Reconciliation, `ScrapeRun`, Background
-  Execution und UI sind source-neutral;
-- Company Management, Jobs UI, Dashboard, ScrapeRun History und read-only
-  Status-Polling sind für den aktuellen Lever-Umfang abgeschlossen;
-- die mehrseitige Lever-Verarbeitung ist offline über den vollständigen
-  Production Flow mit zwei Requests, drei persistierten Jobs und einem
-  erfolgreichen `ScrapeRun` verifiziert.
+Aktuell ausführbar sind:
 
-**LinkedIn ist nicht als Production Source implementiert.** Es gibt keinen
-Production Adapter, keinen Registry Key und keine auswählbare LinkedIn-Option
-im Company-Formular. Die nachfolgenden LinkedIn-Anforderungen und
-Diagnoseabschnitte bleiben als ursprüngliches Produktziel und historische
-Machbarkeitsnachweise erhalten. Eine Production Integration benötigt eine
-separate Entscheidung zu Zugriff, Zulässigkeit und technischer Machbarkeit.
+- `lever` als öffentlicher Production Adapter;
+- `darwinbox` mit dem verifizierten normalen Headful-System-Chrome-Transport;
+- `jazzhr` als öffentlicher HTTP-Adapter für validierte applytojob-Tenants;
+- `dreamjobs` als öffentlicher HTTP-Adapter für den verifizierten
+  Next.js-/GraphQL-Contract;
+- `zoho_recruit` als öffentlicher HTTP-Adapter für den verifizierten
+  eingebetteten Zoho-Recruit-Career-Site-Contract;
+- `generic` als konservativer Fallback für geeignete öffentliche
+  Karriere-Seiten, für die kein eigener ATS-Adapter erforderlich ist;
+- `fixture` ausschließlich als interner Offline-/Test-Adapter.
 
-Der verbindliche aktuelle Status steht in
-[`docs/MILESTONES.md`](MILESTONES.md); reproduzierbare Prüfungen stehen in
+**LinkedIn ist weiterhin keine Production Source.** Es gibt keinen
+Production-Adapter, keinen Registry Key und keine auswählbare LinkedIn-Quelle.
+Die späteren LinkedIn-Abschnitte dieses Dokuments bleiben deshalb als
+ursprüngliche Anforderungen und historische technische Nachweise erhalten.
+Eine Production-Integration würde weiterhin eine separate Entscheidung zu
+Zugriff, Zulässigkeit und technischer Machbarkeit benötigen.
+
+Die Multi-Source-Architektur ist umgesetzt. `CompanySource` repräsentiert einen
+konkreten Job-Feed und ist die Execution- und Ownership-Boundary für
+`JobPosting`, `ScrapeRun`, Persistenz und Reconciliation. **Update jobs** kann
+alle freigegebenen aktiven Sources einer Company unabhängig ausführen.
+Source Discovery ist davon getrennt und dient dem Auffinden, Prüfen und
+Verbinden von Quellen.
+
+Generic ist bewusst kein company-spezifischer Parser. Die Implementierung
+verwendet wiederverwendbare Extraktionsregeln, darunter semantisches HTML,
+`JobPosting`-JSON-LD, geeignete WordPress-/Elementor-Strukturen und eindeutig
+beschriftete HR-Metadaten. Nicht zuverlässig erkennbare Werte werden nicht
+geraten und bleiben `null`.
+
+Der gemeinsame `JobPosting`-Umfang unterstützt inzwischen zusätzlich
+`compensation_text` neben unter anderem `employment_type`,
+`seniority_level`, Standort-, Datums- und Beschreibungsfeldern.
+
+Bei Generic ist die Detail-Anreicherung auf **50 Detailseiten pro Source-Lauf**
+begrenzt. Größere Quellen können deshalb über mehrere erfolgreiche
+**Update jobs**-Läufe schrittweise angereichert werden. Bereits gespeicherte
+Detaildaten werden dabei erhalten. Diese operative Grenze wird technisch in
+[`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md) und
+[`docs/SCRAPLING_GUIDE.md`](SCRAPLING_GUIDE.md) beschrieben.
+
+Der verbindliche Projektfortschritt steht in
+[`docs/MILESTONES.md`](MILESTONES.md). Reproduzierbare Prüfungen und
+Verifikationsergebnisse stehen in
 [`docs/BACKEND_VERIFICATION.md`](BACKEND_VERIFICATION.md).
-
-Die nachträglich ergänzte Multi-Source-Architektur ist bis Slice 4 umgesetzt:
-`CompanySource` repräsentiert einen konkreten Job-Feed sowie die Execution
-Boundary. Pipeline, Persistenz, Reconciliation und jeder `ScrapeRun` verwenden
-diesen Source-Kontext. Company Update kann alle freigegebenen aktiven Sources
-unabhängig ausführen. CompanySource-Konfiguration wird getrennt von Company
-create/edit über die Source-Management-UI verwaltet; mehrere Sources können
-angezeigt, hinzugefügt, bearbeitet und unabhängig aktiviert/deaktiviert werden.
-Production Source Discovery ist als separater Orchestration-Layer implementiert;
-weitere ATS-Adapter bleiben nicht implementiert. JazzHR
-ist als normaler öffentlicher HTTP-Adapter für applytojob-Tenants registriert,
-auswählbar und ausführbar. Der Darwinbox Adapter öffnet
-`/ms/candidatev2/<companyId>/careers/allJobs`, paginiert innerhalb eines
-`fetch()` über die UI bis zum vollständigen Snapshot und verwendet Darwinbox
-`id` als stabile Source-ID. Unvollständige Pagination führt zu `SourceError`
-ohne Reconciliation; Detail-Navigation erfolgt nur bei leerem Listing-`jd`, und
-`requests_made` zählt Listing- und Detail-Datenoperationen. Lever bleibt unverändert.
-DreamJobs ist als normaler öffentlicher HTTP-Adapter registriert, auswählbar
-und ausführbar. Er validiert HTTPS-`/jobs`-Custom-Domains strukturell anhand des
-Next.js-Snapshots und DreamJobs-Assets und nutzt danach den von der Seite selbst
-verwendeten öffentlichen GraphQL-Listing-/Detail-Contract mit festen Seiten-
-und Request-Grenzen. Der verifizierte Umfang ist die aktuelle Data-Sentics-
-Variante; Discovery erkennt und validiert diese Quelle, bleibt aber außerhalb
-des Adapter- und Vacancy-Reconciliation-Umfangs.
-Aktueller Contract und Grenzen stehen
-in [`docs/MULTI_SOURCE_ARCHITECTURE.md`](MULTI_SOURCE_ARCHITECTURE.md).
-
 # Funktionale Anforderungen
 
 ## 1. Unternehmen verwalten
@@ -243,7 +183,6 @@ Empfohlene Kernfelder:
 - `workplace_type`
 - `employment_type`
 - `seniority_level`
-- `compensation_text`
 - `job_function`
 - `industry`
 - `published_at`
